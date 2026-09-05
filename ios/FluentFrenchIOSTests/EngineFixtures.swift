@@ -46,13 +46,13 @@ enum EngineFixtures {
                 lastTaughtSession: lastTaughtSession, newlyUnlocked: newlyUnlocked)
     }
 
-    /// Beta evidence that reads as `.learning` at the given mastery (5 observations).
+    /// Beta evidence that reads as `.learning` at EXACTLY the given mastery
+    /// (alpha + beta = 7, i.e. 5 observations on top of the (1, 1) prior).
     static func learning(_ id: String, mastery: Double, category: GapCategory = .grammar,
                          level: CEFRLevel = .A1, prerequisites: [String] = []) -> Concept {
-        let observations = 5.0
-        let alpha = 1 + mastery * observations
-        let beta = 1 + (1 - mastery) * observations
-        return concept(id, category: category, level: level, prerequisites: prerequisites, alpha: alpha, beta: beta)
+        let total = 7.0
+        return concept(id, category: category, level: level, prerequisites: prerequisites,
+                       alpha: total * mastery, beta: total * (1 - mastery))
     }
 
     /// Beta evidence that reads as `.mastered` (mastery 0.9, observations 8).
@@ -64,7 +64,7 @@ enum EngineFixtures {
     // MARK: Gaps
 
     /// A synthetic gap. With `fsrs == nil` the model's retrievability fallback is
-    /// `0.4 + 0.12 × consecutiveCorrect`, which makes ordering tests exact.
+    /// `min(0.95, 0.4 + 0.12 × consecutiveCorrect)`, which makes ordering tests exact.
     static func gap(_ id: String,
                     concept: String?,
                     category: GapCategory = .grammar,
@@ -160,9 +160,9 @@ enum EngineFixtures {
             concept("probe-me", category: .pronunciation),
         ]
         var gaps: [GapItem] = []
-        // root: six gaps with increasing consecutiveCorrect → retrievability 0.40 … 1.0
+        // root: six gaps with increasing consecutiveCorrect → retrievability 0.40 … 0.95
         for i in 0..<6 {
-            gaps.append(gap("root-\(i)", concept: "root", consecutiveCorrect: i, due: now.addingTimeInterval(-Double(i) * day)))
+            gaps.append(gap("root-\(i)", concept: "root", due: now.addingTimeInterval(-Double(i) * day), consecutiveCorrect: i))
         }
         // frontier: three fresh gaps, due now
         for i in 0..<3 {
@@ -174,8 +174,8 @@ enum EngineFixtures {
         }
         // done: two due gaps of a mastered concept (FSRS still wants them)
         for i in 0..<2 {
-            gaps.append(gap("done-\(i)", concept: "done", category: .vocabulary, consecutiveCorrect: 2,
-                            reviewCount: 4, due: now.addingTimeInterval(-2 * day)))
+            gaps.append(gap("done-\(i)", concept: "done", category: .vocabulary,
+                            due: now.addingTimeInterval(-2 * day), consecutiveCorrect: 2, reviewCount: 4))
         }
         let s = store(concepts: concepts, gaps: gaps)
         return SmallGraph(store: s)

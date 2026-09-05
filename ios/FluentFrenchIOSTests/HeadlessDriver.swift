@@ -217,6 +217,7 @@ struct SimulatedRun {
     /// (concept-card exposure), answers every item from its true mastery, and
     /// forgets overnight. Evidence flows through the real `recordReview`.
     mutating func run(days: Int, lessonsPerDay: Int = 1) {
+        guard days > 0 else { return }
         let store = driver.store
         for day in 1...days {
             var practiced = Set<String>()
@@ -265,12 +266,18 @@ struct SimulatedRun {
         func pad(_ s: String, _ width: Int) -> String {
             s.count >= width ? s : s + String(repeating: " ", count: width - s.count)
         }
-        return reports.map { r in
-            "day \(pad(String(r.day), 3)) target \(pad(r.targetConceptId ?? "—", 28)) "
-                + "size \(pad(String(r.lessonSize), 3)) "
-                + "calib \(String(format: "%.2f", r.calibrationError))  "
-                + "trueM \(pad(String(r.trueMastered), 3)) estM \(pad(String(r.estimatedMastered), 3)) "
-                + "ghosts \(r.ghosts)"
-        }.joined(separator: "\n")
+        var lines: [String] = []
+        for r in reports {
+            var parts: [String] = []
+            parts.append("day " + pad(String(r.day), 3))
+            parts.append("target " + pad(r.targetConceptId ?? "—", 28))
+            parts.append("size " + pad(String(r.lessonSize), 3))
+            parts.append("calib " + String(format: "%.2f", r.calibrationError))
+            parts.append("trueM " + pad(String(r.trueMastered), 3))
+            parts.append("estM " + pad(String(r.estimatedMastered), 3))
+            parts.append("ghosts " + String(r.ghosts))
+            lines.append(parts.joined(separator: " "))
+        }
+        return lines.joined(separator: "\n")
     }
 }

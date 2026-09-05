@@ -33,10 +33,45 @@ nonisolated struct DailyPlanConfig {
 
 // MARK: - Output
 
+/// What a plan item asks for: minutes in an activity, or a number of short lessons
+/// (Foundation pacing, Pass 3 F1 — `Tuning.foundationLessonsPerDay`).
+nonisolated enum DailyPlanItemKind: String, Hashable, Codable {
+    case minutes
+    case lessons
+}
+
 nonisolated struct DailyPlanItem: Identifiable, Hashable {
-    var id: String { modality.rawValue }
-    let modality: LearningModality
-    let targetMinutes: Int
+    var id: String {
+        switch kind {
+        case .minutes: return modality?.rawValue ?? "minutes"
+        case .lessons: return "lessons"
+        }
+    }
+    let kind: DailyPlanItemKind
+    /// The activity for a `.minutes` item; nil for the `.lessons` item (lessons are
+    /// not a `LearningModality`).
+    let modality: LearningModality?
+    /// Minutes for `.minutes`, lesson count for `.lessons`.
+    let target: Int
+
+    /// Minutes asked of the learner (0 for a `.lessons` item, which is paced in lessons).
+    var targetMinutes: Int { kind == .minutes ? target : 0 }
+
+    init(kind: DailyPlanItemKind, modality: LearningModality?, target: Int) {
+        self.kind = kind
+        self.modality = modality
+        self.target = target
+    }
+
+    /// A minutes-of-activity item.
+    init(modality: LearningModality, targetMinutes: Int) {
+        self.init(kind: .minutes, modality: modality, target: targetMinutes)
+    }
+
+    /// The Foundation pacing item: `count` short lessons today.
+    static func lessons(_ count: Int) -> DailyPlanItem {
+        DailyPlanItem(kind: .lessons, modality: nil, target: count)
+    }
 }
 
 nonisolated struct DailyPlan: Hashable {
@@ -44,7 +79,11 @@ nonisolated struct DailyPlan: Hashable {
     var rationale: String
     var isColdStart: Bool
 
+    /// Minutes across `.minutes` items only; a `.lessons` item adds nothing here.
     var totalMinutes: Int { items.reduce(0) { $0 + $1.targetMinutes } }
+    /// The Foundation pacing item, when the plan is lesson-paced.
+    var lessonItem: DailyPlanItem? { items.first { $0.kind == .lessons } }
+    var isLessonPaced: Bool { lessonItem != nil }
 }
 
 // MARK: - Engine
@@ -66,6 +105,16 @@ struct DailyPlanEngine {
     /// is ignored here by design.
     func makePlan(from selection: SelectionOutput) -> DailyPlan {
         let prefs = store.preferences ?? .default
+        // Foundation pacing (Pass 3 F1): while reading is still locked the day is
+        // paced in short lessons, not minutes — `Tuning.foundationLessonsPerDay` of
+        // them. Progress is read live from `store.lessonsCompletedToday`.
+        if store.readiness(for: .reading) != .unlocked {
+            let count = Tuning.foundationLessonsPerDay
+            let rationale = store.isGovernorActive
+                ? "Consolidating your base before opening reading."
+                : "\(count) short lessons today — each one builds toward unlocking reading."
+            return DailyPlan(items: [.lessons(count)], rationale: rationale, isColdStart: false)
+        }
         // Only ever prescribe activities the learner is actually ready for — the
         // readiness gate filters out anything still locked behind Foundation.
         let chosen = LearningModality.allCases.filter {
@@ -186,11 +235,11 @@ struct DailyPlanEngine {
     }
 
     private func rationale(for items: [DailyPlanItem], ranked: [ScoredConcept]) -> String {
-        guard let lead = items.first else { return "Here's today's plan." }
+        guard let lead = items.first, let leadModality = lead.modality else { return "Here's today's plan." }
         // Name the dominant weak category for color.
         let topCategory = ranked.first?.concept.category.label.lowercased()
-        let leadLabel = lead.modality.label.lowercased()
-        let secondLabel = items.count > 1 ? items[1].modality.label.lowercased() : nil
+        let leadLabel = leadModality.label.lowercased()
+        let secondLabel = items.count > 1 ? items[1].modality?.label.lowercased() : nil
 
         if let cat = topCategory, let second = secondLabel {
             return "Your weak spots lately are \(cat)-heavy, so today leans \(leadLabel) and \(second)."

@@ -34,7 +34,7 @@ struct LessonAssemblerTests {
         let spineCount = Int((Double(Tuning.lessonSize) * Tuning.targetRatio).rounded())
         let ids = lesson.gaps.map { $0.id }
         #expect(Array(ids.prefix(spineCount)) == Array(g.rootGapIds.prefix(spineCount)), "target spine leads, in the selector's weakest-first order")
-        #expect(Array(ids.dropFirst(spineCount).prefix(2)) == g.doneGapIds, "then review, most overdue first")
+        #expect(Array(ids.dropFirst(spineCount).prefix(2)) == ["done-0", "frontier-0"], "then the check-in, then review")
         #expect(ids.last == lesson.probeGapId, "probe last")
     }
 
@@ -49,10 +49,30 @@ struct LessonAssemblerTests {
         let probe = try #require(g.store.gaps.first { $0.id == probeId })
         #expect(probe.conceptId == g.probeMe)
         #expect(probe.sourceType == .foundation)
+        // B13: a real content probe — prompt, answer and distractors from `probes`.
+        let content = EngineFixtures.syntheticProbes(for: g.probeMe)[g.store.sessionIndex % 3]
+        #expect(probe.isProbe)
+        #expect(probe.frenchWord == content.fr)
+        #expect(probe.englishTranslation == content.en)
+        #expect(probe.probeOptions == content.options)
+        #expect(probe.exampleSentence == content.ex)
 
         // Assembling the same output twice reuses the record instead of duplicating it.
         _ = LessonAssembler(store: g.store).assemble(output)
         #expect(g.store.gaps.filter { $0.id == probeId }.count == 1)
+    }
+
+    @Test func probeWithNoContentIsDroppedNotSubstituted() throws {
+        let g = EngineFixtures.smallGraph()
+        let output = ConceptSelector(store: g.store).select(.smart(now: EngineFixtures.now))
+        let probeId = try #require(output.probeItem?.gapId)
+        // Content vanished between selection and assembly: the item is dropped.
+        g.store.probeContent = { _ in [] }
+        let lesson = try #require(LessonAssembler(store: g.store).assemble(output))
+        #expect(lesson.probeGapId == nil)
+        #expect(!lesson.gaps.contains { $0.id == probeId })
+        #expect(lesson.gaps.count == output.items.count - 1)
+        #expect(!g.store.gaps.contains { $0.id == probeId }, "nothing was materialised")
     }
 
     @Test func assemblerPlacesConfusionPairsAdjacent() throws {
@@ -99,9 +119,13 @@ struct LessonAssemblerTests {
     }
 
     @Test func emptySelectionAssemblesToNoLesson() {
-        let store = EngineFixtures.store(concepts: [EngineFixtures.mastered("done")], gaps: [])
+        var resting = EngineFixtures.mastered("done")
+        resting.nextCheckInAt = EngineFixtures.now.addingTimeInterval(30 * EngineFixtures.day)
+        let store = EngineFixtures.store(concepts: [resting], gaps: [])
         let output = ConceptSelector(store: store).select(.smart(now: EngineFixtures.now))
+        #expect(output.isEmpty)
         #expect(LessonAssembler(store: store).assemble(output) == nil)
+        #expect(LessonAssembler(store: store).assemble(.empty(for: .smart(now: EngineFixtures.now))) == nil)
     }
 
     @Test func itemsWhoseGapVanishedAreDroppedNotSubstituted() throws {

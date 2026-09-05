@@ -2,9 +2,12 @@
 //  SampleData.swift
 //  FluentFrenchIOS
 //
-//  Seed gaps so the app feels alive on first launch, matching the Expo content tone.
+//  Sample gaps/errors for SwiftUI previews and DEBUG tooling ONLY. Never loaded
+//  into a real learner's store: a fresh install starts empty (see AppStore.load()),
+//  and `AppStore.preview` is the sole consumer. Compiled out of release builds.
 //
 
+#if DEBUG
 import Foundation
 
 nonisolated enum SampleData {
@@ -168,3 +171,4 @@ nonisolated enum SampleData {
         ]
     }
 }
+#endif

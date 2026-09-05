@@ -154,13 +154,15 @@ final class EngineDriver {
 
     // MARK: Evidence
 
-    func answer(gapId: String, correct: Bool, conceptWeight: Double = 1) {
-        store.recordReview(gapId: gapId, correct: correct, conceptWeight: conceptWeight, now: now)
+    /// `isCheckIn` is the selected item's role (`.checkIn`); nil lets the store
+    /// derive it from the concept's state, exactly as an un-wired lesson would.
+    func answer(gapId: String, correct: Bool, conceptWeight: Double = 1, isCheckIn: Bool? = nil) {
+        store.recordReview(gapId: gapId, correct: correct, conceptWeight: conceptWeight, isCheckIn: isCheckIn, now: now)
     }
 
     @discardableResult
     func complete(_ lesson: AssembledLesson) -> [String] {
-        store.completeLesson(targetConceptId: lesson.targetConcept?.id, isCapstone: lesson.isCapstone)
+        store.completeLesson(targetConceptId: lesson.targetConcept?.id, isCapstone: lesson.isCapstone, now: now)
     }
 
     func advance(days: Double) {
@@ -173,10 +175,21 @@ final class EngineDriver {
     /// Returns the lesson that ran, or nil when the selector chose nothing.
     @discardableResult
     func runLesson(_ request: SelectionRequest, answering oracle: (GapItem) -> Bool) -> AssembledLesson? {
+        runLesson(request) { gap, _ in oracle(gap) }
+    }
+
+    /// Same cycle, with the oracle told each item's selected role so it can tell a
+    /// check-in from spine and review. The role is passed through to the store as
+    /// the lesson will (`recordAnswer(isCheckIn:)`).
+    @discardableResult
+    func runLesson(_ request: SelectionRequest, answering oracle: (GapItem, SelectedItemRole) -> Bool) -> AssembledLesson? {
         guard let lesson = pipeline.lesson(for: request) else { return nil }
         let weight = lesson.isCapstone ? Tuning.capstoneWeight : 1
+        var roles: [String: SelectedItemRole] = [:]
+        for item in lesson.selection.items { roles[item.gapId] = item.role }
         for gap in lesson.gaps {
-            answer(gapId: gap.id, correct: oracle(gap), conceptWeight: weight)
+            let role = roles[gap.id] ?? .review
+            answer(gapId: gap.id, correct: oracle(gap, role), conceptWeight: weight, isCheckIn: role == .checkIn)
         }
         complete(lesson)
         return lesson
@@ -193,30 +206,109 @@ final class EngineDriver {
 struct SimulatedRun {
     struct DayReport {
         let day: Int
+        /// Lessons that ran this day (Foundation pacing: `Tuning.foundationLessonsPerDay` while reading is locked).
+        let lessons: Int
         let targetConceptId: String?
         let lessonSize: Int
         /// Mean |engine mastery − true mastery| over observed concepts.
         let calibrationError: Double
         let trueMastered: Int
         let estimatedMastered: Int
+        /// Mastered concepts that are NOT provisional seeds (what coverage counts).
+        let verifiedMastered: Int
         /// Engine says mastered, truth says forgotten (< 0.6).
         let ghosts: Int
+        /// Check-in items answered this day, and how many were missed.
+        let checkIns: Int
+        let checkInMisses: Int
+        let governorActive: Bool
+        /// Reading read as unlocked when the day's pacing was decided (start of day).
+        let readingUnlockedAtStart: Bool
+        /// Reading read as unlocked at the end of the day.
+        let readingUnlocked: Bool
+        /// The ghosts by id, with the learner's true mastery, for diagnosis.
+        let ghostConceptIds: [String]
         let violations: [String]
+    }
+
+    /// Placement simulated with the REAL adaptive staircase and item bank: the
+    /// learner answers each item from its true mastery (no learning), and the
+    /// result is applied through `AppStore.applyPlacement` — provisional seeds and all.
+    struct PlacementOutcome {
+        let result: PlacementResult
+        /// Concepts seeded as (provisional) mastery — the fully probed tier.
+        let seededConceptIds: [String]
+        /// Concepts seeded as a `.learning` head start — the band-inferred tier (B9).
+        let inferredConceptIds: [String]
+    }
+
+    /// The placement bank the design assumes: the banked items PLUS three content
+    /// probes per grammar / vocabulary concept, so every concept can reach the
+    /// `Tuning.placementProbesPerConcept` read (synthetic probes: no bundle here).
+    static func placementBank(for store: AppStore) -> [AssessmentQuestion] {
+        AssessmentService.bank + AssessmentService.contentBank(concepts: store.concepts, probes: EngineFixtures.syntheticProbes)
     }
 
     let driver: EngineDriver
     let learner: SyntheticLearner
     private(set) var reports: [DayReport] = []
+    /// First day reading read as unlocked, if it ever did.
+    private(set) var unlockDay: Int? = nil
+    /// First day any base concept held VERIFIED mastery (a seed that passed its
+    /// verification check-ins, or mastery earned through practice) — the earliest
+    /// day the coverage gate could possibly move (B8).
+    private(set) var firstVerifiedDay: Int? = nil
+    /// How many times reading flipped between locked and unlocked across the run.
+    var readingToggles: Int {
+        var toggles = 0
+        var previous = false
+        for r in reports where r.readingUnlocked != previous {
+            toggles += 1
+            previous = r.readingUnlocked
+        }
+        return toggles
+    }
+    /// Days on which the governor was active at the end of the day.
+    private(set) var governorDays: Int = 0
+    private(set) var placement: PlacementOutcome? = nil
+    /// Check-in items answered per concept over the whole run (and how many missed).
+    private(set) var checkInsByConcept: [String: (asked: Int, missed: Int)] = [:]
 
     init(store: AppStore, learner: SyntheticLearner, now: Date) {
         self.driver = EngineDriver(store: store, now: now)
         self.learner = learner
     }
 
-    /// One lesson per day for `days` days. The learner is taught the target
+    /// Run the adaptive placement against the learner's truth and apply it. A
+    /// learner with a declared-beginner truth (nothing above the guess floor) is
+    /// routed as a true beginner; anyone else answers the staircase. The store's
+    /// gaps are then replaced with the synthetic Foundation seed so the run never
+    /// depends on bundled content.
+    mutating func place(declaredBeginner: Bool, gapsPerConcept: Int = 6, bank: [AssessmentQuestion]? = nil) {
+        let store = driver.store
+        var engine = PlacementEngine(bank: bank ?? Self.placementBank(for: store))
+        if declaredBeginner {
+            engine.declareBeginner()
+        } else {
+            while let q = engine.next() {
+                let known = q.conceptId.map { learner.probe($0) } ?? false
+                engine.record(q, correct: known)
+            }
+        }
+        let result = engine.result()
+        store.applyPlacement(result, isFirstRun: true, now: driver.now)
+        store.gaps = EngineFixtures.foundationGaps(for: store.concepts, perConcept: gapsPerConcept, at: driver.now)
+        placement = PlacementOutcome(result: result, seededConceptIds: result.masteredConceptIds,
+                                     inferredConceptIds: result.inferredConceptIds)
+    }
+
+    /// `days` days of lessons. With `foundationPacing` the day holds
+    /// `Tuning.foundationLessonsPerDay` lessons while reading is locked and
+    /// `lessonsPerDay` once it unlocks. The learner is taught the target
     /// (concept-card exposure), answers every item from its true mastery, and
-    /// forgets overnight. Evidence flows through the real `recordReview`.
-    mutating func run(days: Int, lessonsPerDay: Int = 1) {
+    /// forgets overnight. Evidence flows through the real `recordReview`, with the
+    /// selected role passed through as the lesson passes it.
+    mutating func run(days: Int, lessonsPerDay: Int = 1, foundationPacing: Bool = false) {
         guard days > 0 else { return }
         let store = driver.store
         for day in 1...days {
@@ -224,7 +316,10 @@ struct SimulatedRun {
             var lastTarget: String? = nil
             var lastSize = 0
             var violations: [String] = []
-            for _ in 0..<lessonsPerDay {
+            var checkIns = 0, checkInMisses = 0
+            let unlockedAtStart = store.readiness(for: .reading) == .unlocked
+            let count = (foundationPacing && !unlockedAtStart) ? Tuning.foundationLessonsPerDay : lessonsPerDay
+            for _ in 0..<count {
                 let selector = driver.pipeline.selector
                 let output = driver.select(.smart)
                 // Invariant: nothing prerequisite-blocked may be selected.
@@ -234,31 +329,56 @@ struct SimulatedRun {
                     }
                 }
                 if let target = output.targetConceptId { learner.teach(target) }
-                let lesson = driver.runLesson(.smart(now: driver.now)) { gap in
+                var lessonCheckIns: [(String, Bool)] = []
+                let lesson = driver.runLesson(.smart(now: driver.now)) { (gap: GapItem, role: SelectedItemRole) -> Bool in
                     guard let cid = gap.conceptId else { return false }
                     practiced.insert(cid)
-                    return learner.answer(cid)
+                    let ok = learner.answer(cid)
+                    if role == .checkIn {
+                        checkIns += 1
+                        if !ok { checkInMisses += 1 }
+                        lessonCheckIns.append((cid, ok))
+                    }
+                    return ok
+                }
+                for (cid, ok) in lessonCheckIns {
+                    let tally = checkInsByConcept[cid] ?? (0, 0)
+                    checkInsByConcept[cid] = (tally.asked + 1, tally.missed + (ok ? 0 : 1))
                 }
                 lastTarget = lesson?.targetConcept?.id
                 lastSize = lesson?.gaps.count ?? 0
             }
             learner.dayPasses(practiced: practiced)
-            reports.append(report(day: day, target: lastTarget, size: lastSize, violations: violations))
+            let unlocked = store.readiness(for: .reading) == .unlocked
+            if unlocked && unlockDay == nil { unlockDay = day }
+            if firstVerifiedDay == nil, store.foundationMastered > 0 { firstVerifiedDay = day }
+            if store.isGovernorActive { governorDays += 1 }
+            reports.append(report(day: day, lessons: count, target: lastTarget, size: lastSize,
+                                  checkIns: checkIns, checkInMisses: checkInMisses,
+                                  unlockedAtStart: unlockedAtStart, unlocked: unlocked, violations: violations))
             driver.advance(days: 1)
         }
     }
 
-    private func report(day: Int, target: String?, size: Int, violations: [String]) -> DayReport {
+    private func report(day: Int, lessons: Int, target: String?, size: Int, checkIns: Int, checkInMisses: Int,
+                        unlockedAtStart: Bool, unlocked: Bool, violations: [String]) -> DayReport {
         let store = driver.store
         let observed = store.concepts.filter { $0.state != .neverObserved }
         let calibration = observed.isEmpty ? 0 :
             observed.map { abs($0.mastery - learner.truth($0.id)) }.reduce(0, +) / Double(observed.count)
         let trueMastered = store.concepts.filter { learner.truth($0.id) >= 0.85 }.count
         let estMastered = store.concepts.filter { $0.state == .mastered }.count
-        let ghosts = store.concepts.filter { $0.state == .mastered && learner.truth($0.id) < 0.6 }.count
-        return DayReport(day: day, targetConceptId: target, lessonSize: size,
+        let verified = store.concepts.filter { $0.isVerifiedMastered }.count
+        let ghostIds = store.concepts
+            .filter { $0.state == .mastered && learner.truth($0.id) < 0.6 }
+            .map { "\($0.id)(\(String(format: "%.2f", learner.truth($0.id))))" }
+        return DayReport(day: day, lessons: lessons, targetConceptId: target, lessonSize: size,
                          calibrationError: calibration, trueMastered: trueMastered,
-                         estimatedMastered: estMastered, ghosts: ghosts, violations: violations)
+                         estimatedMastered: estMastered, verifiedMastered: verified, ghosts: ghostIds.count,
+                         checkIns: checkIns, checkInMisses: checkInMisses,
+                         governorActive: store.isGovernorActive,
+                         readingUnlockedAtStart: unlockedAtStart, readingUnlocked: unlocked,
+                         ghostConceptIds: ghostIds, violations: violations)
     }
 
     /// A compact, human-readable trace for the test log.
@@ -270,14 +390,36 @@ struct SimulatedRun {
         for r in reports {
             var parts: [String] = []
             parts.append("day " + pad(String(r.day), 3))
-            parts.append("target " + pad(r.targetConceptId ?? "—", 28))
+            parts.append("x" + pad(String(r.lessons), 2))
+            parts.append("target " + pad(r.targetConceptId ?? "—", 26))
             parts.append("size " + pad(String(r.lessonSize), 3))
             parts.append("calib " + String(format: "%.2f", r.calibrationError))
             parts.append("trueM " + pad(String(r.trueMastered), 3))
             parts.append("estM " + pad(String(r.estimatedMastered), 3))
-            parts.append("ghosts " + String(r.ghosts))
+            parts.append("verM " + pad(String(r.verifiedMastered), 3))
+            parts.append("ghosts " + pad(String(r.ghosts), 2))
+            parts.append("checkIns " + pad("\(r.checkIns)/\(r.checkInMisses)", 6))
+            parts.append(r.governorActive ? "GOV " : "    ")
+            parts.append(r.readingUnlocked ? "READ" : "    ")
             lines.append(parts.joined(separator: " "))
         }
+        var footer = "unlock day: \(unlockDay.map(String.init) ?? "never")  first verified: \(firstVerifiedDay.map(String.init) ?? "never")  reading toggles: \(readingToggles)  governor days: \(governorDays)"
+        if let placement {
+            footer += "  placement: level \(placement.result.estimatedLevel.rawValue), seeds \(placement.seededConceptIds.count), inferred \(placement.inferredConceptIds.count), asked \(placement.result.askedCount)"
+        }
+        if let last = reports.last, !last.ghostConceptIds.isEmpty {
+            footer += "\nghosts at day \(last.day): " + last.ghostConceptIds.joined(separator: ", ")
+            let store = driver.store
+            for id in last.ghostConceptIds.map({ String($0.prefix { $0 != "(" }) }) {
+                let tally = checkInsByConcept[id] ?? (0, 0)
+                let concept = store.concept(id)
+                let mastery = concept.map { String(format: "%.2f", $0.mastery) } ?? "?"
+                let interval = concept?.checkInIntervalDays.map { String(format: "%.1f", $0) } ?? "nil"
+                let reviewed = store.gaps(forConcept: id).filter { !$0.isProbe && !$0.isNew }.count
+                footer += "\n  \(id): check-ins \(tally.asked) (missed \(tally.missed)), mastery \(mastery), interval \(interval)d, reviewed gaps \(reviewed)"
+            }
+        }
+        lines.append(footer)
         return lines.joined(separator: "\n")
     }
 }

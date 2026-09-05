@@ -129,7 +129,9 @@ struct LessonView: View {
     enum Stage { case intro, teaching, generating, practice, complete }
 
     private let masteryTarget = 2
-    private let startingHearts = 5
+    /// Hearts a lesson starts with (`Tuning.lessonHearts`). Package C makes them
+    /// real — the lesson ends with a recap at zero; the capstone has none.
+    private let startingHearts = Tuning.lessonHearts
 
     @State private var stage: Stage = .intro
     @State private var schedule: [LessonQuestion] = []
@@ -146,7 +148,7 @@ struct LessonView: View {
     @State private var wasCorrect = false
 
     // Session game state
-    @State private var hearts = 5
+    @State private var hearts = Tuning.lessonHearts
     @State private var xp = 0
     @State private var combo = 0
     @State private var bestCombo = 0

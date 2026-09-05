@@ -78,11 +78,16 @@ struct ConceptSelectorTests {
         for blocked in g.blockedGapIds {
             #expect(!ids.contains(blocked), "\(blocked) is prerequisite-blocked and must not be selected")
         }
+        // The mastered concept's due gaps come back ONLY as a check-in — one item,
+        // its weakest reviewed gap (B7) — never through the review pool.
+        #expect(output.checkInItems.map { $0.gapId } == ["done-0"])
         let review = output.items.filter { $0.role == .review }.map { $0.gapId }
-        #expect(review == g.doneGapIds, "the due gaps of a mastered concept are still reviewable (FSRS), most overdue first")
-        for item in output.items where item.role == .review {
+        #expect(review == ["frontier-0"], "review interleaves the most overdue practicable gap of an unmastered concept")
+        #expect(!ids.contains("done-1"), "the mastered concept's other gap does not ride in as review")
+        for item in output.items where item.role == .review || item.role == .checkIn {
             #expect(!item.reason.isEmpty)
         }
+        #expect(output.checkInItems.first?.reason == "Check-in: does Concept done still hold?")
     }
 
     @Test func smartFillerNeverPullsInPrerequisiteBlockedMaterial() {
@@ -104,7 +109,10 @@ struct ConceptSelectorTests {
         #expect(output.gapIds == ["tiny-0"], "short lesson, not padded with blocked gaps")
     }
 
-    @Test func smartFallsBackToReviewOnlyWhenNothingIsEligible() {
+    @Test func smartFallsBackToACheckInWhenNothingIsEligible() {
+        // A mastered concept that was never scheduled for a check-in is overdue for
+        // one: it comes back as ONE check-in item (its weakest gap, most overdue on
+        // ties), not as a pile of review.
         let concepts = [EngineFixtures.mastered("done", category: .vocabulary)]
         let gaps = (0..<3).map {
             EngineFixtures.gap("done-\($0)", concept: "done", category: .vocabulary,
@@ -114,18 +122,32 @@ struct ConceptSelectorTests {
         let output = ConceptSelector(store: store).select(.smart(now: EngineFixtures.now))
 
         #expect(output.targetConceptId == nil)
-        #expect(output.rankedConcepts.isEmpty)
-        #expect(output.items.count == 3)
-        #expect(output.items.allSatisfy { $0.role == .review })
-        #expect(output.items.map { $0.gapId } == ["done-2", "done-1", "done-0"], "most overdue first")
-        #expect(output.headline == "Today: review — keeping what you've learned fresh.")
+        #expect(output.rankedConcepts.isEmpty, "mastered concepts are never ranked as targets")
+        #expect(output.items.count == 1)
+        #expect(output.items.first?.role == .checkIn)
+        #expect(output.items.first?.gapId == "done-2", "weakest first, most overdue on a tie")
+        #expect(output.headline == "Today: check-ins — making sure what you've learned still holds.")
     }
 
     @Test func smartIsHonestlyEmptyWithNothingToPractice() {
-        let store = EngineFixtures.store(concepts: [EngineFixtures.mastered("done")], gaps: [])
+        // Mastered, verified, and its next check-in weeks away: nothing to do.
+        var resting = EngineFixtures.mastered("done")
+        resting.nextCheckInAt = EngineFixtures.now.addingTimeInterval(30 * EngineFixtures.day)
+        resting.checkInIntervalDays = Tuning.checkInInitialDays
+        let store = EngineFixtures.store(concepts: [resting], gaps: [])
         let output = ConceptSelector(store: store).select(.smart(now: EngineFixtures.now))
         #expect(output.isEmpty)
         #expect(output.headline == "Nothing to practice right now.")
+
+        // The same concept with no gaps but a check-in due is verified with a
+        // content probe (B13): the item is materialised by the assembler.
+        store.concepts[0].nextCheckInAt = EngineFixtures.now.addingTimeInterval(-EngineFixtures.day)
+        let due = ConceptSelector(store: store).select(.smart(now: EngineFixtures.now))
+        #expect(due.checkInItems.map { $0.gapId } == [ConceptSelector.probeGapId(for: resting, session: store.sessionIndex)])
+
+        // Without probe content there is no vehicle, so the check-in is skipped.
+        store.probeContent = { _ in [] }
+        #expect(ConceptSelector(store: store).select(.smart(now: EngineFixtures.now)).isEmpty)
     }
 
     @Test func probeFollowsTheSessionCadence() {
@@ -149,6 +171,60 @@ struct ConceptSelectorTests {
         quiet.probeEveryNSessions = 0
         g.store.sessionIndex = 0
         #expect(ConceptSelector(store: g.store, config: quiet).select(.smart(now: EngineFixtures.now)).probeItem == nil)
+    }
+
+    // MARK: B12 — the target must have something to teach right now
+
+    @Test func smartSkipsATopRankedLearningConceptWithNoPracticableSpine() {
+        let now = EngineFixtures.now
+        // "a-idle" is learning but its only gap is mastered and resting; "b-full"
+        // ties on score and loses the id tie-break, but has a practicable gap.
+        let concepts = [EngineFixtures.learning("a-idle", mastery: 0.5), EngineFixtures.learning("b-full", mastery: 0.5)]
+        let resting = EngineFixtures.gap("a-idle-0", concept: "a-idle", due: now.addingTimeInterval(9 * EngineFixtures.day),
+                                         consecutiveCorrect: Tuning.gapMasteryStreak, mastered: now)
+        let store = EngineFixtures.store(concepts: concepts, gaps: [resting, EngineFixtures.gap("b-full-0", concept: "b-full")])
+        store.sessionIndex = 1
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(output.rankedConcepts.first?.concept.id == "a-idle", "still ranked first: it is a learning concept")
+        #expect(output.targetConceptId == "b-full", "the target is the first ranked concept with a non-empty spine")
+        #expect(output.items.map { $0.gapId } == ["b-full-0"])
+        #expect(output.headline.hasPrefix("Today: Concept b-full"))
+
+        // With nothing practicable anywhere the lesson is honestly empty rather
+        // than headlining a concept it cannot teach — and no stall is counted.
+        store.gaps = [resting]
+        let empty = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(empty.targetConceptId == nil && empty.isEmpty)
+        #expect(empty.headline == "Nothing to practice right now.")
+        store.noteLessonSelected(empty)
+        store.completeLesson(targetConceptId: empty.targetConceptId, isCapstone: false, now: now)
+        #expect(store.concept("a-idle")?.stallAttempts == 0)
+    }
+
+    // MARK: B13 — probes are one-shot diagnostics
+
+    @Test func anAnsweredProbeIsNeverReselectedAsSpineReviewOrFiller() {
+        let now = EngineFixtures.now
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.5)], gaps: [])
+        store.sessionIndex = 1   // not a probe session: no fresh probe is injected
+        // An answered probe: due now, on the schedule, sitting in the gap list.
+        var probe = EngineFixtures.gap("probe-c-0", concept: "c", due: now.addingTimeInterval(-EngineFixtures.day),
+                                       reviewCount: 1, lastReviewed: now.addingTimeInterval(-3 * EngineFixtures.day))
+        probe.isProbe = true
+        probe.probeOptions = ["x", "y", "z"]
+        store.gaps = [probe, EngineFixtures.gap("c-0", concept: "c")]
+        #expect(store.schedulableGaps(at: now).contains { $0.id == "probe-c-0" }, "the schedule still lists it")
+
+        let selector = ConceptSelector(store: store)
+        let output = selector.select(.smart(now: now))
+        #expect(output.targetConceptId == "c")
+        #expect(output.items.map { $0.gapId } == ["c-0"], "the probe rides in neither spine, review nor top-up")
+        #expect(selector.select(SelectionRequest(mode: .smart, lessonSize: 6, now: now)).gapIds == ["c-0"])
+
+        // With only the probe left, the concept has nothing practicable to teach.
+        store.gaps = [probe]
+        #expect(!selector.hasPracticableGap(store.concept("c")!, now: now))
+        #expect(selector.select(.smart(now: now)).isEmpty)
     }
 
     @Test func smartHonoursTheRequestedLessonSize() {
@@ -183,11 +259,20 @@ struct ConceptSelectorTests {
 
     @Test func scopedStillAppliesEligibilityDedupesAndDropsUnknowns() {
         let g = EngineFixtures.smallGraph()
-        g.store.gaps.append(EngineFixtures.gap("retired", concept: g.root, mastered: EngineFixtures.now))
+        let now = EngineFixtures.now
+        // Mastered, not due, recall high (legacy fallback 0.95 ≥ masteredRecallFloor): not practicable.
+        g.store.gaps.append(EngineFixtures.gap("retired", concept: g.root, due: now.addingTimeInterval(30 * EngineFixtures.day),
+                                               consecutiveCorrect: Tuning.gapMasteryStreak, mastered: now))
         let ids = ["root-0", "root-0", "blocked-0", "done-0", "retired", "does-not-exist", "root-0"]
-        let output = ConceptSelector(store: g.store).select(.scoped(ids, name: "Mixed", now: EngineFixtures.now))
+        let output = ConceptSelector(store: g.store).select(.scoped(ids, name: "Mixed", now: now))
 
-        #expect(output.gapIds == ["root-0", "done-0"], "dedupe, drop blocked + mastered + unknown, weakest first")
+        #expect(output.gapIds == ["root-0", "done-0"], "dedupe, drop blocked + resting mastered + unknown, weakest first")
+
+        // A mastered gap whose schedule wants a check is practicable again (B3).
+        g.store.gaps.append(EngineFixtures.gap("lapsing", concept: g.root, due: now.addingTimeInterval(-EngineFixtures.day),
+                                               consecutiveCorrect: Tuning.gapMasteryStreak, mastered: now))
+        let check = ConceptSelector(store: g.store).select(.scoped(["retired", "lapsing"], name: "Mastered", now: now))
+        #expect(check.gapIds == ["lapsing"], "mastery is a badge, not retirement: due mastered gaps come back")
     }
 
     @Test func scopedCapsAtTheScopedLessonSize() {
@@ -229,16 +314,17 @@ struct ConceptSelectorTests {
         #expect(s.selectionRequest(for: .critical).scopeName == "Critical Gaps")
         #expect(s.selectionRequest(for: .retention(.atRisk)).scopeName == "At risk")
 
-        // Error patterns resolve to the gaps behind their records and use the pattern's label.
+        // Error patterns resolve to the gaps behind their records and are labelled
+        // with the concept the records group under (A12).
         s.errors = [
             ErrorRecord(id: "e1", gapId: "root-2", category: .grammar, frenchWord: "x", userAnswer: "a",
-                        correctAnswer: "b", conceptLabel: "Pattern P", occurredAt: EngineFixtures.now),
+                        correctAnswer: "b", conceptLabel: "Pattern P", occurredAt: EngineFixtures.now, conceptId: "root"),
             ErrorRecord(id: "e2", gapId: "root-4", category: .grammar, frenchWord: "x", userAnswer: "a",
-                        correctAnswer: "b", conceptLabel: "Pattern P", occurredAt: EngineFixtures.now),
+                        correctAnswer: "b", conceptLabel: "Pattern P", occurredAt: EngineFixtures.now, conceptId: "root"),
         ]
         let pattern = s.errorPatterns.first!
         let request = s.selectionRequest(for: .errorPattern(id: pattern.id), now: EngineFixtures.now)
-        #expect(request.scopeName == "Pattern P")
+        #expect(request.scopeName == "Concept root")
         if case .scoped(let ids) = request.mode {
             #expect(Set(ids) == ["root-2", "root-4"])
         } else {

@@ -143,6 +143,10 @@ nonisolated enum SelectedItemRole: String, Hashable, Codable {
     case target
     /// Interleaved review (smart), or any item of a scoped / capstone selection.
     case review
+    /// A check-in on a concept that was MASTERED when the lesson was selected: a
+    /// miss weighs `Tuning.checkInMissWeight`, and the outcome feeds the concept's
+    /// adaptive check-in interval and the retention governor (Pass 3 F4/F6).
+    case checkIn
     /// A one-item blind-spot probe for a never-observed frontier concept.
     case probe
 }
@@ -179,11 +183,21 @@ nonisolated struct SelectionOutput: Hashable {
     var rankedConcepts: [ScoredConcept]
     /// The learner's current ability band as the ranker sees it (theta → CEFR).
     var learnerLevel: CEFRLevel
+    /// In-session concept release (Pass 3 F7): after this many consecutive first-try
+    /// correct answers on one concept the lesson drops that concept's remaining items
+    /// and backfills from review. Read from `Tuning.conceptReleaseStreak`.
+    var conceptReleaseStreak: Int = Tuning.conceptReleaseStreak
+    /// Concepts in this selection that have stalled (`Concept.isStalled`): the lesson
+    /// re-shows their skill card before practice (Package B15).
+    var stalledConceptIds: [String] = []
+    /// The retention governor was active when this selection was made (Pass 3 F6).
+    var governorActive: Bool = false
 
     var mode: SelectionMode { request.mode }
     var isEmpty: Bool { items.isEmpty }
     var gapIds: [String] { items.map { $0.gapId } }
     var probeItem: SelectedItem? { items.first { $0.role == .probe } }
+    var checkInItems: [SelectedItem] { items.filter { $0.role == .checkIn } }
     var reasonsByGapId: [String: String] {
         var out: [String: String] = [:]
         for item in items { out[item.gapId] = item.reason }

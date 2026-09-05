@@ -41,18 +41,20 @@ struct LessonAssembler {
             if let gap = byId[item.gapId] {
                 resolved.append((item, gap))
                 if item.role == .probe { probeGapId = gap.id }
-            } else if item.role == .probe, let concept = store.concept(item.conceptId) {
-                let gap = store.materializeProbeGap(id: item.gapId, for: concept, now: output.request.now)
+            } else if item.role == .probe || item.role == .checkIn, let concept = store.concept(item.conceptId),
+                      let gap = store.materializeProbeGap(id: item.gapId, for: concept, now: output.request.now) {
+                // A probe — or a check-in on a concept with no gaps of its own — is a
+                // real French probe item built from the content's `probes` (B13).
                 resolved.append((item, gap))
-                probeGapId = gap.id
+                if item.role == .probe { probeGapId = gap.id }
             }
-            // A non-probe item whose gap is gone is dropped: the store was mutated
-            // between selection and assembly. Nothing is substituted for it.
+            // An item whose gap is gone (or a probe with no content behind it) is
+            // dropped: nothing is substituted for it.
         }
         guard !resolved.isEmpty else { return nil }
 
-        // 2. Order by role (target → review → probe), keeping the selector's own
-        //    priority order within each role.
+        // 2. Order by role (target → check-in → review → probe), keeping the
+        //    selector's own priority order within each role.
         let ordered = resolved.enumerated()
             .sorted { a, b in
                 let ra = Self.roleRank(a.element.item.role), rb = Self.roleRank(b.element.item.role)
@@ -67,7 +69,8 @@ struct LessonAssembler {
         // 4. Reasons + headline come from the selector; skill cards are built here.
         //    A capstone is a pure test: no teaching cards.
         let reasons = output.reasonsByGapId
-        let blocks = output.mode.isCapstone ? [] : buildConceptBlocks(for: gaps, target: target, reasons: reasons)
+        let blocks = output.mode.isCapstone ? [] : buildConceptBlocks(for: gaps, target: target, reasons: reasons,
+                                                                       stalled: Set(output.stalledConceptIds))
 
         return AssembledLesson(selection: output, targetConcept: target, gaps: gaps,
                                reasons: reasons, headline: output.headline,
@@ -77,8 +80,9 @@ struct LessonAssembler {
     nonisolated private static func roleRank(_ role: SelectedItemRole) -> Int {
         switch role {
         case .target: return 0
-        case .review: return 1
-        case .probe: return 2
+        case .checkIn: return 1
+        case .review: return 2
+        case .probe: return 3
         }
     }
 
@@ -107,7 +111,8 @@ struct LessonAssembler {
     /// One ConceptBlock per distinct concept present in the lesson, target first.
     /// Pulls a real worked example from the lesson's own gaps and reuses the
     /// already-built reason line. Capped so lessons don't become a slog.
-    private func buildConceptBlocks(for gaps: [GapItem], target: Concept?, reasons: [String: String]) -> [ConceptBlock] {
+    private func buildConceptBlocks(for gaps: [GapItem], target: Concept?, reasons: [String: String],
+                                    stalled: Set<String> = []) -> [ConceptBlock] {
         var blocks: [ConceptBlock] = []
         var seen = Set<String>()
 
@@ -117,7 +122,9 @@ struct LessonAssembler {
                 ?? store.gaps(forConcept: concept.id).first { !$0.exampleSentence.isEmpty }
             let reason = example.flatMap { reasons[$0.id] }
             return ConceptBlock(concept: concept, explanation: concept.description,
-                                example: example, reason: reason)
+                                example: example, reason: reason,
+                                teaching: FoundationContentLoader.teaching(for: concept.id),
+                                isStalled: stalled.contains(concept.id))
         }
 
         if let target {

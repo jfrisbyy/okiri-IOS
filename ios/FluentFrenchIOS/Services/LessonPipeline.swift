@@ -39,6 +39,9 @@ struct LessonPipeline {
     func lesson(for request: SelectionRequest) -> AssembledLesson? {
         let output = selector.select(request)
         store.selectionLog.record(output)
+        // Stall bookkeeping (B15): remember the target's state at selection so
+        // `completeLesson` can tell whether this lesson moved it.
+        store.noteLessonSelected(output)
         return assembler.assemble(output)
     }
 

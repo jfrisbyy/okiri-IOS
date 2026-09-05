@@ -16,6 +16,13 @@ nonisolated enum ReviewGrade: Int {
     case easy = 4
 }
 
+/// How an answer was produced. The store derives the FSRS grade and the concept
+/// evidence weight from this (`Tuning.gradeMapping`, `Tuning.formatEvidenceWeight`)
+/// so recognition and production are never scored alike.
+nonisolated enum AnswerFormat: String, Codable, CaseIterable {
+    case multipleChoice, fillBlank, trueFalse, translation, arrange, match, probe, speaking, converse
+}
+
 nonisolated enum FSRS {
     /// Target recall probability when scheduling the next review.
     static let requestRetention: Double = 0.9
@@ -74,33 +81,50 @@ nonisolated enum FSRS {
     // MARK: - Internal curve math
 
     private static func initialDifficulty(grade: ReviewGrade) -> Double {
-        let d = 5.0 - (Double(grade.rawValue) - 3.0) * 1.0
+        let step = Double(grade.rawValue) - Double(ReviewGrade.good.rawValue)
+        let d = Tuning.fsrsNeutralDifficulty - step * Tuning.fsrsInitialDifficultyStep
         return min(10, max(1, d))
     }
 
     private static func initialStability(grade: ReviewGrade) -> Double {
-        switch grade {
-        case .again: return 0.4
-        case .hard: return 1.2
-        case .good: return 2.6
-        case .easy: return 5.8
-        }
+        Tuning.fsrsInitialStability(for: grade)
     }
 
+    /// Difficulty steps away from `.good` by grade; a `.good` answer also drifts
+    /// toward `Tuning.fsrsDifficultyMeanReversion`, so a card that keeps being
+    /// answered well eases instead of ratcheting up forever on its past lapses.
     private static func nextDifficulty(current: Double, grade: ReviewGrade) -> Double {
-        current - 0.1 * (Double(grade.rawValue) - 3.0)
+        let step = Double(grade.rawValue) - Double(ReviewGrade.good.rawValue)
+        var d = current - Tuning.fsrsDifficultyStep * step
+        if grade == .good {
+            d += (Tuning.fsrsDifficultyMeanReversion - d) * Tuning.fsrsDifficultyReversionRate
+        }
+        return d
     }
 
+    /// Success growth: stability grows by a term that is larger for easier cards
+    /// (headroom below `Tuning.fsrsGrowthDifficultyCeiling`) and for recalls that
+    /// were hard-won (low retrievability), scaled by `Tuning.fsrsGrowthRate` and
+    /// shaped by the grade (`fsrsHardPenalty` / `fsrsEasyBonus`).
     private static func successStability(difficulty: Double, stability: Double, retrievability: Double, grade: ReviewGrade) -> Double {
-        let hardPenalty = grade == .hard ? 0.8 : 1.0
-        let easyBonus = grade == .easy ? 1.3 : 1.0
-        let growth = exp(0.4 * (11 - difficulty)) * (1 + (1 - retrievability) * 2)
-        return stability * (1 + growth * 0.1 * hardPenalty * easyBonus)
+        let hardPenalty = grade == .hard ? Tuning.fsrsHardPenalty : 1.0
+        let easyBonus = grade == .easy ? Tuning.fsrsEasyBonus : 1.0
+        let headroom = exp(Tuning.fsrsGrowthScale * (Tuning.fsrsGrowthDifficultyCeiling - difficulty))
+        let recallBoost = 1 + (1 - retrievability) * Tuning.fsrsGrowthRetrievabilityWeight
+        let growth = headroom * recallBoost
+        return stability * (1 + growth * Tuning.fsrsGrowthRate * hardPenalty * easyBonus)
     }
 
-    private static func lapseStability(difficulty: Double, stability: Double, retrievability: Double) -> Double {
-        let s = 1.5 * pow(stability, 0.2) * exp(0.2 * (11 - difficulty))
-        return max(0.2, min(s, stability))
+    /// Multiplicative, monotone lapse: the new stability is a fraction (< 1) of the
+    /// old one, so a miss ALWAYS comes back sooner than a hit. Harder cards lose
+    /// more; a lapse when recall was already unlikely (low retrievability) is the
+    /// expected outcome and keeps more. The ratio is capped below 1 and the result
+    /// floored at `Tuning.fsrsMinStability`.
+    static func lapseStability(difficulty: Double, stability: Double, retrievability: Double) -> Double {
+        let difficultyShape = pow(1 - Tuning.fsrsLapseDifficultyShape, difficulty - Tuning.fsrsNeutralDifficulty)
+        let retrievabilityShape = 1 + Tuning.fsrsLapseRetrievabilityShape * (1 - min(1, max(0, retrievability)))
+        let ratio = min(Tuning.fsrsLapseMaxRatio, Tuning.fsrsLapseFactorBase * difficultyShape * retrievabilityShape)
+        return max(Tuning.fsrsMinStability, stability * ratio)
     }
 
     private static func nextInterval(stability: Double) -> Double {

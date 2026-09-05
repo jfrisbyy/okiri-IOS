@@ -15,6 +15,9 @@ struct ProfileView: View {
     @State private var showAssessment = false
     @State private var showPreferences = false
     @State private var showSignOutConfirm = false
+    @State private var showForceSignOutConfirm = false
+    @State private var showResetConfirm = false
+    @Environment(CloudSync.self) private var cloud: CloudSync?
 
     var body: some View {
         NavigationStack {
@@ -137,39 +140,125 @@ struct ProfileView: View {
     private var accountSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Account")
-            HStack(spacing: 12) {
-                Image(systemName: "icloud.fill").font(.system(size: 18)).foregroundStyle(Theme.secondary)
-                    .frame(width: 44, height: 44).background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Backed up to your account").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                    Text("Your progress syncs across devices automatically.").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                }
-                Spacer(minLength: 0)
-            }
-            .cardStyle(padding: 14)
+            syncCard
 
             Button {
                 Haptics.select(); showSignOutConfirm = true
             } label: {
                 HStack {
                     Image(systemName: "rectangle.portrait.and.arrow.right").font(.system(size: 15, weight: .semibold))
-                    Text("Sign out").font(.system(size: 15, weight: .semibold))
+                    Text(auth.isSigningOut ? "Backing up and signing out…" : "Sign out").font(.system(size: 15, weight: .semibold))
                     Spacer()
+                    if auth.isSigningOut { ProgressView().tint(Theme.primary) }
                 }
                 .foregroundStyle(Theme.text)
                 .cardStyle(padding: 16)
             }
             .buttonStyle(.plain)
             .pressable()
+            .disabled(auth.isSigningOut)
         }
         .confirmationDialog("Sign out of your account?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
-                dismiss()
-                Task { await auth.signOut() }
+                Task { await signOut(force: false) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your progress is saved to your account and will be here when you sign back in.")
+            Text("Your progress will be backed up to your account first, and will be here when you sign back in.")
+        }
+        .confirmationDialog("Couldn't back up your progress. Sign out anyway?", isPresented: $showForceSignOutConfirm, titleVisibility: .visible) {
+            Button("Sign out anyway", role: .destructive) {
+                Task { await signOut(force: true) }
+            }
+            Button("Keep me signed in", role: .cancel) {}
+        } message: {
+            Text("Anything not yet backed up will be lost from this device. You can stay signed in and try again once you're back online.")
+        }
+    }
+
+    /// Backup status card driven by `CloudSync.syncState`.
+    private var syncCard: some View {
+        HStack(spacing: 12) {
+            Image(systemName: syncIcon).font(.system(size: 18)).foregroundStyle(syncTint)
+                .frame(width: 44, height: 44).background(syncTint.opacity(0.12)).clipShape(.rect(cornerRadius: 12))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(syncTitle).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(syncSubtitle).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+            Spacer(minLength: 0)
+            if case .syncing = syncState {
+                ProgressView().tint(Theme.secondary)
+            } else if case .failed = syncState, cloud != nil {
+                Button("Retry") {
+                    Haptics.select()
+                    Task { await cloud?.flushPending(store: store) }
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .buttonStyle(.bordered)
+                .tint(Theme.primary)
+                .accessibilityLabel("Retry backup")
+            }
+        }
+        .cardStyle(padding: 14)
+    }
+
+    private var syncState: SyncState { cloud?.syncState ?? .localOnly }
+
+    private var syncTitle: String {
+        switch syncState {
+        case .synced(let date): return "Backed up · \(Self.relativeAge(of: date))"
+        case .syncing: return "Backing up…"
+        case .failed: return "Backup failed — retry"
+        case .idle: return "Not backed up yet"
+        case .localOnly: return "Not signed in"
+        }
+    }
+
+    private var syncSubtitle: String {
+        switch syncState {
+        case .synced: return "Your progress syncs across devices."
+        case .syncing: return "Sending your latest progress to your account."
+        case .failed(let message): return message
+        case .idle: return "Your next answer will be backed up automatically."
+        case .localOnly: return "Progress is only on this device."
+        }
+    }
+
+    private var syncIcon: String {
+        switch syncState {
+        case .synced: return "checkmark.icloud.fill"
+        case .syncing: return "arrow.triangle.2.circlepath.icloud.fill"
+        case .failed: return "exclamationmark.icloud.fill"
+        case .idle: return "icloud.fill"
+        case .localOnly: return "icloud.slash.fill"
+        }
+    }
+
+    private var syncTint: Color {
+        switch syncState {
+        case .synced, .syncing, .idle: return Theme.secondary
+        case .failed: return Theme.error
+        case .localOnly: return Theme.textMuted
+        }
+    }
+
+    /// "just now" / "2 min. ago" / "3 hr. ago".
+    private static func relativeAge(of date: Date) -> String {
+        if Date().timeIntervalSince(date) < 60 { return "just now" }
+        return date.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated))
+    }
+
+    /// Back up, then sign out. A failed backup surfaces the "sign out anyway?"
+    /// dialog instead of wiping local progress.
+    private func signOut(force: Bool) async {
+        do {
+            try await auth.signOut(force: force)
+        } catch is SignOutBlocked {
+            Haptics.select()
+            showForceSignOutConfirm = true
+        } catch {
+            showForceSignOutConfirm = true
         }
     }
 
@@ -205,13 +294,41 @@ struct ProfileView: View {
         }
     }
 
+    /// DEBUG-only developer tools: the engine diagnostics screen (B14) and a reset
+    /// that wipes every field of the store after confirmation. Release builds
+    /// render nothing here — a real learner never sees either.
+    @ViewBuilder
     private var resetButton: some View {
-        Button(role: .destructive) {
-            store.resetProgress()
+#if DEBUG
+        NavigationLink {
+            DiagnosticsView().environment(store)
         } label: {
-            Text("Reset demo progress").font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.error)
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg").font(.system(size: 13, weight: .semibold))
+                Text("Engine diagnostics (debug)").font(.system(size: 14, weight: .medium))
+            }
+            .foregroundStyle(Theme.textMuted)
         }
         .padding(.top, 8)
+        .accessibilityHint("Shows the per-lesson engine metrics log.")
+        Button(role: .destructive) {
+            showResetConfirm = true
+        } label: {
+            Text("Reset progress (debug)").font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.error)
+        }
+        .padding(.top, 8)
+        .accessibilityHint("Deletes all progress on this device and in your account.")
+        .confirmationDialog("Reset all progress?", isPresented: $showResetConfirm, titleVisibility: .visible) {
+            Button("Reset everything", role: .destructive) {
+                store.resetProgress()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This wipes words, skills, streak, XP and preferences on this device and in your account. It cannot be undone.")
+        }
+#else
+        EmptyView()
+#endif
     }
 }
 

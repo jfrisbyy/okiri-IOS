@@ -78,15 +78,18 @@ struct RetentionView: View {
                     }
                     .padding(.horizontal, 20)
                     if tab == .atRisk || tab == .fading {
-                        Button {
-                            scopedLesson = LessonPipeline(store: store).lesson(for: .retention(tab.bucket))
-                        } label: {
-                            Text("Review these now").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-                                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                                .background(tint).clipShape(.rect(cornerRadius: 14))
+                        reviewNowButton
+                    } else if tab == .mastered {
+                        // Mastery is a badge, not retirement (B3): the schedule can
+                        // still want a check, and only those items are reviewed.
+                        let dueCount = store.dueMasteredGaps(at: Date()).count
+                        if dueCount > 0 {
+                            Text("\(dueCount) due for a check — mastered words stay on the schedule.")
+                                .font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 20)
+                            reviewNowButton
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 20)
                     }
                 }
             }
@@ -97,6 +100,18 @@ struct RetentionView: View {
         .fullScreenCover(item: $scopedLesson) { lesson in
             LessonView(gaps: lesson.gaps, assembled: lesson)
         }
+    }
+
+    private var reviewNowButton: some View {
+        Button {
+            scopedLesson = LessonPipeline(store: store).lesson(for: .retention(tab.bucket))
+        } label: {
+            Text("Review these now").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+                .frame(maxWidth: .infinity).padding(.vertical, 15)
+                .background(tint).clipShape(.rect(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 20)
     }
 
     private func countFor(_ t: Tab) -> Int {

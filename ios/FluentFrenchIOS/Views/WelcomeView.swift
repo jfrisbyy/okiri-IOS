@@ -74,7 +74,43 @@ struct WelcomeView: View {
         }
     }
 
+    @ViewBuilder
     private var buttons: some View {
+        if let configurationError = auth.configurationError {
+            misconfigured(configurationError)
+        } else {
+            signInButtons
+        }
+    }
+
+    /// The build has no Supabase URL / key: say so plainly instead of offering
+    /// sign-in buttons that can only fail.
+    private func misconfigured(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.warning)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .multilineTextAlignment(.center)
+            Text("Sign-in keys weren't included in this build. If you're testing, install a release build; if you're developing, set the Supabase URL and anon key.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(18)
+        .background(Theme.card)
+        .clipShape(.rect(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Theme.border, lineWidth: 1)
+        )
+    }
+
+    private var signInButtons: some View {
         VStack(spacing: 14) {
             SignInWithAppleButton(.continue) { request in
                 request.requestedScopes = [.email, .fullName]

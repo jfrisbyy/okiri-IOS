@@ -16,18 +16,31 @@ enum EngineFixtures {
     /// A fixed clock so every selection in the tests is reproducible.
     nonisolated static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    /// An in-memory store: seed taxonomy, no gaps, nothing persisted.
+    /// An in-memory store: seed taxonomy, no gaps, nothing persisted. Probe content
+    /// is synthetic (no bundle on the test host), so probes and gap-less check-ins work.
     static func store() -> AppStore {
-        AppStore(persistence: nil)
+        let s = AppStore(persistence: nil)
+        s.probeContent = syntheticProbes
+        return s
     }
 
     /// An in-memory store holding exactly these concepts and gaps.
     static func store(concepts: [Concept], gaps: [GapItem], theta: Double = 0.2) -> AppStore {
-        let s = AppStore(persistence: nil)
+        let s = store()
         s.concepts = concepts
         s.gaps = gaps
         s.abilityTheta = theta
         return s
+    }
+
+    /// Three synthetic content-v2 probes per concept (tokens, not French): the
+    /// prompt, the answer and three distractors, exactly the shape the loader yields.
+    nonisolated static func syntheticProbes(for conceptId: String) -> [FoundationProbeContent] {
+        (0..<3).map { i in
+            FoundationProbeContent(fr: "\(conceptId)-probe-\(i)-fr", en: "\(conceptId)-probe-\(i)-answer",
+                                   ex: "\(conceptId)-probe-\(i)-ex", exEn: "\(conceptId)-probe-\(i)-exEn",
+                                   options: ["\(conceptId)-d1", "\(conceptId)-d2", "\(conceptId)-d3"])
+        }
     }
 
     // MARK: Concepts
@@ -40,9 +53,11 @@ enum EngineFixtures {
                         beta: Double = 1,
                         lastTaughtSession: Int? = nil,
                         newlyUnlocked: Bool = false) -> Concept {
+        // Raw observations mirror the decode migration: the undecayed evidence
+        // above the (1, 1) prior.
         Concept(id: id, name: "Concept \(id)", category: category, cefrLevel: level,
                 prerequisites: prerequisites, description: "Synthetic concept \(id).",
-                alpha: alpha, beta: beta, lastTestedAt: nil,
+                alpha: alpha, beta: beta, lastTestedAt: nil, observationCount: max(0, alpha + beta - 2),
                 lastTaughtSession: lastTaughtSession, newlyUnlocked: newlyUnlocked)
     }
 

@@ -134,12 +134,16 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     var isMastered: Bool { masteredAt != nil }
 
     /// Probability the learner can recall this right now (FSRS retrievability).
-    var retrievability: Double {
+    var retrievability: Double { retrievability(at: Date()) }
+
+    /// Retrievability evaluated against an explicit clock — the selector threads
+    /// `SelectionRequest.now` through so selections are reproducible headlessly.
+    func retrievability(at now: Date) -> Double {
         guard let fsrs else {
             // fall back to a coarse estimate from consecutive correct
             return min(0.95, 0.4 + Double(consecutiveCorrect) * 0.12)
         }
-        return FSRS.retrievability(state: fsrs, now: Date())
+        return FSRS.retrievability(state: fsrs, now: now)
     }
 }
 

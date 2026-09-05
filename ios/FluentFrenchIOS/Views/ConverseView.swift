@@ -21,12 +21,8 @@ struct ConverseView: View {
         startPoint: .topLeading, endPoint: .bottomTrailing
     )
 
-    private var userLevel: CEFRLevel {
-        let mastered = store.masteredGaps.count
-        if mastered >= 40 { return .B1 }
-        if mastered >= 15 { return .A2 }
-        return .A1
-    }
+    /// The engine's one notion of level (theta → CEFR), not a local gap-count rule.
+    private var userLevel: CEFRLevel { store.learnerLevel }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -194,12 +190,8 @@ private struct ConverseCallView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
 
-    private var userLevel: CEFRLevel {
-        let mastered = store.masteredGaps.count
-        if mastered >= 40 { return .B1 }
-        if mastered >= 15 { return .A2 }
-        return .A1
-    }
+    /// The engine's one notion of level (theta → CEFR), not a local gap-count rule.
+    private var userLevel: CEFRLevel { store.learnerLevel }
 
     @State private var elapsed = 0
     @State private var ended = false

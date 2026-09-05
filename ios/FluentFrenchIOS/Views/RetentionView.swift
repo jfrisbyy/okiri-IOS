@@ -15,6 +15,16 @@ struct RetentionView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case atRisk = "At risk", fading = "Fading", fresh = "Fresh", mastered = "Mastered"
         var id: String { rawValue }
+
+        /// The selection scope this tab declares when the learner taps "Review these now".
+        var bucket: RetentionBucket {
+            switch self {
+            case .atRisk: return .atRisk
+            case .fading: return .fading
+            case .fresh: return .fresh
+            case .mastered: return .mastered
+            }
+        }
     }
 
     private var items: [GapItem] {
@@ -69,7 +79,7 @@ struct RetentionView: View {
                     .padding(.horizontal, 20)
                     if tab == .atRisk || tab == .fading {
                         Button {
-                            scopedLesson = LessonAssembler(store: store).assembleScoped(candidates: items, scopeName: tab.rawValue)
+                            scopedLesson = LessonPipeline(store: store).lesson(for: .retention(tab.bucket))
                         } label: {
                             Text("Review these now").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
                                 .frame(maxWidth: .infinity).padding(.vertical, 15)
@@ -194,11 +204,7 @@ struct ErrorPatternDetailView: View {
         .navigationTitle("Pattern").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Button {
-                let ids = Set(pattern.records.map { $0.gapId })
-                let gaps = store.gaps.filter { ids.contains($0.id) }
-                if !gaps.isEmpty {
-                    scopedLesson = LessonAssembler(store: store).assembleScoped(candidates: gaps, scopeName: pattern.conceptLabel)
-                }
+                scopedLesson = LessonPipeline(store: store).lesson(for: .errorPattern(id: pattern.id))
             } label: {
                 Text("Practice this pattern").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
                     .frame(maxWidth: .infinity).padding(.vertical, 16)

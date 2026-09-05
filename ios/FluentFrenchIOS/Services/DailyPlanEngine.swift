@@ -4,8 +4,10 @@
 //
 //  Prescribes the SHAPE of the day — minutes weighted across the learner's chosen
 //  activities — while the learner always picks the content. The tilt comes from the
-//  EXISTING concept model (ConceptSelector), not a parallel curriculum brain: one
-//  intelligence, two views.
+//  EXISTING concept model, not a parallel curriculum brain: one intelligence, two
+//  views. Concretely (Pass 2): the tilt is computed from
+//  `SelectionOutput.rankedConcepts` — the selector's own ranking — and from
+//  nothing else. This engine never scores or re-ranks a concept.
 //
 //  Mechanism: take the top priority concepts, sum their priority-weighted modality
 //  affinities into a distribution over activities, zero out activities the learner
@@ -53,7 +55,16 @@ struct DailyPlanEngine {
     var config: DailyPlanConfig = .tuning
     var weights: ConceptSelectionWeights = .tuning
 
-    func makePlan() -> DailyPlan {
+    /// Today's plan, tilted by the selector's current ranking.
+    func makePlan(now: Date = Date()) -> DailyPlan {
+        let selection = ConceptSelector(store: store, weights: weights).select(.smart(now: now))
+        return makePlan(from: selection)
+    }
+
+    /// The plan for a given selection output. The ONLY input that tilts the day is
+    /// `selection.rankedConcepts`; the rest of the output (target, items, headline)
+    /// is ignored here by design.
+    func makePlan(from selection: SelectionOutput) -> DailyPlan {
         let prefs = store.preferences ?? .default
         // Only ever prescribe activities the learner is actually ready for — the
         // readiness gate filters out anything still locked behind Foundation.
@@ -65,8 +76,7 @@ struct DailyPlanEngine {
         }
         let budget = prefs.timeBudget.minutes
 
-        let selector = ConceptSelector(store: store, weights: weights)
-        let ranked = Array(selector.rankedEligible().prefix(config.topConceptCount))
+        let ranked = Array(selection.rankedConcepts.prefix(config.topConceptCount))
 
         // Cold start: too little signal to tilt — even, honest split.
         guard ranked.contains(where: { $0.score > 0 }) else {

@@ -62,9 +62,9 @@ struct HomeView: View {
     @Environment(AppStore.self) private var store
     @State private var showProfile = false
     @State private var showCEFR = false
-    @State private var lessonGaps: [GapItem]? = nil
-    @State private var smartLesson: AssembledLesson? = nil
-    @State private var capstoneGaps: [GapItem]? = nil
+    /// The lesson being shown (smart, scoped or capstone) — always assembled from
+    /// one SelectionOutput by the LessonPipeline; Home never picks items itself.
+    @State private var activeLesson: AssembledLesson? = nil
     @State private var statsExpanded = false
     @State private var currentCardId: String? = "learn"
     @State private var activeSection: HomeSection? = nil
@@ -163,20 +163,8 @@ struct HomeView: View {
             .navigationBarHidden(true)
             .sheet(isPresented: $showProfile) { ProfileView() }
             .sheet(isPresented: $showCEFR) { CEFRSheet() }
-            .fullScreenCover(item: Binding(
-                get: { lessonGaps.map { LessonPayload(gaps: $0) } },
-                set: { lessonGaps = $0?.gaps }
-            )) { payload in
-                LessonView(gaps: payload.gaps)
-            }
-            .fullScreenCover(item: $smartLesson) { lesson in
-                LessonView(gaps: lesson.gaps, assembled: lesson)
-            }
-            .fullScreenCover(item: Binding(
-                get: { capstoneGaps.map { LessonPayload(gaps: $0) } },
-                set: { capstoneGaps = $0?.gaps }
-            )) { payload in
-                LessonView(gaps: payload.gaps, isCapstone: true)
+            .fullScreenCover(item: $activeLesson) { lesson in
+                LessonView(gaps: lesson.gaps, assembled: lesson, isCapstone: lesson.isCapstone)
             }
             .fullScreenCover(item: $activeSection) { section in
                 sectionView(section)
@@ -321,12 +309,7 @@ struct HomeView: View {
         .padding(.top, 100)
     }
 
-    private var levelLabel: String {
-        let mastered = store.masteredGaps.count
-        if mastered >= 40 { return "B1 · Studying" }
-        if mastered >= 15 { return "A2 · Studying" }
-        return "A1 · Studying"
-    }
+    private var levelLabel: String { "\(store.learnerLevel.rawValue) · Studying" }
 
     // MARK: - Stats chip card (overlapping)
 
@@ -412,6 +395,9 @@ struct HomeView: View {
 
     // MARK: - Recommendations
 
+    /// A card is a label for a declared intent ("practice what's due in Grammar").
+    /// It carries counts for display only — the lesson itself is a scoped
+    /// selection (`.dueInCategory`) decided by the selector on tap.
     private struct Recommendation: Identifiable {
         let id: String
         let category: GapCategory
@@ -419,25 +405,23 @@ struct HomeView: View {
         let urgency: String
         let urgencyColor: Color
         let icon: String
-        let gaps: [GapItem]
     }
 
     private var recommendations: [Recommendation] {
         var result: [Recommendation] = []
         for category in GapCategory.allCases {
-            let critical = store.criticalGaps.filter { $0.category == category }
-            let due = store.dueGaps.filter { $0.category == category }
-            let total = critical.count + due.count
+            let critical = store.criticalGaps.filter { $0.category == category }.count
+            let due = store.dueGaps.filter { $0.category == category }.count
+            let total = critical + due
             if total > 0 {
-                let overdue = !critical.isEmpty
+                let overdue = critical > 0
                 result.append(Recommendation(
                     id: "rec-\(category.rawValue)",
                     category: category,
                     count: total,
                     urgency: overdue ? "Overdue" : "Due today",
                     urgencyColor: overdue ? Theme.error : Theme.warning,
-                    icon: overdue ? "exclamationmark.circle.fill" : "clock.fill",
-                    gaps: Array((critical + due).prefix(10))
+                    icon: overdue ? "exclamationmark.circle.fill" : "clock.fill"
                 ))
             }
         }
@@ -452,7 +436,10 @@ struct HomeView: View {
                 Text("Recommended For You").font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.text)
             }
             ForEach(recommendations) { rec in
-                Button { Haptics.select(); lessonGaps = rec.gaps } label: {
+                Button {
+                    Haptics.select()
+                    activeLesson = LessonPipeline(store: store).lesson(for: .dueInCategory(rec.category))
+                } label: {
                     HStack(spacing: 12) {
                         Image(systemName: categoryIcon(rec.category))
                             .font(.system(size: 18)).foregroundStyle(rec.category.color)
@@ -486,17 +473,18 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Build an adaptive lesson via the concept-selection engine, falling back to
-    /// the overdue/active pool when no concept is eligible yet.
+    /// Ask the one selector for today's lesson. When no concept is eligible the
+    /// selector itself answers with a review-only lesson — Home has no fallback
+    /// pool of its own.
     private func startSmartLesson() {
         Haptics.select()
-        let assembler = LessonAssembler(store: store)
-        if let lesson = assembler.assemble(), !lesson.gaps.isEmpty {
-            smartLesson = lesson
-            return
-        }
-        let pool = store.criticalGaps.isEmpty ? store.activeGaps : store.criticalGaps
-        if !pool.isEmpty { lessonGaps = Array(pool.prefix(8)) }
+        activeLesson = LessonPipeline(store: store).smartLesson()
+    }
+
+    /// The concept the selector would teach next — the same answer `startSmartLesson`
+    /// acts on, so the Foundation card never promises one skill and teaches another.
+    private var nextTargetConcept: Concept? {
+        store.concept(LessonPipeline(store: store).preview(.smart()).targetConceptId)
     }
 
     private func categoryIcon(_ c: GapCategory) -> String {
@@ -515,7 +503,7 @@ struct HomeView: View {
         let mastered = store.foundationMastered
         let total = max(store.foundationTotal, 1)
         let progress = min(1, Double(mastered) / Double(total))
-        let next = store.foundationConcepts.first
+        let next = nextTargetConcept
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "building.columns.fill").font(.system(size: 14)).foregroundStyle(Theme.secondary)
@@ -696,8 +684,7 @@ struct HomeView: View {
     private var capstoneRow: some View {
         Button {
             Haptics.select()
-            let gaps = LessonAssembler(store: store).capstoneGaps()
-            if !gaps.isEmpty { capstoneGaps = gaps }
+            activeLesson = LessonPipeline(store: store).capstoneLesson()
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: "flag.checkered").font(.system(size: 18)).foregroundStyle(.white)
@@ -1079,12 +1066,7 @@ private struct CEFRSheet: View {
         (.C2, "Mastery", "Understand virtually everything with precision."),
     ]
 
-    private var currentLevel: CEFRLevel {
-        let mastered = store.masteredGaps.count
-        if mastered >= 40 { return .B1 }
-        if mastered >= 15 { return .A2 }
-        return .A1
-    }
+    private var currentLevel: CEFRLevel { store.learnerLevel }
 
     var body: some View {
         NavigationStack {
@@ -1133,7 +1115,3 @@ private struct CEFRSheet: View {
     }
 }
 
-struct LessonPayload: Identifiable {
-    let id = UUID()
-    let gaps: [GapItem]
-}

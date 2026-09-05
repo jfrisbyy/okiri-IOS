@@ -881,22 +881,11 @@ struct LessonView: View {
         if pct > prevBestAccuracy { UserDefaults.standard.set(pct, forKey: bestAccuracyKey) }
         if bestCombo > prevBestStreak { UserDefaults.standard.set(bestCombo, forKey: bestStreakKey) }
 
-        // Post-lesson bookkeeping: advance the session counter, mark the target
-        // concept as recently taught, then recompute frontier unlocks.
-        store.sessionIndex += 1
-        if let target = assembled?.targetConcept,
-           let idx = store.concepts.firstIndex(where: { $0.id == target.id }) {
-            store.concepts[idx].lastTaughtSession = store.sessionIndex
-        }
-        // Capstone resets the cadence counter; normal lessons advance it.
-        if isCapstone {
-            store.lessonsSinceCapstone = 0
-        } else {
-            store.lessonsSinceCapstone += 1
-        }
-        store.clearUnlockFlags()
-        unlockedConcepts = store.expandFrontier()
-        store.save()
+        // Post-lesson bookkeeping (session counter, taught-concept damping, capstone
+        // cadence, frontier expansion) lives in the store so the engine loop runs
+        // identically with or without a screen.
+        unlockedConcepts = store.completeLesson(targetConceptId: assembled?.targetConcept?.id,
+                                                isCapstone: isCapstone)
 
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { stage = .complete }
     }

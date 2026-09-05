@@ -14,10 +14,11 @@ struct DeckView: View {
     @State private var showMastered = false
     @State private var scopedLesson: AssembledLesson? = nil
 
-    private func startScoped(_ candidates: [GapItem], _ scopeName: String) {
-        guard !candidates.isEmpty else { return }
+    /// Declare intent only: the store resolves the scope to candidates and the
+    /// selector decides what, in what order, and why.
+    private func startScoped(_ scope: SelectionScope) {
         Haptics.select()
-        scopedLesson = LessonAssembler(store: store).assembleScoped(candidates: candidates, scopeName: scopeName)
+        scopedLesson = LessonPipeline(store: store).lesson(for: scope)
     }
 
     private var displayedGaps: [GapItem] {
@@ -88,7 +89,7 @@ struct DeckView: View {
                     .background(Theme.error).clipShape(.capsule)
             }
             Button {
-                startScoped(Array(store.reviewQueue.prefix(10)), "Spaced Repetition")
+                startScoped(.reviewQueue)
             } label: {
                 HStack {
                     Spacer()
@@ -131,8 +132,7 @@ struct DeckView: View {
             }
 
             Button {
-                let pool = critical > 0 ? store.criticalGaps : store.activeGaps
-                startScoped(Array(pool.prefix(8)), critical > 0 ? "Critical Gaps" : "Mixed Practice")
+                startScoped(critical > 0 ? .critical : .mixed)
             } label: {
                 HStack(spacing: 14) {
                     Image(systemName: "bolt.fill").font(.system(size: 18)).foregroundStyle(.white)
@@ -176,7 +176,7 @@ struct DeckView: View {
                             Spacer()
                             if s.active > 0 {
                                 Button {
-                                    startScoped(store.gaps(in: category), category.label)
+                                    startScoped(.category(category))
                                 } label: {
                                     Image(systemName: "play.fill").font(.system(size: 11)).foregroundStyle(category.color)
                                         .frame(width: 28, height: 28).background(category.color.opacity(0.12)).clipShape(.rect(cornerRadius: 8))

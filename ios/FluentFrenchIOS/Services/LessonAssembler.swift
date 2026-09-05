@@ -82,24 +82,6 @@ struct LessonAssembler {
         }
     }
 
-    // MARK: - Transitional entry points
-    // Kept only until every surface builds its own SelectionRequest (Pass 2 step 4).
-
-    func assemble() -> AssembledLesson? {
-        assemble(ConceptSelector(store: store, config: config).select(.smart()))
-    }
-
-    func assembleScoped(candidates: [GapItem], scopeName: String) -> AssembledLesson? {
-        let request = SelectionRequest.scoped(candidates.map { $0.id }, name: scopeName)
-        return assemble(ConceptSelector(store: store, config: config).select(request))
-    }
-
-    /// Capstone lessons come from the selector's `.capstone` mode — there is no
-    /// capstone ranking here any more.
-    func capstoneGaps() -> [GapItem] {
-        assemble(ConceptSelector(store: store, config: config).select(.capstone()))?.gaps ?? []
-    }
-
     // MARK: - Confusion adjacency
 
     private func applyConfusionAdjacency(_ gaps: [GapItem]) -> [GapItem] {

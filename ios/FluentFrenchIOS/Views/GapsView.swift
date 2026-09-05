@@ -13,6 +13,8 @@ struct GapsView: View {
     @Environment(AppStore.self) private var store
     @State private var scopedLesson: AssembledLesson? = nil
 
+    /// Display statistics only. Which gaps a tap practices is the selector's call
+    /// (scoped request on the category) — no candidate set is built here.
     private struct CategoryStat: Identifiable {
         let category: GapCategory
         var id: String { category.rawValue }
@@ -20,7 +22,6 @@ struct GapsView: View {
         let mastered: Int
         let due: Int
         let retention: Int
-        let gaps: [GapItem]
     }
 
     private var stats: [CategoryStat] {
@@ -37,7 +38,7 @@ struct GapsView: View {
                 retention = Int((avg * 100).rounded())
             }
             return CategoryStat(category: cat, active: active.count, mastered: mastered.count,
-                                due: due.count, retention: retention, gaps: Array((store.criticalGaps + store.dueGaps + active).filter { $0.category == cat }.prefix(10)))
+                                due: due.count, retention: retention)
         }
     }
 
@@ -110,9 +111,9 @@ struct GapsView: View {
         else { healthLabel = "At risk"; healthColor = Theme.error }
 
         return Button {
-            guard !stat.gaps.isEmpty else { return }
+            guard stat.active > 0 else { return }
             Haptics.select()
-            scopedLesson = LessonAssembler(store: store).assembleScoped(candidates: stat.gaps, scopeName: stat.category.label)
+            scopedLesson = LessonPipeline(store: store).lesson(for: .category(stat.category))
         } label: {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
@@ -146,7 +147,7 @@ struct GapsView: View {
                         Text("\(stat.retention)% retention").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
-                    if !stat.gaps.isEmpty {
+                    if stat.active > 0 {
                         HStack(spacing: 4) {
                             Text("Practice").font(.system(size: 12, weight: .semibold))
                             Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold))

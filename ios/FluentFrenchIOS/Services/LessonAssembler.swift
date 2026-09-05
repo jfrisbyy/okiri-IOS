@@ -2,10 +2,12 @@
 //  LessonAssembler.swift
 //  FluentFrenchIOS
 //
-//  Turns the selected target concept into an ordered, interleaved item set:
-//  ~60–70% target-concept gaps as the spine, the rest the most-overdue reviews
-//  from other concepts, confusion pairs placed adjacent, plus data-driven reasons
-//  and an occasional blind-spot probe. Hands a plain ordered [GapItem] to the
+//  Turns a `SelectionOutput` into an ordered lesson. It picks NOTHING: every gap
+//  here was chosen by `ConceptSelector`. The assembler resolves the selected items
+//  to gap records (materialising a probe on demand), groups them by role — target
+//  spine first as the teaching lead, then interleaved review, probe last — places
+//  confusion-linked pairs adjacent, attaches the selector's reasons and headline,
+//  and builds the teaching "skill cards". Hands a plain ordered [GapItem] to the
 //  existing LessonService/generator — question generation stays untouched.
 //
 
@@ -15,97 +17,81 @@ import Foundation
 struct LessonAssembler {
     let store: AppStore
     var config: LessonAssemblyConfig = .tuning
-    var weights: ConceptSelectionWeights = .tuning
 
-    func assemble() -> AssembledLesson? {
-        let selector = ConceptSelector(store: store, weights: weights)
-        guard let (target, _) = selector.select() else { return nil }
-
-        let size = max(3, config.lessonSize)
-        let spineCount = max(1, Int((Double(size) * config.targetRatio).rounded()))
-
-        // 1. Spine — the target concept's active gaps, weakest first.
-        let spine = store.gaps(forConcept: target.id)
-            .filter { !$0.isMastered }
-            .sorted { $0.retrievability < $1.retrievability }
-
-        var chosen: [GapItem] = Array(spine.prefix(spineCount))
-        var chosenIds = Set(chosen.map { $0.id })
-
-        // 2. Interleaved review — most-overdue due gaps from OTHER concepts.
-        let now = Date()
-        let reviewPool = store.activeGaps
-            .filter { !chosenIds.contains($0.id) && $0.conceptId != target.id }
-            .filter { $0.nextReviewAt <= now.addingTimeInterval(config.dueWindowDays * 86_400) }
-            .sorted { $0.nextReviewAt < $1.nextReviewAt }
-
-        for gap in reviewPool {
-            if chosen.count >= size { break }
-            chosen.append(gap)
-            chosenIds.insert(gap.id)
-        }
-
-        // Top up from the rest of the target concept / any active gap if short.
-        if chosen.count < size {
-            let filler = (spine.dropFirst(spineCount) + store.activeGaps)
-                .filter { !chosenIds.contains($0.id) }
-            for gap in filler {
-                if chosen.count >= size { break }
-                chosen.append(gap)
-                chosenIds.insert(gap.id)
-            }
-        }
-
-        // 3. Order: target-concept items first (teaching lead), then reviews.
-        chosen.sort { a, b in
-            let aTarget = a.conceptId == target.id
-            let bTarget = b.conceptId == target.id
-            if aTarget != bTarget { return aTarget }
-            return a.retrievability < b.retrievability    // hardest near the end within group
-        }
-
-        // 4. Confusion rule: place confusion-linked pairs adjacent.
-        chosen = applyConfusionAdjacency(chosen)
-
-        // 5. Reasons + headline.
-        let reasons = buildReasons(for: chosen, target: target)
-        let headline = buildHeadline(target: target)
-
-        // 6. Blind-spot probe (rare).
-        var probeId: String? = nil
-        if let probe = blindSpotProbe(excluding: chosenIds, selector: selector) {
-            store.gaps.insert(probe, at: 0)   // track it so it persists / can be tagged
-            chosen.append(probe)
-            probeId = probe.id
-        }
-
-        // 7. Teaching skill cards — target concept first, then other blocks.
-        let blocks = buildConceptBlocks(for: chosen, target: target, reasons: reasons)
-
-        return AssembledLesson(targetConcept: target, gaps: chosen,
-                               reasons: reasons, headline: headline, probeGapId: probeId,
-                               conceptBlocks: blocks)
+    init(store: AppStore, config: LessonAssemblyConfig = .tuning) {
+        self.store = store
+        self.config = config
     }
 
-    // MARK: - Scoped mode
+    // MARK: - Assemble (the only way a lesson is built)
 
-    /// Order an already-chosen candidate set (a category, a deck, a review set)
-    /// the same intelligent way as a full lesson — weakest first, confusion pairs
-    /// adjacent, per-item reasons, a scope headline and skill cards — WITHOUT
-    /// re-selecting a different target concept. The user already declared intent.
-    func assembleScoped(candidates: [GapItem], scopeName: String) -> AssembledLesson {
-        // Spine ordering: weakest (lowest retrievability) first.
-        var ordered = candidates.sorted { $0.retrievability < $1.retrievability }
-        // Confusion adjacency within the provided set only.
-        ordered = applyConfusionAdjacency(ordered)
+    /// Order, pair and decorate the items the selector chose. Returns nil when the
+    /// selection is empty or none of its items can be resolved.
+    func assemble(_ output: SelectionOutput) -> AssembledLesson? {
+        guard !output.items.isEmpty else { return nil }
+        let target = store.concept(output.targetConceptId)
 
-        let reasons = buildScopedReasons(for: ordered)
-        let headline = "Reviewing: \(scopeName)"
-        let blocks = buildConceptBlocks(for: ordered, target: nil, reasons: reasons)
+        // 1. Resolve items to gap records. Probes have no record until now.
+        var byId: [String: GapItem] = [:]
+        for gap in store.gaps where byId[gap.id] == nil { byId[gap.id] = gap }
 
-        return AssembledLesson(targetConcept: nil, gaps: ordered,
-                               reasons: reasons, headline: headline, probeGapId: nil,
-                               conceptBlocks: blocks)
+        var resolved: [(item: SelectedItem, gap: GapItem)] = []
+        var probeGapId: String? = nil
+        for item in output.items {
+            if let gap = byId[item.gapId] {
+                resolved.append((item, gap))
+                if item.role == .probe { probeGapId = gap.id }
+            } else if item.role == .probe, let concept = store.concept(item.conceptId) {
+                let gap = store.materializeProbeGap(id: item.gapId, for: concept, now: output.request.now)
+                resolved.append((item, gap))
+                probeGapId = gap.id
+            }
+            // A non-probe item whose gap is gone is dropped: the store was mutated
+            // between selection and assembly. Nothing is substituted for it.
+        }
+        guard !resolved.isEmpty else { return nil }
+
+        // 2. Order by role (target → review → probe), keeping the selector's own
+        //    priority order within each role.
+        let ordered = resolved.enumerated()
+            .sorted { a, b in
+                let ra = Self.roleRank(a.element.item.role), rb = Self.roleRank(b.element.item.role)
+                if ra != rb { return ra < rb }
+                return a.offset < b.offset
+            }
+            .map { $0.element.gap }
+
+        // 3. Confusion rule: place confusion-linked pairs adjacent.
+        let gaps = applyConfusionAdjacency(ordered)
+
+        // 4. Reasons + headline come from the selector; skill cards are built here.
+        //    A capstone is a pure test: no teaching cards.
+        let reasons = output.reasonsByGapId
+        let blocks = output.mode.isCapstone ? [] : buildConceptBlocks(for: gaps, target: target, reasons: reasons)
+
+        return AssembledLesson(selection: output, targetConcept: target, gaps: gaps,
+                               reasons: reasons, headline: output.headline,
+                               probeGapId: probeGapId, conceptBlocks: blocks)
+    }
+
+    nonisolated private static func roleRank(_ role: SelectedItemRole) -> Int {
+        switch role {
+        case .target: return 0
+        case .review: return 1
+        case .probe: return 2
+        }
+    }
+
+    // MARK: - Transitional entry points
+    // Kept only until every surface builds its own SelectionRequest (Pass 2 step 4).
+
+    func assemble() -> AssembledLesson? {
+        assemble(ConceptSelector(store: store, config: config).select(.smart()))
+    }
+
+    func assembleScoped(candidates: [GapItem], scopeName: String) -> AssembledLesson? {
+        let request = SelectionRequest.scoped(candidates.map { $0.id }, name: scopeName)
+        return assemble(ConceptSelector(store: store, config: config).select(request))
     }
 
     // MARK: - Capstone
@@ -149,53 +135,6 @@ struct LessonAssembler {
         return result
     }
 
-    // MARK: - Reasons (legibility)
-
-    private func buildReasons(for gaps: [GapItem], target: Concept) -> [String: String] {
-        var reasons: [String: String] = [:]
-        let now = Date()
-        for gap in gaps {
-            if let link = gap.confusionLinks.max(by: { $0.strength < $1.strength }),
-               let partner = store.gaps.first(where: { $0.id == link.partnerGapId }) {
-                reasons[gap.id] = "You keep confusing this with “\(partner.frenchWord)”."
-            } else if gap.conceptId == target.id, target.newlyUnlocked {
-                reasons[gap.id] = "New skill you're ready for: \(target.name)."
-            } else if gap.reviewCount >= 2 && gap.nextReviewAt < now {
-                reasons[gap.id] = "You've missed this \(gap.reviewCount)× — time to lock it in."
-            } else if !store.dependents(of: gap.conceptId ?? "").isEmpty,
-                      let dep = store.dependents(of: gap.conceptId ?? "").first {
-                reasons[gap.id] = "This unlocks \(dep.name)."
-            } else if gap.conceptId == target.id {
-                reasons[gap.id] = "Today's focus: \(target.name)."
-            } else {
-                reasons[gap.id] = "Due for review."
-            }
-        }
-        return reasons
-    }
-
-    /// Reasons for a scoped lesson — no target concept, so lean on confusion,
-    /// miss-count, due-ness and concept membership.
-    private func buildScopedReasons(for gaps: [GapItem]) -> [String: String] {
-        var reasons: [String: String] = [:]
-        let now = Date()
-        for gap in gaps {
-            if let link = gap.confusionLinks.max(by: { $0.strength < $1.strength }),
-               let partner = store.gaps.first(where: { $0.id == link.partnerGapId }) {
-                reasons[gap.id] = "You keep confusing this with “\(partner.frenchWord)”."
-            } else if gap.reviewCount >= 2 && gap.nextReviewAt < now {
-                reasons[gap.id] = "You've missed this \(gap.reviewCount)× — time to lock it in."
-            } else if gap.nextReviewAt <= now {
-                reasons[gap.id] = "Due for review."
-            } else if let concept = store.concept(gap.conceptId) {
-                reasons[gap.id] = "Part of \(concept.name)."
-            } else {
-                reasons[gap.id] = "Strengthening this one."
-            }
-        }
-        return reasons
-    }
-
     // MARK: - Teaching skill cards
 
     /// One ConceptBlock per distinct concept present in the lesson, target first.
@@ -226,60 +165,5 @@ struct LessonAssembler {
             if blocks.count >= config.maxConceptCards { break }
         }
         return blocks
-    }
-
-    private func buildHeadline(target: Concept) -> String {
-        let conceptGaps = store.gaps(forConcept: target.id).filter { !$0.isMastered }
-        let missed = conceptGaps.map { $0.reviewCount }.reduce(0, +)
-        if target.newlyUnlocked {
-            return "Today: \(target.name) — you're ready for this new skill."
-        }
-        if missed > 0 {
-            return "Today: \(target.name) — you've slipped on it \(missed) time\(missed == 1 ? "" : "s")."
-        }
-        return "Today: \(target.name)."
-    }
-
-    // MARK: - Blind-spot probe
-
-    /// Occasionally inject ONE diagnostic item for a never-observed frontier concept
-    /// the learner has no gap for yet. Kept rare so lessons stay relevant.
-    private func blindSpotProbe(excluding excluded: Set<String>, selector: ConceptSelector) -> GapItem? {
-        guard config.probeEveryNSessions > 0,
-              store.sessionIndex % config.probeEveryNSessions == 0 else { return nil }
-
-        // Frontier concepts the user has NOT generated a gap for.
-        let frontier = store.concepts.filter {
-            selector.isFrontier($0) && store.gaps(forConcept: $0.id).isEmpty
-        }
-        guard let concept = frontier.sorted(by: { $0.cefrLevel.order < $1.cefrLevel.order }).first else { return nil }
-
-        let now = Date()
-        return GapItem(
-            id: "probe-\(UUID().uuidString)",
-            frenchWord: concept.name,
-            englishTranslation: concept.description,
-            explanation: "Quick check: \(concept.description)",
-            exampleSentence: "",
-            exampleTranslation: "",
-            pronunciation: nil,
-            sourceType: .foundation,
-            category: concept.category,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: concept.cefrLevel,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: nil,
-            confusionLinks: [],
-            conceptId: concept.id
-        )
     }
 }

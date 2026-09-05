@@ -31,8 +31,12 @@ nonisolated enum Tuning {
     static let capstoneRecencyDays: Double = 14
     /// A learning concept at or above this mastery is "trending toward mastered".
     static let capstoneTrendingMasteryFloor: Double = 0.6
-    /// Rank bonus added to trending-toward-mastered concepts in capstone mode.
-    static let capstoneTrendingWeight: Double = 1.0
+    /// Capstone tier bonus for any learning concept — sized above the ranker's
+    /// maximum score (≈3.1) so learning concepts always outrank mastered ones.
+    static let capstoneLearningWeight: Double = 4.0
+    /// Extra capstone tier bonus for learning concepts at/above the trending floor
+    /// (same sizing rule, so trending concepts always come first).
+    static let capstoneTrendingWeight: Double = 4.0
 
     // MARK: Lesson shape (Pass 2 — request-level sizes)
     /// Items in a smart (Home "Learn") lesson.

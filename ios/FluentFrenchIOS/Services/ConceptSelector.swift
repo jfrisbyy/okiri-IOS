@@ -2,28 +2,41 @@
 //  ConceptSelector.swift
 //  FluentFrenchIOS
 //
-//  The core intelligence of the gap-learning loop: score every eligible concept,
-//  pick the lesson's spine (target concept), then assemble an interleaved item set
-//  with data-driven reasons and an occasional blind-spot probe.
+//  The ONE ranker of the gap-learning loop (Pass 2 — "one selection output").
 //
-//  Generation (the AI question writer + formats) is intentionally untouched — this
-//  only decides WHICH gaps and in what ORDER.
+//  Every lesson and every plan comes from `select(_:)`: it scores eligible
+//  concepts, picks the spine (smart mode), gathers eligibility-checked review,
+//  injects the rare blind-spot probe, and writes the per-item reasons and the
+//  headline. Scoped mode keeps the learner's declared intent as a CONSTRAINT
+//  (no target re-selection) but still applies eligibility, ordering and reasons.
+//  Capstone mode ranks broadly across recent material with the same score plus a
+//  tier bonus for learning-but-trending-mastered concepts.
+//
+//  Nothing outside this file ranks or pools items. `LessonAssembler` only groups,
+//  pairs and decorates what was selected; `DailyPlanEngine` tilts the day from
+//  `SelectionOutput.rankedConcepts`. Generation (the AI question writer + formats)
+//  is intentionally untouched — this only decides WHICH gaps and in what ORDER.
 //
 
 import Foundation
 
-// MARK: - Output
+// MARK: - Assembled output
 
 nonisolated struct AssembledLesson: Identifiable {
     var id: String = UUID().uuidString
-    /// The lesson spine in full (Home "Learn") mode. `nil` in scoped mode, where
-    /// the user already declared intent by tapping a category / deck / review set.
+    /// The selector's answer this lesson was built from (mode, roles, reasons).
+    var selection: SelectionOutput
+    /// The lesson spine in smart mode. `nil` in scoped / capstone mode, where the
+    /// user already declared intent (or the quiz spans many skills).
     var targetConcept: Concept?
     var gaps: [GapItem]
     var reasons: [String: String]       // gapId -> short data-driven reason
     var headline: String                // "why this lesson" one-liner
     var probeGapId: String?             // a blind-spot probe item, if injected
     var conceptBlocks: [ConceptBlock] = []   // teaching "skill cards", in order
+
+    var isCapstone: Bool { selection.mode.isCapstone }
+    var isScoped: Bool { selection.mode.isScoped }
 }
 
 /// One teaching "skill card" shown before a concept's practice items.
@@ -41,8 +54,15 @@ nonisolated struct ConceptBlock: Identifiable {
 struct ConceptSelector {
     let store: AppStore
     var weights: ConceptSelectionWeights = .tuning
+    var config: LessonAssemblyConfig = .tuning
 
-    // MARK: Eligibility
+    init(store: AppStore, weights: ConceptSelectionWeights = .tuning, config: LessonAssemblyConfig = .tuning) {
+        self.store = store
+        self.weights = weights
+        self.config = config
+    }
+
+    // MARK: Eligibility — concept level
 
     /// Learning concepts, plus frontier concepts (never-observed with all
     /// prerequisites mastered). A never-observed concept with unmet prereqs is
@@ -64,12 +84,30 @@ struct ConceptSelector {
         concept.state == .neverObserved && store.arePrerequisitesMet(concept)
     }
 
+    /// Never observed AND its prerequisites are not all mastered: material the
+    /// learner is not ready for. Nothing may pull it into a lesson.
+    func isPrerequisiteBlocked(_ concept: Concept) -> Bool {
+        concept.state == .neverObserved && !store.arePrerequisitesMet(concept)
+    }
+
+    // MARK: Eligibility — item level
+
+    /// A gap may be practiced when it is active and is not evidence of a
+    /// prerequisite-blocked concept. Gaps of mastered concepts stay practicable
+    /// when FSRS says they are due (item schedule ≠ concept mastery); untagged
+    /// gaps carry no prerequisite chain and stay practicable.
+    func isPracticable(_ gap: GapItem) -> Bool {
+        guard !gap.isMastered else { return false }
+        guard let cid = gap.conceptId, let concept = store.concept(cid) else { return true }
+        return !isPrerequisiteBlocked(concept)
+    }
+
     // MARK: Scoring
 
-    func score(_ concept: Concept) -> Double {
+    func score(_ concept: Concept, now: Date = Date()) -> Double {
         let conceptGaps = store.gaps(forConcept: concept.id).filter { !$0.isMastered }
 
-        let urgency = urgencyScore(conceptGaps)
+        let urgency = urgencyScore(conceptGaps, now: now)
         let leverage = leverageScore(concept)
         let frontierFit = frontierScore(concept)
         let confusion = confusionScore(conceptGaps)
@@ -83,8 +121,7 @@ struct ConceptSelector {
     }
 
     /// Max overdue-ness across this concept's gaps (0 if none due), normalized.
-    private func urgencyScore(_ gaps: [GapItem]) -> Double {
-        let now = Date()
+    private func urgencyScore(_ gaps: [GapItem], now: Date) -> Double {
         let maxOverdueDays = gaps
             .map { now.timeIntervalSince($0.nextReviewAt) / 86_400 }
             .filter { $0 > 0 }
@@ -107,7 +144,7 @@ struct ConceptSelector {
     /// further the concept sits below the learner's current ability.
     private func frontierScore(_ concept: Concept) -> Double {
         if isFrontier(concept) { return 1.0 }
-        let abilityLevel = abilityCEFR().order
+        let abilityLevel = learnerLevel().order
         let conceptLevel = concept.cefrLevel.order
         let below = Double(max(0, abilityLevel - conceptLevel))
         return max(0, 1 - below / 3.0)
@@ -126,8 +163,10 @@ struct ConceptSelector {
         return 0
     }
 
-    /// Map the learner's IRT ability to an approximate CEFR band for frontier fit.
-    private func abilityCEFR() -> CEFRLevel {
+    /// The learner's IRT ability mapped to an approximate CEFR band. This is the
+    /// one notion of "level" the engine has: frontier fit uses it, and surfaces
+    /// that gate by level (e.g. conversation scenarios) read it from here.
+    func learnerLevel() -> CEFRLevel {
         switch store.abilityTheta {
         case ..<(-0.4): return .A1
         case ..<0.4: return .A2
@@ -138,20 +177,325 @@ struct ConceptSelector {
         }
     }
 
-    // MARK: Selection
+    // MARK: Ranking
 
-    /// Pick the highest-scoring concept as the lesson spine, plus ranked runners-up.
-    func select() -> (target: Concept, ranked: [ScoredConcept])? {
-        let scored = rankedEligible()
-        guard let target = scored.first?.concept else { return nil }
-        return (target, Array(scored.dropFirst()))
+    /// All eligible concepts scored and ranked high-to-low, ties broken by id so
+    /// a selection is reproducible. Shared by every mode and by the daily plan
+    /// (one brain, two views).
+    func rankedEligible(now: Date = Date()) -> [ScoredConcept] {
+        eligibleConcepts()
+            .map { ScoredConcept(concept: $0, score: score($0, now: now), isFrontier: isFrontier($0)) }
+            .sorted { a, b in
+                if a.score != b.score { return a.score > b.score }
+                return a.concept.id < b.concept.id
+            }
     }
 
-    /// All eligible concepts scored and ranked high-to-low. Shared by the lesson
-    /// selector and the daily-plan engine (one brain, two views).
-    func rankedEligible() -> [ScoredConcept] {
-        eligibleConcepts()
-            .map { ScoredConcept(concept: $0, score: score($0), isFrontier: isFrontier($0)) }
-            .sorted { $0.score > $1.score }
+    // MARK: Selection — the ONE entry point
+
+    func select(_ request: SelectionRequest) -> SelectionOutput {
+        let ranked = rankedEligible(now: request.now)
+        let level = learnerLevel()
+        switch request.mode {
+        case .smart:
+            return selectSmart(request, ranked: ranked, level: level)
+        case .scoped(let candidateGapIds):
+            return selectScoped(request, candidateGapIds: candidateGapIds, ranked: ranked, level: level)
+        case .capstone:
+            return selectCapstone(request, ranked: ranked, level: level)
+        }
+    }
+
+    // MARK: Smart mode
+
+    private func selectSmart(_ request: SelectionRequest, ranked: [ScoredConcept], level: CEFRLevel) -> SelectionOutput {
+        let now = request.now
+        let size = max(Tuning.minLessonSize, request.lessonSize)
+        let target = ranked.first?.concept
+
+        func isTargetGap(_ gap: GapItem) -> Bool {
+            guard let target, let cid = gap.conceptId else { return false }
+            return cid == target.id
+        }
+
+        var items: [SelectedItem] = []
+        var chosen = Set<String>()
+        func take(_ gap: GapItem, role: SelectedItemRole) {
+            guard !chosen.contains(gap.id) else { return }
+            chosen.insert(gap.id)
+            items.append(SelectedItem(gapId: gap.id, conceptId: gap.conceptId, role: role,
+                                      reason: smartReason(for: gap, role: role, target: target, now: now)))
+        }
+
+        // 1. Spine — the target concept's active gaps, weakest first.
+        var spine: [GapItem] = []
+        if let target {
+            spine = store.gaps(forConcept: target.id)
+                .filter { !$0.isMastered }
+                .sorted(by: Self.weakestFirst(now: now))
+            let spineCount = max(1, Int((Double(size) * config.targetRatio).rounded()))
+            for gap in spine.prefix(spineCount) { take(gap, role: .target) }
+        }
+
+        // 2. Interleaved review — most-overdue PRACTICABLE gaps from other concepts,
+        //    due within the window. Eligibility applies here too: prerequisite-
+        //    blocked material never rides in through the review pool (audit §5.7).
+        let dueBy = now.addingTimeInterval(config.dueWindowDays * 86_400)
+        let review = store.activeGaps
+            .filter { !chosen.contains($0.id) && !isTargetGap($0) }
+            .filter { isPracticable($0) && $0.nextReviewAt <= dueBy }
+            .sorted(by: Self.mostOverdueFirst(now: now))
+        for gap in review {
+            if items.count >= size { break }
+            take(gap, role: .review)
+        }
+
+        // 3. Top up if short: the rest of the spine, then other practicable gaps,
+        //    weakest first. Never anything prerequisite-blocked.
+        if items.count < size {
+            let rest = spine.filter { !chosen.contains($0.id) }
+            let others = store.activeGaps
+                .filter { !chosen.contains($0.id) && !isTargetGap($0) && isPracticable($0) }
+                .sorted(by: Self.weakestFirst(now: now))
+            for gap in rest + others {
+                if items.count >= size { break }
+                take(gap, role: isTargetGap(gap) ? .target : .review)
+            }
+        }
+
+        // 4. Blind-spot probe (rare): ONE never-observed frontier concept the
+        //    learner has no gap for yet. Materialised by the assembler.
+        if let probe = probeConcept() {
+            items.append(SelectedItem(gapId: Self.probeGapId(for: probe, session: store.sessionIndex),
+                                      conceptId: probe.id, role: .probe,
+                                      reason: "Quick check on a skill you haven't met yet: \(probe.name)."))
+        }
+
+        let headline: String
+        if let target {
+            headline = smartHeadline(for: target)
+        } else if items.isEmpty {
+            headline = "Nothing to practice right now."
+        } else {
+            headline = "Today: review — keeping what you've learned fresh."
+        }
+
+        return SelectionOutput(request: request, targetConceptId: target?.id, items: items,
+                               headline: headline, rankedConcepts: ranked, learnerLevel: level)
+    }
+
+    /// Every N sessions, the lowest-level frontier concept with no gap yet.
+    func probeConcept() -> Concept? {
+        guard config.probeEveryNSessions > 0,
+              store.sessionIndex % config.probeEveryNSessions == 0 else { return nil }
+        return store.concepts
+            .filter { isFrontier($0) && store.gaps(forConcept: $0.id).isEmpty }
+            .sorted { a, b in
+                if a.cefrLevel.order != b.cefrLevel.order { return a.cefrLevel.order < b.cefrLevel.order }
+                return a.id < b.id
+            }
+            .first
+    }
+
+    nonisolated static func probeGapId(for concept: Concept, session: Int) -> String {
+        "probe-\(concept.id)-\(session)"
+    }
+
+    // MARK: Scoped mode
+
+    /// The learner declared intent (a category, a deck, a review set). Keep the
+    /// scope as a constraint: no target re-selection, interleave only from within
+    /// the candidates — but still apply eligibility, ordering and reasons.
+    private func selectScoped(_ request: SelectionRequest, candidateGapIds: [String],
+                              ranked: [ScoredConcept], level: CEFRLevel) -> SelectionOutput {
+        let now = request.now
+        let size = max(Tuning.minLessonSize, request.lessonSize)
+
+        // Resolve ids once, in the order given, dropping duplicates and unknowns.
+        var byId: [String: GapItem] = [:]
+        for gap in store.gaps where byId[gap.id] == nil { byId[gap.id] = gap }
+        var seen = Set<String>()
+        var candidates: [GapItem] = []
+        for id in candidateGapIds where !seen.contains(id) {
+            seen.insert(id)
+            if let gap = byId[id] { candidates.append(gap) }
+        }
+
+        let chosen = candidates
+            .filter { isPracticable($0) }
+            .sorted(by: Self.weakestFirst(now: now))
+            .prefix(size)
+
+        let items = chosen.map { gap in
+            SelectedItem(gapId: gap.id, conceptId: gap.conceptId, role: .review,
+                         reason: scopedReason(for: gap, now: now))
+        }
+
+        let name = request.scopeName ?? "your selection"
+        let headline = items.isEmpty ? "Nothing in \(name) is ready to practice." : "Reviewing: \(name)"
+        return SelectionOutput(request: request, targetConceptId: nil, items: items,
+                               headline: headline, rankedConcepts: ranked, learnerLevel: level)
+    }
+
+    // MARK: Capstone mode
+
+    /// Milestone quiz: broad, mixed, pulled from everything touched recently and
+    /// weighted toward learning concepts trending toward mastered. Same score as
+    /// every other mode, plus the capstone's tier bonus — one ranker, two modes.
+    private func selectCapstone(_ request: SelectionRequest, ranked: [ScoredConcept], level: CEFRLevel) -> SelectionOutput {
+        let now = request.now
+        let size = max(Tuning.minLessonSize, request.lessonSize)
+        let recentSince = now.addingTimeInterval(-Tuning.capstoneRecencyDays * 86_400)
+
+        // A capstone tests what has been taught: never-observed concepts have
+        // nothing to test, so only observed (learning or mastered) concepts rank.
+        let capstoneRanked = store.concepts
+            .filter { $0.state != .neverObserved }
+            .map { ScoredConcept(concept: $0, score: capstoneScore($0, now: now), isFrontier: false) }
+            .sorted { a, b in
+                if a.score != b.score { return a.score > b.score }
+                return a.concept.id < b.concept.id
+            }
+
+        // Per concept: practicable gaps touched inside the recency window, most
+        // recent first; if none were, fall back to any practicable gap of the
+        // concept so an early learner still gets a capstone.
+        var queues: [[GapItem]] = capstoneRanked.map { scored in
+            let gaps = store.gaps(forConcept: scored.concept.id).filter { isPracticable($0) }
+            let recent = gaps.filter { ($0.lastReviewedAt ?? .distantPast) >= recentSince }
+            return (recent.isEmpty ? gaps : recent).sorted(by: Self.mostRecentlyReviewedFirst)
+        }
+
+        // Round-robin across the ranked concepts so the quiz is broad — not one
+        // skill twelve times.
+        var items: [SelectedItem] = []
+        var chosen = Set<String>()
+        var progressed = true
+        while items.count < size && progressed {
+            progressed = false
+            for i in queues.indices {
+                if items.count >= size { break }
+                guard !queues[i].isEmpty else { continue }
+                let gap = queues[i].removeFirst()
+                progressed = true
+                guard !chosen.contains(gap.id) else { continue }
+                chosen.insert(gap.id)
+                items.append(SelectedItem(gapId: gap.id, conceptId: gap.conceptId, role: .review,
+                                          reason: capstoneReason(for: gap)))
+            }
+        }
+
+        let skills = Set(items.compactMap { $0.conceptId }).count
+        let headline = items.isEmpty
+            ? "Nothing recent to test yet — learn a little first."
+            : "Capstone: a mixed check across \(skills) skill\(skills == 1 ? "" : "s")."
+        return SelectionOutput(request: request, targetConceptId: nil, items: items,
+                               headline: headline, rankedConcepts: ranked, learnerLevel: level)
+    }
+
+    /// The shared score plus the capstone tiers: learning concepts outrank mastered
+    /// ones, and learning-but-trending-mastered outrank both. The tier weights are
+    /// sized above the ranker's maximum so tiers hold; the score orders within a tier.
+    func capstoneScore(_ concept: Concept, now: Date = Date()) -> Double {
+        var total = score(concept, now: now)
+        if concept.state == .learning {
+            total += Tuning.capstoneLearningWeight
+            if concept.mastery >= Tuning.capstoneTrendingMasteryFloor {
+                total += Tuning.capstoneTrendingWeight
+            }
+        }
+        return total
+    }
+
+    // MARK: Ordering (one comparator per notion, shared by every mode)
+
+    /// Lowest recall probability first; ties by soonest due, then id.
+    nonisolated static func weakestFirst(now: Date) -> (GapItem, GapItem) -> Bool {
+        { a, b in
+            let ra = a.retrievability(at: now), rb = b.retrievability(at: now)
+            if ra != rb { return ra < rb }
+            if a.nextReviewAt != b.nextReviewAt { return a.nextReviewAt < b.nextReviewAt }
+            return a.id < b.id
+        }
+    }
+
+    /// Soonest / most overdue due date first; ties by weakest, then id.
+    nonisolated static func mostOverdueFirst(now: Date) -> (GapItem, GapItem) -> Bool {
+        { a, b in
+            if a.nextReviewAt != b.nextReviewAt { return a.nextReviewAt < b.nextReviewAt }
+            let ra = a.retrievability(at: now), rb = b.retrievability(at: now)
+            if ra != rb { return ra < rb }
+            return a.id < b.id
+        }
+    }
+
+    /// Most recently reviewed first; ties by id.
+    nonisolated static func mostRecentlyReviewedFirst(_ a: GapItem, _ b: GapItem) -> Bool {
+        let la = a.lastReviewedAt ?? .distantPast, lb = b.lastReviewedAt ?? .distantPast
+        if la != lb { return la > lb }
+        return a.id < b.id
+    }
+
+    // MARK: Reasons (legibility)
+
+    private func strongestConfusionPartner(of gap: GapItem) -> GapItem? {
+        guard let link = gap.confusionLinks.max(by: { $0.strength < $1.strength }) else { return nil }
+        return store.gaps.first { $0.id == link.partnerGapId }
+    }
+
+    private func smartReason(for gap: GapItem, role: SelectedItemRole, target: Concept?, now: Date) -> String {
+        if let partner = strongestConfusionPartner(of: gap) {
+            return "You keep confusing this with “\(partner.frenchWord)”."
+        }
+        if let target, role == .target, target.newlyUnlocked {
+            return "New skill you're ready for: \(target.name)."
+        }
+        if gap.reviewCount >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
+            return "You've missed this \(gap.reviewCount)× — time to lock it in."
+        }
+        if let cid = gap.conceptId, let dep = store.dependents(of: cid).first {
+            return "This unlocks \(dep.name)."
+        }
+        if let target, role == .target {
+            return "Today's focus: \(target.name)."
+        }
+        return "Due for review."
+    }
+
+    /// Reasons for a scoped lesson — no target concept, so lean on confusion,
+    /// miss-count, due-ness and concept membership.
+    private func scopedReason(for gap: GapItem, now: Date) -> String {
+        if let partner = strongestConfusionPartner(of: gap) {
+            return "You keep confusing this with “\(partner.frenchWord)”."
+        }
+        if gap.reviewCount >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
+            return "You've missed this \(gap.reviewCount)× — time to lock it in."
+        }
+        if gap.nextReviewAt <= now {
+            return "Due for review."
+        }
+        if let concept = store.concept(gap.conceptId) {
+            return "Part of \(concept.name)."
+        }
+        return "Strengthening this one."
+    }
+
+    private func capstoneReason(for gap: GapItem) -> String {
+        if let concept = store.concept(gap.conceptId) {
+            return "Capstone check: does \(concept.name) hold up in a mixed test?"
+        }
+        return "Capstone check."
+    }
+
+    private func smartHeadline(for target: Concept) -> String {
+        let conceptGaps = store.gaps(forConcept: target.id).filter { !$0.isMastered }
+        let missed = conceptGaps.map { $0.reviewCount }.reduce(0, +)
+        if target.newlyUnlocked {
+            return "Today: \(target.name) — you're ready for this new skill."
+        }
+        if missed > 0 {
+            return "Today: \(target.name) — you've slipped on it \(missed) time\(missed == 1 ? "" : "s")."
+        }
+        return "Today: \(target.name)."
     }
 }

@@ -101,6 +101,43 @@ final class AppStore {
         tagConcept(for: gap.id)
     }
 
+    /// Give a blind-spot probe a gap record to be scored against. The selector
+    /// decides THAT a never-observed frontier concept is probed; this only creates
+    /// (or reuses) the one-item diagnostic so its answer lands on the concept like
+    /// any other evidence. Persisted with the rest of the lesson's bookkeeping.
+    @discardableResult
+    func materializeProbeGap(id: String, for concept: Concept, now: Date = Date()) -> GapItem {
+        if let existing = gaps.first(where: { $0.id == id }) { return existing }
+        let probe = GapItem(
+            id: id,
+            frenchWord: concept.name,
+            englishTranslation: concept.description,
+            explanation: "Quick check: \(concept.description)",
+            exampleSentence: "",
+            exampleTranslation: "",
+            pronunciation: nil,
+            sourceType: .foundation,
+            category: concept.category,
+            difficulty: .okay,
+            reviewCount: 0,
+            consecutiveCorrect: 0,
+            lastReviewedAt: nil,
+            nextReviewAt: now,
+            masteredAt: nil,
+            createdAt: now,
+            cefrLevel: concept.cefrLevel,
+            easeFactor: 2.5,
+            currentInterval: 0,
+            irtDifficulty: 0,
+            fsrs: nil,
+            originalContext: nil,
+            confusionLinks: [],
+            conceptId: concept.id
+        )
+        gaps.insert(probe, at: 0)
+        return probe
+    }
+
     // MARK: - Daily plan progress (Today screen)
 
     private func progressKey(_ modality: LearningModality, _ date: Date = Date()) -> String {

@@ -94,25 +94,10 @@ struct LessonAssembler {
         return assemble(ConceptSelector(store: store, config: config).select(request))
     }
 
-    // MARK: - Capstone
-
-    /// Build a broad, mixed quiz set pulling from everything touched recently,
-    /// leaning toward 'learning' concepts trending toward mastery (does the skill
-    /// survive interleaving and time?). Pure test — no teaching cards.
+    /// Capstone lessons come from the selector's `.capstone` mode — there is no
+    /// capstone ranking here any more.
     func capstoneGaps() -> [GapItem] {
-        func priority(_ g: GapItem) -> Int {
-            guard let c = store.concept(g.conceptId) else { return 0 }
-            if c.state == .learning && c.mastery >= 0.6 { return 2 }
-            if c.state == .learning { return 1 }
-            return 0
-        }
-        let pool = store.gaps.filter { !$0.isMastered }
-        let sorted = pool.sorted { a, b in
-            let pa = priority(a), pb = priority(b)
-            if pa != pb { return pa > pb }
-            return (a.lastReviewedAt ?? .distantPast) > (b.lastReviewedAt ?? .distantPast)
-        }
-        return Array(sorted.prefix(Tuning.capstoneSize))
+        assemble(ConceptSelector(store: store, config: config).select(.capstone()))?.gaps ?? []
     }
 
     // MARK: - Confusion adjacency

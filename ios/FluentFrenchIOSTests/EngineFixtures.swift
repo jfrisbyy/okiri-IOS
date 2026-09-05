@@ -12,9 +12,9 @@ import Foundation
 
 @MainActor
 enum EngineFixtures {
-    static let day: TimeInterval = 86_400
+    nonisolated static let day: TimeInterval = 86_400
     /// A fixed clock so every selection in the tests is reproducible.
-    static let now = Date(timeIntervalSince1970: 1_800_000_000)
+    nonisolated static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     /// An in-memory store: seed taxonomy, no gaps, nothing persisted.
     static func store() -> AppStore {

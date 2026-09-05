@@ -138,15 +138,30 @@ struct HeadlessDriverTests {
         let next = driver.select(.smart)
         #expect(next.items.first?.gapId == "root-5")
 
-        // Ten days later the answered items have decayed below root-5's fallback
-        // estimate and lead the spine again; review comes from the still-due
-        // frontier gaps, never from anything blocked.
+        // Ten days later every answered item has decayed on its FSRS curve — below
+        // root-5's fallback estimate (0.95) — and is overdue again.
         driver.advance(days: 10)
+        let laterNow = driver.now
+        for id in answered {
+            let gap = try #require(g.store.gaps.first { $0.id == id })
+            #expect(gap.retrievability(at: laterNow) < 0.95)
+            #expect(gap.nextReviewAt < laterNow)
+        }
+
+        // The ranking moved with the clock too: the frontier concept's fresh gaps
+        // have now been due for ten days, so its urgency outranks the just-taught
+        // root (still damped by repeatDamp) and it becomes the target. Its three
+        // gaps form the spine; the decayed root/done items come back as review,
+        // most overdue first (root-5 has never been answered) — and nothing
+        // prerequisite-blocked rides in at either instant.
         let later = driver.select(.smart)
-        #expect(later.items.first.map { answered.contains($0.gapId) } == true)
+        #expect(later.targetConceptId == g.frontier)
+        #expect(later.items.filter { $0.role == .target }.map { $0.gapId } == g.frontierGapIds)
         let laterReview = later.items.filter { $0.role == .review }.map { $0.gapId }
-        #expect(!laterReview.isEmpty)
-        #expect(laterReview.allSatisfy { g.frontierGapIds.contains($0) })
+        #expect(laterReview.count == Tuning.lessonSize - g.frontierGapIds.count)
+        #expect(laterReview.first == "root-5", "the one root gap never answered is the most overdue")
+        #expect(laterReview.dropFirst().allSatisfy { answered.contains($0) }, "the decayed items are due for review again")
+        #expect(!later.gapIds.contains { g.blockedGapIds.contains($0) })
     }
 
     // MARK: Synthetic learner against the real engine

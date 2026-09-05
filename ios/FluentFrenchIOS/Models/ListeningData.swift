@@ -162,7 +162,7 @@ nonisolated enum ListeningData {
             difficulty: .intermediate, type: .dialogue, durationSeconds: 50, category: "social",
             turns: [
                 t("A", "Qu'est-ce que tu vas prendre comme entrée ?", "What are you going to have as a starter?"),
-                t("B", "Je hésite entre la soupe à l'oignon et la salade de chèvre chaud.", "I'm torn between the onion soup and the warm goat cheese salad."),
+                t("B", "J'hésite entre la soupe à l'oignon et la salade de chèvre chaud.", "I'm torn between the onion soup and the warm goat cheese salad."),
                 t("A", "Prends la soupe, elle est excellente ici.", "Get the soup, it's excellent here."),
                 t("B", "Bonne idée. Et toi, tu as choisi ton plat ?", "Good idea. And you, have you chosen your dish?"),
                 t("A", "Oui, je vais prendre le magret de canard.", "Yes, I'm going to have the duck breast."),

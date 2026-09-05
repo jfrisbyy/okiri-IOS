@@ -12,31 +12,6 @@
 
 import Foundation
 
-// MARK: - Tuning (NOT FINAL — tune live during testing)
-
-/// All selection weights live here, deliberately exposed and deliberately not
-/// final. Adjust these against a real learner; do not bury them in the engine.
-nonisolated struct ConceptSelectionWeights {
-    var urgency: Double = 1.0       // overdue-ness of the concept's gaps
-    var leverage: Double = 0.6      // how many other concepts it unlocks
-    var frontier: Double = 0.8      // fit to the edge of current ability
-    var confusion: Double = 0.7     // pressure from active confusion links
-    var repeatDamp: Double = 0.5    // damp concepts taught very recently
-
-    static let tuning = ConceptSelectionWeights()
-}
-
-/// Lesson shape knobs, also marked for live tuning.
-nonisolated struct LessonAssemblyConfig {
-    var lessonSize: Int = 7
-    var targetRatio: Double = 0.65        // share of slots for the target concept
-    var dueWindowDays: Double = 3.0       // how far ahead counts as "due"
-    var probeEveryNSessions: Int = 3      // blind-spot probe cadence
-    var maxConceptCards: Int = 4          // cap on teaching skill cards per lesson
-
-    static let tuning = LessonAssemblyConfig()
-}
-
 // MARK: - Output
 
 nonisolated struct AssembledLesson: Identifiable {
@@ -58,13 +33,6 @@ nonisolated struct ConceptBlock: Identifiable {
     var explanation: String          // plain-language teaching summary
     let example: GapItem?            // a real worked example from the learner's gaps
     let reason: String?              // the "why you're seeing this" line
-}
-
-nonisolated struct ScoredConcept: Identifiable {
-    var id: String { concept.id }
-    let concept: Concept
-    let score: Double
-    let isFrontier: Bool
 }
 
 // MARK: - Selector

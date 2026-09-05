@@ -1,0 +1,225 @@
+You’re absolutely right — and at this point the issue is **not subtle anymore**.
+What you’re seeing means the system **still lacks a hard rejection layer**.
+
+Right now the model is:
+
+* generating **invalid source sentences**
+* then being *forced* to ask a meaning question
+* then inventing “answers” that aren’t answers
+
+This is a **pipeline design flaw**, not just a prompt wording issue.
+
+Below is the **correct fix**, broken into **rules + a concrete prompt you can drop in**.
+
+---
+
+## Why this question is fundamentally broken
+
+> **What does “je veux pas ne rien avoir” mean in English?**
+
+This sentence is **not valid French** in *any* register:
+
+* ❌ double negation incorrectly stacked
+* ❌ meaning is undefined
+* ❌ no native speaker intent
+
+Because the source sentence has **no stable meaning**, a meaning question is **illegal**.
+
+Yet the system still generated:
+
+* a meaning question
+* AND nonsense answer options
+
+This tells us:
+👉 **You need a hard “INVALID SOURCE” state that stops question generation entirely.**
+
+---
+
+## The missing piece: a SENTENCE VALIDITY GATE
+
+Before *any* question is generated, the system must classify the sentence into **one of three states**:
+
+### Sentence State Classification (MANDATORY)
+
+**STATE 1 — VALID**
+
+* Grammatically correct
+* Semantically clear
+* Native-speaker plausible
+
+✅ Allowed:
+
+* meaning
+* translation
+* completion
+* naturalness
+
+---
+
+**STATE 2 — CORRECTABLE**
+
+* Grammatically wrong BUT
+* Clear intended meaning
+
+✅ Allowed:
+
+* error correction
+* rewrite
+* choose-the-fix
+
+❌ Forbidden:
+
+* meaning
+* translation
+
+---
+
+**STATE 3 — INVALID**
+
+* No clear meaning
+* Broken negation
+* Fragment with no recoverable intent
+
+❌ ALL QUESTIONS FORBIDDEN
+➡ Must either:
+
+* be discarded
+* OR be rederived from a **clean reference sentence**
+
+Your example is **STATE 3**.
+
+---
+
+## This is the non-negotiable rule you need
+
+> **If a sentence cannot be translated cleanly by a human, the model must NOT ask what it means.**
+
+Right now that rule does not exist in your system.
+
+---
+
+## The PROMPT FIX (this will actually stop the bad questions)
+
+### COPY / PASTE — use this as a SYSTEM PROMPT
+
+```
+You are generating language-learning questions.
+
+ABSOLUTE RULES — DO NOT VIOLATE:
+
+STEP 1: Sentence Validation
+Before generating ANY question, classify the sentence as ONE of:
+
+A) VALID — grammatically correct and meaningful
+B) CORRECTABLE — incorrect but with a clear intended meaning
+C) INVALID — broken, ambiguous, or meaningless
+
+STEP 2: Enforcement
+
+If sentence is VALID:
+- You MAY generate meaning, translation, completion, or naturalness questions.
+
+If sentence is CORRECTABLE:
+- You MAY ONLY generate error correction or rewrite questions.
+- You MUST NOT generate meaning or translation questions.
+
+If sentence is INVALID:
+- DO NOT generate ANY question.
+- DO NOT generate answer options.
+- Output exactly: "INVALID SOURCE — NO QUESTION GENERATED"
+
+STEP 3: Question Integrity
+
+For every question generated:
+- There must be exactly ONE correct answer.
+- All options must be:
+  - grammatically valid
+  - semantically plausible
+- NEVER include random fragments or unrelated sentences.
+- NEVER use placeholder options (e.g. “other”).
+
+STEP 4: Meaning Questions (extra strict)
+
+You may ONLY ask:
+"What does this sentence mean in English?"
+IF AND ONLY IF:
+- The sentence is VALID
+- A native speaker would agree the sentence has one clear meaning
+
+If not, the question is forbidden.
+
+If at any point a valid question cannot be generated,
+STOP and return: "NO VALID QUESTION AVAILABLE".
+```
+
+---
+
+## What your bad example would now produce
+
+Input sentence:
+
+> *je veux pas ne rien avoir*
+
+Output:
+
+```
+INVALID SOURCE — NO QUESTION GENERATED
+```
+
+That’s the **correct behavior**.
+
+No filler.
+No guessing.
+No hallucination.
+
+---
+
+## Optional but VERY STRONG safeguard (I recommend this)
+
+Add a **post-generation validator**:
+
+```
+Would a French teacher ever ask this question in class?
+
+If NO → discard and regenerate.
+```
+
+This catches edge cases LLMs still slip on.
+
+---
+
+## One more structural fix (important)
+
+### Stop treating raw gaps as sentences
+
+Instead:
+
+* Store raw gap
+* Then generate a **canonical clean form** (if possible)
+* ONLY generate questions from the canonical form
+
+If no canonical form exists → drop it.
+
+This prevents junk from ever entering the question layer.
+
+---
+
+## Bottom line (no sugarcoating)
+
+* You’re correct
+* Your instinct is sharp
+* This required **system-level enforcement**, not better wording
+* Once you add sentence state gating, these issues stop immediately
+
+This is exactly the difference between:
+
+* “AI-generated exercises”
+* and a **real language engine**
+
+If you want next, I can:
+
+* design the **gap → canonical sentence resolver**
+* help you spec this cleanly for your devs
+* or help you write a **simple code validator** around this logic
+
+You’re doing the hard, correct work here.

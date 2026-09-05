@@ -1,0 +1,202 @@
+You’re right again — these questions feel *off* because the model is mixing **tasks, contexts, and correctness standards**. What’s missing is **task discipline**.
+
+Right now the generator is:
+
+* guessing what the task *might* be
+* not enforcing sentence correctness
+* not enforcing *one clear learning objective per question*
+
+We fix this by forcing the model to **choose the task first**, then generate *only* what belongs to that task.
+
+Below is the **exact prompt you want**. This will dramatically clean things up.
+
+---
+
+## The core problem (in one sentence)
+
+Your model is generating **questions before deciding what it’s testing**.
+
+We need to invert that.
+
+---
+
+## The fix: Task-first, gap-aware generation
+
+### COPY / PASTE THIS PROMPT (use as system or developer prompt)
+
+```
+You are generating high-quality language-learning questions.
+
+CRITICAL RULE:
+Every question must test EXACTLY ONE learning objective.
+
+Before generating a question, you MUST silently decide:
+1. What is the task type?
+2. What is the learner being tested on?
+3. What is the single correct answer?
+
+If these are not clear, DO NOT generate the question.
+
+------------------------------------
+LEARNER CONTEXT
+Target Language: French
+Native Language: English
+Level: Beginner–Intermediate
+
+------------------------------------
+ALLOWED TASK TYPES (CHOOSE ONE ONLY)
+
+A. Meaning / Translation (Target → Native)
+B. Sentence Completion (grammar or vocabulary)
+C. Error Correction
+D. Naturalness / Register Choice
+E. Grammar Identification (tense, agreement, negation)
+
+------------------------------------
+GLOBAL RULES (DO NOT VIOLATE)
+
+1. NEVER mix multiple tasks in one question.
+2. NEVER include grammatically incorrect sentences unless the task is error correction.
+3. NEVER ask to translate a sentence into the same language it is already written in.
+4. NEVER use placeholder answers like “autre”.
+5. All distractor answers must be:
+   - grammatically valid French
+   - semantically plausible
+   - incorrect for the specific task
+6. If the source sentence is incorrect French, the task MUST be error correction.
+7. If the sentence is informal French, do NOT claim it is “wrong” unless correcting register explicitly.
+8. Each multiple-choice question must have:
+   - exactly 1 correct answer
+   - 2–3 plausible distractors
+
+------------------------------------
+QUESTION DESIGN RULES
+
+• The question must be short and clear
+• The sentence being tested must be grammatically sound OR intentionally flawed
+• The learner should know WHY one option is correct
+
+------------------------------------
+OUTPUT FORMAT (STRICT)
+
+Question:
+<single clear question>
+
+Options:
+A) ...
+B) ...
+C) ...
+D) ...
+
+Correct Answer:
+<letter only>
+```
+
+---
+
+## Why this works (important)
+
+This prompt forces the model to:
+
+* **commit to a task**
+* **validate the sentence**
+* **generate distractors intentionally**
+* **stop guessing**
+
+It prevents *every* issue you showed:
+
+* mixed meanings
+* broken French
+* nonsense options
+* redundant questions
+
+---
+
+## How your broken examples would look AFTER this fix
+
+### Example 1 — Sentence completion (grammar)
+
+**Question:**
+Which option correctly completes this sentence?
+
+> *Hier soir aussi, je ___ continuer à pleurer.*
+
+Options:
+A) ne voulais pas
+B) ne veux pas
+C) n’ai pas voulu
+D) ne vais pas
+
+**Correct Answer:** A
+
+---
+
+### Example 2 — Meaning (French → English)
+
+**Question:**
+What does this sentence mean in English?
+
+> *Je veux pas continuer à pleurer.*
+
+Options:
+A) I don’t want to keep crying
+B) I didn’t want to cry anymore
+C) I won’t cry again
+D) I stopped crying
+
+**Correct Answer:** A
+
+---
+
+### Example 3 — Error correction
+
+**Question:**
+Which option correctly fixes the error in this sentence?
+
+> *Je veux pas que je n’ai quelque chose.*
+
+Options:
+A) Je veux pas que j’aie quelque chose
+B) Je veux pas que j’ai quelque chose
+C) Je ne veux pas que je n’ai quelque chose
+D) Je veux pas que je n’ai rien
+
+**Correct Answer:** A
+
+---
+
+## Optional but VERY powerful addition (I recommend this)
+
+Add this final self-check line to the prompt:
+
+```
+Before finalizing, ask:
+“Would this question make sense to a human French teacher?”
+
+If not, regenerate.
+```
+
+This alone improves quality massively.
+
+---
+
+## Bottom line
+
+What you’re doing here is **exactly the difference** between:
+
+* “AI-generated exercises”
+* and a **real learning engine**
+
+With this prompt:
+
+* questions become clean
+* trust goes up
+* Okiri feels intentional, not random
+
+If you want next, I can:
+
+* create a **question-type matrix per gap category**
+* help you define **which task types unlock at which levels**
+* or help you write a **validator function** to auto-reject bad questions
+
+You’re building this the right way.

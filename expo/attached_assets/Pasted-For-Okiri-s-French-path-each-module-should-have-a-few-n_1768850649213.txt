@@ -1,0 +1,97 @@
+For Okiri’s French path, each module should have a few **non‑negotiable “French‑isms”** that make learners sound real, not textbook. Here’s what to front‑load.
+
+## Module 1 – Sounds, Politeness, Tu/Vous
+
+Focus on **accent + social basics** so learners don’t sound rude or incomprehensible.
+
+- **Pronunciation priorities**  
+  - Nasal vowels: *an/en, in, on, un* – these affect intelligibility a lot. [laclassedestelle](https://www.laclassedestelle.com/blog/french-language-challenges-for-english-speakers)
+  - **u vs ou** (*tu* vs *tout*), *é/è* contrast, and the French *r* /ʁ/. [frenchspeak.com](https://frenchspeak.com.au/french-pronunciation-challenges-faced-by-native-english-speakers-while-learning-to-speak-clearly/)
+  - Silent final consonants and basic liaisons in ultra‑common phrases: *les amis, mes enfants, petit ami*. [polyglottistlanguageacademy](https://www.polyglottistlanguageacademy.com/language-culture-travelling-blog/2025/2/9/top-10-common-mistakes-in-french-pronunciation-and-how-to-fix-them)
+
+- **Politeness & greeting norms**  
+  - Always say **bonjour** when entering a shop/interaction; don’t start with “excuse me” like in English. [lapausecafecroissant](https://lapausecafecroissant.fr/blog/french-politeness)
+  - Core polite set: *bonjour, bonsoir, au revoir, merci / merci beaucoup, s’il vous plaît, pardon / excusez‑moi, enchanté(e).* [talkinfrench](https://www.talkinfrench.com/guide-french-politeness/)
+  - Clear **tu vs vous** expectations: default *vous* with strangers; *tu* with friends/family, plus typical formulas like *Comment allez‑vous ?* vs *Comment ça va ?*. [icls](https://www.icls.edu/blog/french-etiquette-8-phrases-to-help-you-fit-in)
+
+- **Essential beginner chunks**  
+  - *Je m’appelle…, Je viens de…, J’habite à…, Je suis…, Je ne parle pas bien français, Parlez‑vous anglais ?*  
+  - Add the “softeners”: *un peu, désolé(e), je ne comprends pas, vous pouvez répéter ?*  
+
+Tie‑in with Okiri: pronunciation checking heavily on these phrases, and every mis‑used *tu/vous* or missing *s’il vous plaît* can be surfaced as a “social nuance gap” card.
+
+***
+
+## Module 2 – Daily Life, Ça Va, Because/But
+
+Now push **natural small talk** and everyday grammar that makes speech flow.
+
+- **Routine & hobby patterns**  
+  - *Je me lève, je vais au travail, je rentre, je fais du sport, je regarde des séries, je sors avec des amis.*  
+  - Frequency adverbs *souvent, parfois, toujours, jamais, tous les jours* in natural positions. [iblanguages](https://iblanguages.com/wp-content/uploads/2023/12/Complete-French-Syllabus.pdf)
+
+- **“Ça va” ecosystem & small talk**  
+  - Different uses: greeting (*Ça va ?*), answering (*Ça va bien, merci. Et toi / et vous ?*), reacting. [lapausecafecroissant](https://lapausecafecroissant.fr/blog/french-politeness)
+  - “Have a nice…” phrases: *Bonne journée, Bon week‑end, Bon courage, Bon appétit.* [icls](https://www.icls.edu/blog/french-etiquette-8-phrases-to-help-you-fit-in)
+
+- **Because / But / So core connectors**  
+  - *parce que, mais, donc, alors, ensuite, après* – drilled in speech to avoid “telegraphic” French. [studysmarter.co](https://www.studysmarter.co.uk/explanations/french/french-grammar/french-discourse-markers/)
+  - Typical sentence shapes: *J’aime X parce que…, Je n’ai pas le temps, donc…, D’abord…, ensuite…, après…*  
+
+- **“On” vs “nous”**  
+  - Everyday use of *on* instead of *nous* in speech: *On va au cinéma ? On se voit demain ?*  
+
+Tie‑in with Okiri: surface everyday‑life articles that showcase these connectors and *on*; grammar checker pays special attention to *parce que* word order and *on* conjugation.
+
+***
+
+## Module 3 – Passé Composé, Futur Proche, Opinion Phrases
+
+Here the nuance is **how French actually tells stories and gives opinions**.
+
+- **Passé composé essentials**  
+  - High‑frequency verbs with *avoir/être* and common irregulars: *j’ai fait, j’ai vu, j’ai pris, je suis allé(e), je suis venu(e).* [ohlalafrenchcourse](https://www.ohlalafrenchcourse.com/en/blog/article/french-grammar-study-plan-beginner-to-advanced)
+  - Typical story openers: *Hier…, Le week‑end dernier…, Une fois…, Quand j’étais petit(e)…*  
+
+- **Futur proche & talking about plans**  
+  - *Je vais + infinitif* as the default spoken future: *Je vais partir, On va se voir, Je vais apprendre le français.* [iifls](https://iifls.com/french-b1-syllabus/)
+  - Contrast with present for scheduled events: *Je pars demain matin, Je travaille samedi.*  
+
+- **Opinion and preference stock phrases**  
+  - *J’aime / j’adore / je n’aime pas / je déteste.*  
+  - *Je préfère…, À mon avis…, Je pense que…, Je trouve que…, Je suis d’accord / Je ne suis pas d’accord.* [lingoda](https://www.lingoda.com/blog/en/french-language-levels/)
+
+- **Comparisons**  
+  - *plus… que, moins… que, aussi… que* in real statements: *Paris est plus cher que…, C’est moins intéressant que…*  
+
+Tie‑in with Okiri: error‑to‑deck for auxiliaries in passé composé, misuse of *que* in opinions, and comparison structures; reading text selection emphasizes mini‑stories with those tenses and markers.
+
+***
+
+## Module 4 – Fillers, Discourse Markers, Polite Problems
+
+This is where learners become **socially convincing**: sounding less robotic, managing problems, and structuring talk.
+
+- **Discourse markers / connectors**  
+  - Conversation markers: *alors, donc, en fait, bref, enfin, du coup, quand même.* [polyglottistlanguageacademy](https://www.polyglottistlanguageacademy.com/language-culture-travelling-blog/2025/7/11/a-crash-course-in-french-filler-words-eh-bien-tu-vois-genre)
+  - Story structuring: *d’abord, ensuite, puis, après, finalement.* [studysmarter.co](https://www.studysmarter.co.uk/explanations/french/french-grammar/french-discourse-markers/)
+  - Soft disagreement & hedging: *peut‑être, je ne suis pas sûr(e), je comprends mais…, par contre…*  
+
+- **Filler words & “thinking aloud”**  
+  - Everyday fillers: *ben, euh, tu vois, genre, quoi,* plus some regional ones from Quebec/other content where appropriate. [youtube](https://www.youtube.com/watch?v=vmZ-3JWhFLc)
+
+- **Polite problem‑handling**  
+  - Polite complaint patterns:  
+    - *Excusez‑moi, il y a un problème avec…, Je crois qu’il y a une erreur…, Est‑ce que c’est possible de… ?*  
+  - Softening and making requests: *Je voudrais…, Est‑ce que je pourrais…, Ça vous dérange si… ?* [talkinfrench](https://www.talkinfrench.com/guide-french-politeness/)
+
+- **Repair strategies**  
+  - *Vous pouvez répéter, s’il vous plaît ?*  
+  - *Qu’est‑ce que ça veut dire ? Comment on dit… en français ?*  
+  - *Je ne me souviens plus du mot, c’est comme…*  
+
+Tie‑in with Okiri: speaking feedback should explicitly nudge discourse markers (“Try starting with ‘alors…’ here”) and highlight missing softeners; reading across regions exposes varied fillers and politeness levels that can be tapped into the Deck as “style gaps.”
+
+***
+
+If you want, next step can be turning this into a literal “Nuance Checklist” per module that your agents use to auto‑label and prioritize gaps (e.g., tag cards as Politeness, Filler, Connector, Pronunciation) so the deck feels like “French‑ness training,” not just vocab.

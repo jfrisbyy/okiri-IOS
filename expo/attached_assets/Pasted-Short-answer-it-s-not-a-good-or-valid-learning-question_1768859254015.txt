@@ -1,0 +1,112 @@
+Short answer: **it’s not a *good* or *valid* learning question as-is** — and you’re right to question it.
+
+Here’s why, and how to fix it cleanly.
+
+---
+
+## Why this question is NOT valid (yet)
+
+> **What does this sentence mean in English?**
+> *“je veux pas que je n’ai quelque chose”*
+
+The issue is **not the task** (meaning → English).
+The issue is the **sentence itself**.
+
+### The sentence is grammatically incorrect in French
+
+Problems:
+
+* ❌ Wrong verb mood after *“je veux pas que”*
+  → requires **subjunctive**
+* ❌ Double negation logic is broken
+* ❌ Native speaker would never say this
+
+Because of that:
+
+* Asking for the *meaning* implies the sentence is **correct**
+* But it isn’t
+* So the learner is being asked to interpret **broken input**, which is bad pedagogy
+
+A fluent French teacher would **never** ask this as a meaning question.
+
+---
+
+## When this *would* be valid
+
+This sentence **can only be used** for one task type:
+
+### ✅ Error Correction (valid)
+
+Example:
+
+**Question:**
+Which option correctly fixes the error in this sentence?
+
+> *Je veux pas que je n’ai quelque chose.*
+
+Options:
+A) Je veux pas que j’aie quelque chose ✅
+B) Je veux pas que j’ai quelque chose
+C) Je ne veux pas que je n’ai quelque chose
+D) Je veux pas que je n’ai rien
+
+✔ This is a **valid, strong question**
+
+---
+
+## If you want a meaning question, fix the sentence first
+
+To make your original question valid, you must use **correct French**.
+
+### Correct versions you *can* ask meaning questions about
+
+**Option 1 (affirmative):**
+
+> *Je veux pas que j’aie quelque chose.*
+
+→ “I don’t want to have anything.”
+
+**Option 2 (negative intent):**
+
+> *Je veux pas que j’aie rien.*
+
+→ Colloquial, but still meaningful (double negation in spoken French)
+
+Then the question becomes valid:
+
+**Question:**
+What does this sentence mean in English?
+
+> *Je veux pas que j’aie quelque chose.*
+
+---
+
+## The rule you should lock in (this is important)
+
+**Meaning / translation questions must ONLY use grammatically correct sentences.**
+
+If the sentence is incorrect:
+
+* ❌ Don’t ask for meaning
+* ✅ Ask for correction
+
+This rule alone will prevent 90% of bad questions.
+
+---
+
+## One-line validator you can encode mentally or in code
+
+> **If the learner is asked “what does this mean?”, the sentence must be something a native speaker would actually say.**
+
+If not → change the task.
+
+---
+
+## Final verdict
+
+* ❌ As written: **Not a valid meaning question**
+* ✅ As error correction: **Very good**
+* 🔧 Fix the sentence → then meaning is fine
+
+You’re asking the *exact* right questions at the right stage.
+This is how Okiri becomes *trustworthy*, not just clever.

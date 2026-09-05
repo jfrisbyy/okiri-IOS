@@ -1,0 +1,253 @@
+You’ve diagnosed the problem **exactly right**.
+This is not a “bad AI” issue — it’s a **constraint pressure problem**.
+
+You forced:
+
+* **25 questions per gap**
+* **fixed question-type quotas**
+* **limited data per gap**
+
+So the system is doing the only thing it can do under pressure:
+👉 **hallucinating valid-looking questions from invalid material.**
+
+That sentence:
+
+> *“hier soir aussi je pourrais mais je veux pas continuer à pleurer”*
+
+is **not clean, complete, or stable enough** to support a meaning question — yet the system *had* to produce one.
+
+This is a design problem, not a prompt typo.
+
+---
+
+## The core mistake (important)
+
+You treated **gaps** like **content units**.
+
+They are not.
+
+A gap is a **signal**, not a lesson.
+
+You must decouple:
+
+* *gap detection*
+  from
+* *lesson generation volume*
+
+---
+
+## The correct mental model (lock this in)
+
+### ❌ Wrong model
+
+> Every gap → exactly 25 questions
+
+### ✅ Correct model
+
+> Every gap → variable number of **valid** questions
+> capped by **semantic stability**
+
+If a gap only supports 6 good questions, you generate **6**, not 25.
+
+---
+
+## The WORKAROUND you need (this is the fix)
+
+### 🔑 Step 1: Add a “Question Viability Check” (non-negotiable)
+
+Before generating *any* question, the system must answer:
+
+> **Is the source sentence grammatically complete and semantically stable?**
+
+If NO:
+
+* ❌ Meaning / translation questions are banned
+* ❌ Naturalness comparison is banned
+* ✅ Only allowed:
+
+  * error correction
+  * sentence reconstruction
+  * targeted micro-fix prompts
+
+This alone would have blocked the bad question you saw.
+
+---
+
+## Step 2: Introduce **Flexible Question Quotas**
+
+Instead of:
+
+* “25 questions per gap”
+
+Use:
+
+* “Up to 25 questions per gap”
+* With **minimum quality gates**
+
+### Example rule
+
+```
+If fewer than 8 valid questions can be generated,
+stop and mark the gap as:
+"Partial Practice – awaiting reinforcement"
+```
+
+No filler. No force.
+
+---
+
+## Step 3: Split gaps into TWO internal types
+
+This is big.
+
+### Type A — Stable Gaps
+
+* Clean sentence
+* Clear intent
+* Native-speaker viable
+
+✅ Can generate:
+
+* meaning
+* completion
+* naturalness
+* production
+
+### Type B — Unstable Gaps
+
+* Fragment
+* Mixed tense
+* Spoken shorthand
+* Incomplete thought
+
+✅ Can ONLY generate:
+
+* reconstruction
+* correction
+* guided rewrite
+* “choose the best fix”
+
+❌ Meaning questions are **forbidden**
+
+Your example is **Type B**.
+
+---
+
+## Step 4: Add a “Reconstruction First” rule
+
+For unstable gaps:
+
+> The FIRST task must be:
+> **“Which version correctly rewrites this sentence?”**
+
+Only AFTER the learner fixes it does it become eligible for:
+
+* meaning questions
+* deeper drills
+
+This mirrors real teaching.
+
+---
+
+## Step 5: Change how you think about the 25-question rule
+
+Here’s the reframing that will save your system:
+
+> **25 is a MAXIMUM, not a target.**
+
+Better model:
+
+* 8–12 high-quality prompts per gap
+* spaced over days
+* regenerated as context improves
+
+Quality > quantity.
+
+---
+
+## The PROMPT FIX (copy/paste)
+
+Use this **in addition** to your existing prompt:
+
+```
+Before generating questions, evaluate the source sentence.
+
+If the sentence is:
+- incomplete
+- grammatically unstable
+- colloquial shorthand
+- or not something a teacher would use for explanation
+
+Then:
+- DO NOT generate meaning or translation questions
+- DO NOT generate naturalness comparison
+- ONLY generate correction or reconstruction tasks
+
+If fewer than 5 valid questions can be created,
+STOP and return only the valid ones.
+
+Never force question generation to meet a numeric quota.
+```
+
+---
+
+## How your bad question would now be handled
+
+Instead of:
+
+❌
+
+> What does this sentence mean in English?
+
+You’d get:
+
+✅
+**Question:**
+Which option best rewrites this sentence in correct French?
+
+> *Hier soir aussi je pourrais mais je veux pas continuer à pleurer*
+
+Options:
+
+* A) Hier soir aussi, je pouvais, mais je ne veux pas continuer à pleurer
+* B) Hier soir aussi, je pourrais, mais je ne voulais pas pleurer
+* C) Hier soir aussi, je pouvais, mais je ne voulais pas continuer à pleurer ✅
+* D) Hier soir aussi, je veux pleurer mais je ne pouvais pas
+
+That’s a *real* learning moment.
+
+---
+
+## The BIG insight (this is important)
+
+You just uncovered why **most AI learning apps feel dumb**.
+
+They optimize for:
+
+* output volume
+* rigid templates
+
+You’re optimizing for:
+
+* pedagogical validity
+* trust
+
+This is the right direction.
+
+---
+
+## Final recommendation (lock this in)
+
+1. Remove hard “25 questions” enforcement
+2. Add sentence stability classification
+3. Gate question types by stability
+4. Prefer reconstruction before interpretation
+5. Treat gaps as **living signals**, not content buckets
+
+If you want next, I can:
+
+* help you define the **gap → allowed question matrix**
+* design a **fallback question hierarchy**
+* or help you spec this cleanly for your devs
+
+You’re doing real product thinking right now — this is good.

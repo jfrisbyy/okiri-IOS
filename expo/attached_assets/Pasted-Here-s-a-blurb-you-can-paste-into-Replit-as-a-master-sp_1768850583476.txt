@@ -1,0 +1,301 @@
+Here’s a blurb you can paste into Replit as a “master spec” for the learning path, wired into Okiri’s current core (Read / Speak / Deck / Pronunciation / Grammar).
+
+***
+
+You are an AI engineer and learning designer.  
+Design the **full conversational learning path for Okiri – French**, integrating:
+
+- Foundation Lessons  
+- Read tab (115 regional articles)  
+- Speak tab (prompts + real-time feedback)  
+- My Deck (gaps SRS)  
+- Pronunciation checking  
+- Grammar feedback  
+
+The goal is to take an English speaker from zero/low French to **conversational (strong A2 → early B1)**, using Okiri’s “learn from your gaps” core.
+
+## 1. Overall Learning Path
+
+Define a 4‑phase path:
+
+1. Module 1 – Sounds & Survival Basics (A1)  
+2. Module 2 – Everyday Life & Routines (A2)  
+3. Module 3 – Past, Future & Opinions (A2→B1)  
+4. Module 4 – Stories, Problems & Real Conversations (early B1)  
+
+Rules:
+
+- Modules are **finite**, with visible progress and clear “You’re ready for the next phase” check.  
+- Reading, Speaking, Deck, and Pronunciation are **hooked into every module**, not separate silos.  
+- Any vocabulary, grammar, or pronunciation issue is treated as a **gap** and sent to the Deck for spaced repetition.
+
+***
+
+## 2. Module 1 – Sounds & Survival Basics (A1)
+
+### 2.1 Core Outcomes
+
+By the end of Module 1, the learner can:
+
+- Pronounce key French sounds and phrases so they’re understandable.  
+- Introduce themselves and ask/answer basic personal questions.  
+- Handle simple interactions in cafés/shops and ask for basic information.  
+- Express simple likes/dislikes and wants.
+
+### 2.2 What users actually do
+
+For each lesson in Module 1:
+
+1. **Learn phrases & sounds (Foundation + Pronunciation Check)**  
+   - See/hear core phrases (Bonjour, Je m’appelle…, Je viens de…, Je voudrais…, etc.).  
+   - Play **ElevenLabs** audio for each phrase.  
+   - Press mic → say phrase → system:
+     - Uses Web Speech / STT to transcribe.  
+     - Compares to target phrase.  
+     - Gives simple feedback:  
+       - “Clear ✅”  
+       - “Understandable, but watch this sound: [u] vs [ou]”  
+       - “Hard to understand, listen again and try with this tip.”  
+   - If they fail twice on a phrase or specific sound (nasals, French r, liaison), auto-create a **Pronunciation Gap** in the Deck with:  
+     - Target phrase  
+     - Slow audio  
+     - Syllable breakdown + 1‑line tip  
+
+2. **Short Reading (Read tab – beginner content)**  
+   - For Module 1, surface **Beginner / Easy** dialogues and micro-texts that match the lesson topic (self‑intro, café, directions).  
+   - User reads 3–10 line dialogues with tap‑to‑translate:  
+     - Tap word/phrase → definition + translation + audio.  
+     - “Add to Deck” button → creates vocab gap.  
+   - Lesson rule: learner must complete at least one short reading per lesson (to anchor phrases in context).
+
+3. **Guided Speaking (Speak tab – structured prompts)**  
+   - The Speak screen shows **pre‑set prompts** tied to the lesson:  
+     - “Introduce yourself”  
+     - “Order a drink and something to eat”  
+   - Session flow:  
+     - Choose 5‑minute “guided” mode.  
+     - See 2–3 sub‑prompts as scaffolding.  
+     - Speak freely → real-time transcription → grammar checker (LanguageTool) cleans up basic conjugations/gender/errors and shows:  
+       - Your sentence  
+       - Suggested improved sentence  
+       - Short explanation + when your version *would* be correct  
+     - Any repeated grammar error or unknown word can be “Add to Deck”.
+
+4. **Mini Writing task**  
+   - Write 2–4 sentences (e.g., “Introduce yourself”, “Write a simple café order”).  
+   - AI gives fluency suggestions + grammar explanation.  
+   - Errors can be added as **Grammar Gaps** to the Deck.
+
+5. **Checkpoint at end of Module 1**  
+   - Short speaking check:  
+     - Prompt 1: introduce yourself.  
+     - Prompt 2: order in a café.  
+   - Reviewer logic: “Understandable with basic phrases?” → if yes, unlock Module 2; if not, suggest repeating key lessons.
+
+***
+
+## 3. Module 2 – Everyday Life & Routines (A2)
+
+### 3.1 Core Outcomes
+
+By the end of Module 2, the learner can:
+
+- Talk about daily routine, work/study, and free time.  
+- Make simple plans with others (when/where/what).  
+- Talk about likes/dislikes with short reasons.  
+- Handle common transactions (transport, supermarket, basic travel).
+
+### 3.2 What users actually do
+
+For each lesson in Module 2:
+
+1. **Foundation Lesson – Target function**  
+   - Focus topics:  
+     - Daily routine verbs in present.  
+     - Hobbies and frequency adverbs.  
+     - Making plans (“On se voit…?”, “Tu veux…?”).  
+   - Interactive explanation + pattern drills.
+
+2. **Pronunciation-in-context**  
+   - Less drilling than Module 1, but still:  
+     - Listen & repeat key sentences.  
+     - Check pronunciation for problem clusters (liaison, reduction).  
+   - Pronunciation gaps continue to feed Deck.
+
+3. **Reading – Everyday content (Read tab)**  
+   - Surface **Beginner/Easy** articles related to:  
+     - A typical day (France, Quebec, Senegal, etc.).  
+     - How people spend weekends in different regions.  
+   - User must:  
+     - Read 1–2 pieces per lesson.  
+     - Use tap‑to‑translate for unknown words/phrases.  
+     - Add at least a few new items to the Deck.  
+   - Progress metrics:  
+     - % of article read without taps.  
+     - Number of gaps created.
+
+4. **Guided Speaking – Routine & Plans**  
+   - Speak prompts tied to each lesson, e.g.:  
+     - “Describe your weekday.”  
+     - “Talk about your hobbies and how often you do them.”  
+     - “Make weekend plans with a friend.”  
+   - System:  
+     - Transcribes speech.  
+     - Grammar checks present tense and basic questions.  
+     - Shows corrections with brief explanation.  
+     - Lets user send recurring conjugation errors to Deck as **Grammar Gap Cards**.
+
+5. **Writing – Short structured texts**  
+   - Tasks like:  
+     - “Write about a typical Saturday.”  
+     - “Write a message suggesting plans with a friend.”  
+   - AI tweaks phrasing, highlights a few key corrections, and offers “Add to Deck”.
+
+6. **Checkpoint at end of Module 2**  
+   - Speaking: 5–7 minute total over 2–3 prompts (daily routine, hobbies, making plans).  
+   - Criteria: can sustain simple conversation with pauses on familiar topics → if yes, unlock Module 3.
+
+***
+
+## 4. Module 3 – Past, Future & Opinions (A2→B1)
+
+### 4.1 Core Outcomes
+
+By the end of Module 3, the learner can:
+
+- Talk about what they did in the past (weekend, trip, life events) using passé composé for common verbs.  
+- Talk about future plans and goals (futur proche).  
+- Express preferences and simple opinions with reasons.  
+- Compare things (cities, jobs, hobbies).
+
+### 4.2 What users actually do
+
+Per lesson in Module 3:
+
+1. **Foundation – Grammar & chunks**  
+   - Focus each lesson on functions:  
+     - Lesson type A: “Talking about last weekend” (passé composé).  
+     - Lesson type B: “Talking about plans” (futur proche).  
+     - Lesson type C: “Giving opinions and reasons”.  
+   - Introduce high-frequency patterns as chunks, not just tables.
+
+2. **Reading – Past & future stories (Read tab)**  
+   - Surface **Easy/Medium** content from multiple regions about:  
+     - Someone’s weekend, a trip, typical holidays.  
+     - Plans for upcoming events.  
+   - User:  
+     - Reads, taps unknown items, adds to Deck.  
+     - Starts to see more natural, slightly longer texts (2–5 paragraphs).
+
+3. **Speaking – Stories & plans**  
+   - Speak prompts like:  
+     - “Tell the story of your last weekend.”  
+     - “Describe an important memory.”  
+     - “Explain your plans for the next 3 months.”  
+   - System:  
+     - Transcribe.  
+     - Grammar check for tense choice and agreement.  
+     - Highlight misused tenses or missing auxiliaries; offer corrected sentence and explanation.  
+     - Allow one‑tap “Add this error as a gap”.
+
+4. **Writing – Narrative and opinion**  
+   - Tasks like:  
+     - “Write a short story about a trip.”  
+     - “Write about your favorite place and why you like it.”  
+   - Same AI feedback → Deck integration.
+
+5. **Pronunciation – Storytelling rhythm**  
+   - Short shadowing exercises with slightly longer audio:  
+     - Learner listens to a story excerpt.  
+     - Shadows (repeats with Audio).  
+     - Optionally check a selected sentence for pronunciation quality.
+
+6. **Checkpoint at end of Module 3**  
+   - Speaking exam style:  
+     - 3 prompts (past, future, opinion).  
+     - 8–10 total minutes.  
+   - Assessment logic:  
+     - Can they narrate events with some coherence?  
+     - Can they describe future plans and explain why?  
+   - On passing: mark them “almost conversational; ready for real conversation training” and unlock Module 4.
+
+***
+
+## 5. Module 4 – Stories, Problems & Real Conversations (Early B1)
+
+### 5.1 Core Outcomes
+
+By the end of Module 4, the learner can:
+
+- Tell short stories with beginning–middle–end.  
+- Explain everyday problems and ask for help.  
+- Participate in small talk and basic discussions, reacting to another person.  
+- Manage breakdowns: ask for repetition, clarification, rephrase.
+
+### 5.2 What users actually do
+
+Per lesson in Module 4:
+
+1. **Foundation – Conversation strategies**  
+   - Teach conversation phrases:  
+     - Clarifying: “Comment ?”, “Vous pouvez répéter ?”, “Qu’est-ce que ça veut dire ?”.  
+     - Reformulating: “Tu veux dire que…?”, “En fait…”.  
+     - Politeness strategies for asking/complaining.  
+
+2. **Reading – Richer, regional content (Read tab)**  
+   - Surface **Medium** content across your 12 francophone regions (travel stories, cultural anecdotes, everyday problems).  
+   - Encourage reading for gist and pleasure; still allow tap‑to‑translate + Deck.
+
+3. **Speaking – Real conversation simulations (Speak tab)**  
+   - Prompts like:  
+     - “Tell about a big mistake you made and what you learned.”  
+     - “Explain a problem at a hotel or restaurant and ask for a solution.”  
+     - “Discuss pros and cons of living in your city.”  
+   - System:  
+     - Real-time transcription.  
+     - Grammar + fluency suggestions.  
+     - Encourage use of conversation management phrases.  
+     - Recurring breakdowns become Deck gaps.
+
+4. **Writing – Problem & opinion messages**  
+   - Tasks like:  
+     - “Write an email complaining about a booking problem.”  
+     - “Write a post explaining why you prefer X to Y.”  
+
+5. **Pronunciation – Fine-tuning (optional)**  
+   - Optional phrase practice on the user’s own typical sentences.  
+   - Pronunciation check used more as refinement than gate.
+
+6. **Final Conversational Check & Unlock**
+
+Design a final “conversational exam”:
+
+- 3–4 speaking prompts mixing identity, daily life, stories, problems, and opinions.  
+- Total target speaking time: ~15 minutes.  
+- Criteria for passing:  
+  - Can handle common situations and familiar topics.  
+  - Can tell simple stories and explain opinions.  
+  - Errors exist but don’t block understanding.
+
+On passing:
+
+- Show a big “You’re now conversational in French” badge.  
+- Unlock **full free‑reign mode** in:
+
+  - Speak tab: open prompts, free mode always available.  
+  - Read tab: no “foundation required” flags; they can dive anywhere.  
+
+- Messaging: “From now on, Okiri will mostly teach you from your own reading, speaking, and writing. Everything you can’t say or understand becomes your curriculum.”
+
+***
+
+## 6. How to Use Okiri’s Core in Every Phase
+
+Summarize core logic:
+
+- **Read**: always available, but during modules it surfaces texts matched to the current module’s topics/difficulty; tap‑to‑translate creates vocab/phrase gaps.  
+- **Speak**: in early modules, shows guided prompts tied to lessons; later, opens up to free prompts; always uses transcription + grammar feedback, with error → Deck.  
+- **Deck**: central hub for all gaps: vocab, phrases, grammar, pronunciation; spaced repetition with audio and example sentences.  
+- **Pronunciation**: required for early core phrases; optional refinement later; pronunciation gaps are stored and reviewed like vocabulary.  
+
+This is the complete learning pathway from zero to conversational French, fully integrated with Okiri’s adaptive gap engine, reading library, speaking tools, and pronunciation checks.

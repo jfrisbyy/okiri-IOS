@@ -1,0 +1,193 @@
+//
+//  DailyPlanEngine.swift
+//  FluentFrenchIOS
+//
+//  Prescribes the SHAPE of the day — minutes weighted across the learner's chosen
+//  activities — while the learner always picks the content. The tilt comes from the
+//  EXISTING concept model (ConceptSelector), not a parallel curriculum brain: one
+//  intelligence, two views.
+//
+//  Mechanism: take the top priority concepts, sum their priority-weighted modality
+//  affinities into a distribution over activities, zero out activities the learner
+//  didn't choose, renormalize, and scale to the time budget.
+//
+
+import Foundation
+
+// MARK: - Tuning (NOT FINAL — tune live during testing)
+
+nonisolated struct DailyPlanConfig {
+    /// How many top priority concepts feed the plan's tilt.
+    var topConceptCount: Int = 6
+    /// Ceiling on how far observed gap-source data can tilt away from the prior.
+    var observedBlendMax: Double = 0.7
+    /// Gaps a concept needs before observed data dominates its prior.
+    var observedSmoothing: Double = 3.0
+    /// Uniform floor so every chosen activity still gets some time (non-punitive).
+    var uniformFloor: Double = 0.2
+
+    static let tuning = DailyPlanConfig()
+}
+
+// MARK: - Output
+
+nonisolated struct DailyPlanItem: Identifiable, Hashable {
+    var id: String { modality.rawValue }
+    let modality: LearningModality
+    let targetMinutes: Int
+}
+
+nonisolated struct DailyPlan: Hashable {
+    var items: [DailyPlanItem]   // ordered by minutes, high to low
+    var rationale: String
+    var isColdStart: Bool
+
+    var totalMinutes: Int { items.reduce(0) { $0 + $1.targetMinutes } }
+}
+
+// MARK: - Engine
+
+@MainActor
+struct DailyPlanEngine {
+    let store: AppStore
+    var config: DailyPlanConfig = .tuning
+    var weights: ConceptSelectionWeights = .tuning
+
+    func makePlan() -> DailyPlan {
+        let prefs = store.preferences ?? .default
+        // Only ever prescribe activities the learner is actually ready for — the
+        // readiness gate filters out anything still locked behind Foundation.
+        let chosen = LearningModality.allCases.filter {
+            prefs.modalities.contains($0) && store.readiness(for: $0) == .unlocked
+        }
+        guard !chosen.isEmpty else {
+            return DailyPlan(items: [], rationale: "Build the basics to unlock your daily plan.", isColdStart: true)
+        }
+        let budget = prefs.timeBudget.minutes
+
+        let selector = ConceptSelector(store: store, weights: weights)
+        let ranked = Array(selector.rankedEligible().prefix(config.topConceptCount))
+
+        // Cold start: too little signal to tilt — even, honest split.
+        guard ranked.contains(where: { $0.score > 0 }) else {
+            return evenSplit(chosen: chosen, budget: budget,
+                             rationale: "Still learning your weak spots — today's an even spread.")
+        }
+
+        // Sum priority-weighted modality affinities.
+        var raw: [LearningModality: Double] = [:]
+        for sc in ranked {
+            let w = max(0, sc.score)
+            guard w > 0 else { continue }
+            for (modality, value) in affinity(for: sc.concept) {
+                raw[modality, default: 0] += w * value
+            }
+        }
+
+        // Zero out unchosen, renormalize.
+        var tilted = raw.filter { chosen.contains($0.key) }
+        let tiltedTotal = tilted.values.reduce(0, +)
+        guard tiltedTotal > 0 else {
+            return evenSplit(chosen: chosen, budget: budget,
+                             rationale: "Today's a balanced spread across your activities.")
+        }
+        for k in tilted.keys { tilted[k]! /= tiltedTotal }
+
+        // Mix in a uniform floor so every chosen activity gets some time.
+        let uniform = 1.0 / Double(chosen.count)
+        var final: [LearningModality: Double] = [:]
+        for m in chosen {
+            final[m] = (1 - config.uniformFloor) * (tilted[m] ?? 0) + config.uniformFloor * uniform
+        }
+
+        // Scale to budget, round into meaningful 5-minute blocks (min 5 each).
+        var items: [DailyPlanItem] = []
+        for m in chosen {
+            let share = final[m] ?? 0
+            let rawMin = share * Double(budget)
+            let rounded = max(5, Int((rawMin / 5).rounded()) * 5)
+            items.append(DailyPlanItem(modality: m, targetMinutes: rounded))
+        }
+        items.sort { $0.targetMinutes > $1.targetMinutes }
+
+        return DailyPlan(items: items, rationale: rationale(for: items, ranked: ranked), isColdStart: false)
+    }
+
+    // MARK: - Affinity
+
+    /// Where practicing this concept pays off: a blend of a static category prior
+    /// (works at cold start) and the observed source distribution of its gaps
+    /// (sharpens over time). Returns weights over modalities summing to ~1.
+    private func affinity(for concept: Concept) -> [LearningModality: Double] {
+        let prior = categoryPrior(concept.category)
+        let gaps = store.gaps(forConcept: concept.id)
+        guard let (observed, count) = observedDistribution(gaps), count > 0 else { return prior }
+
+        let w = config.observedBlendMax * (Double(count) / (Double(count) + config.observedSmoothing))
+        var blended: [LearningModality: Double] = [:]
+        for m in LearningModality.allCases {
+            blended[m] = (1 - w) * (prior[m] ?? 0) + w * (observed[m] ?? 0)
+        }
+        return blended
+    }
+
+    /// Static prior: where each gap category is best practiced.
+    private func categoryPrior(_ category: GapCategory) -> [LearningModality: Double] {
+        switch category {
+        case .vocabulary:    return [.reading: 0.7, .listening: 0.15, .watching: 0.15]
+        case .grammar:       return [.reading: 0.7, .watching: 0.2, .speaking: 0.1]
+        case .pronunciation: return [.speaking: 0.5, .listening: 0.5]
+        case .phrasing:      return [.reading: 0.4, .watching: 0.4, .speaking: 0.2]
+        case .register:      return [.reading: 0.4, .watching: 0.4, .speaking: 0.2]
+        }
+    }
+
+    /// Distribution of a concept's gaps over modalities, from where they were
+    /// captured (sourceType). Foundation gaps carry no modality signal and are
+    /// skipped. Returns nil when there's no usable signal.
+    private func observedDistribution(_ gaps: [GapItem]) -> (dist: [LearningModality: Double], count: Int)? {
+        var counts: [LearningModality: Double] = [:]
+        var total = 0
+        for gap in gaps {
+            guard let m = modality(for: gap.sourceType) else { continue }
+            counts[m, default: 0] += 1
+            total += 1
+        }
+        guard total > 0 else { return nil }
+        for k in counts.keys { counts[k]! /= Double(total) }
+        return (counts, total)
+    }
+
+    private func modality(for source: SourceType) -> LearningModality? {
+        switch source {
+        case .reading: return .reading
+        case .speech: return .speaking
+        case .listening: return .listening
+        case .foundation: return nil
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func evenSplit(chosen: [LearningModality], budget: Int, rationale: String) -> DailyPlan {
+        let per = max(5, Int((Double(budget) / Double(chosen.count) / 5).rounded()) * 5)
+        let items = chosen.map { DailyPlanItem(modality: $0, targetMinutes: per) }
+        return DailyPlan(items: items, rationale: rationale, isColdStart: true)
+    }
+
+    private func rationale(for items: [DailyPlanItem], ranked: [ScoredConcept]) -> String {
+        guard let lead = items.first else { return "Here's today's plan." }
+        // Name the dominant weak category for color.
+        let topCategory = ranked.first?.concept.category.label.lowercased()
+        let leadLabel = lead.modality.label.lowercased()
+        let secondLabel = items.count > 1 ? items[1].modality.label.lowercased() : nil
+
+        if let cat = topCategory, let second = secondLabel {
+            return "Your weak spots lately are \(cat)-heavy, so today leans \(leadLabel) and \(second)."
+        }
+        if let cat = topCategory {
+            return "Your weak spots lately are \(cat)-heavy, so today leans \(leadLabel)."
+        }
+        return "Today leans \(leadLabel) to work on your weak spots."
+    }
+}

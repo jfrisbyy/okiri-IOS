@@ -1,0 +1,613 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "greetings-politeness",
+      "category": "register",
+      "items": [
+        { "fr": "bonjour", "en": "hello / good day", "note": "The default daytime greeting.", "ex": "Bonjour, ça va ?", "exEn": "Hello, how are you?", "diff": "easy" },
+        { "fr": "bonsoir", "en": "good evening", "note": "Used to greet someone in the evening.", "ex": "Bonsoir, bienvenue !", "exEn": "Good evening, welcome!" },
+        { "fr": "salut", "en": "hi / bye (informal)", "note": "Casual greeting between friends.", "ex": "Salut, tu vas bien ?", "exEn": "Hi, are you well?" },
+        { "fr": "merci", "en": "thank you", "note": "The core politeness word.", "ex": "Merci beaucoup !", "exEn": "Thank you very much!", "diff": "easy" },
+        { "fr": "s'il vous plaît", "en": "please (formal)", "note": "Polite request marker; informal is 's'il te plaît'.", "ex": "Un café, s'il vous plaît.", "exEn": "A coffee, please." },
+        { "fr": "de rien", "en": "you're welcome", "note": "The standard reply to thanks.", "ex": "— Merci ! — De rien.", "exEn": "— Thanks! — You're welcome." },
+        { "fr": "excusez-moi", "en": "excuse me (formal)", "note": "To get attention or apologise politely.", "ex": "Excusez-moi, où est la gare ?", "exEn": "Excuse me, where is the station?" },
+        { "fr": "au revoir", "en": "goodbye", "note": "The standard farewell.", "ex": "Au revoir, à demain !", "exEn": "Goodbye, see you tomorrow!" },
+        { "fr": "enchanté", "en": "nice to meet you", "note": "Said when you are introduced to someone.", "ex": "Enchanté de vous rencontrer.", "exEn": "Pleased to meet you." },
+        { "fr": "pardon", "en": "sorry / pardon", "note": "A quick apology or to ask someone to repeat.", "ex": "Pardon, je suis en retard.", "exEn": "Sorry, I'm late." }
+      ]
+    },
+    {
+      "id": "everyday-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "le pain", "en": "the bread", "note": "A masculine everyday food noun.", "ex": "Je mange du pain.", "exEn": "I eat bread." },
+        { "fr": "l'eau (f)", "en": "the water", "note": "A feminine noun: une eau.", "ex": "Je bois de l'eau.", "exEn": "I drink water." },
+        { "fr": "la maison", "en": "the house", "note": "A feminine everyday noun.", "ex": "Je rentre à la maison.", "exEn": "I'm going home." },
+        { "fr": "le travail", "en": "work / job", "note": "A masculine everyday noun.", "ex": "Je vais au travail.", "exEn": "I'm going to work." },
+        { "fr": "le temps", "en": "time / weather", "note": "One word for both time and weather.", "ex": "Je n'ai pas le temps.", "exEn": "I don't have time." },
+        { "fr": "l'argent (m)", "en": "money / silver", "note": "A masculine noun.", "ex": "J'ai besoin d'argent.", "exEn": "I need money." },
+        { "fr": "le jour", "en": "the day", "note": "A basic time noun.", "ex": "Quel beau jour !", "exEn": "What a beautiful day!" },
+        { "fr": "la chose", "en": "the thing", "note": "A generic feminine noun.", "ex": "C'est une bonne chose.", "exEn": "It's a good thing." },
+        { "fr": "l'ami / l'amie", "en": "the friend (m/f)", "note": "A person noun that changes form by gender.", "ex": "C'est mon ami.", "exEn": "He's my friend." },
+        { "fr": "la vie", "en": "life", "note": "A common abstract noun.", "ex": "C'est la vie.", "exEn": "That's life." }
+      ]
+    },
+    {
+      "id": "numbers-time",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "un, deux, trois", "en": "one, two, three", "note": "The first counting numbers.", "ex": "Un, deux, trois, partez !", "exEn": "One, two, three, go!", "diff": "easy" },
+        { "fr": "dix", "en": "ten", "note": "A round number.", "ex": "J'ai dix euros.", "exEn": "I have ten euros." },
+        { "fr": "vingt", "en": "twenty", "note": "A tens number.", "ex": "Il a vingt ans.", "exEn": "He is twenty." },
+        { "fr": "cent", "en": "a hundred", "note": "A large round number.", "ex": "cent pour cent", "exEn": "a hundred percent" },
+        { "fr": "aujourd'hui", "en": "today", "note": "A core time word.", "ex": "Aujourd'hui, il fait beau.", "exEn": "Today the weather is nice." },
+        { "fr": "demain", "en": "tomorrow", "note": "The next day.", "ex": "À demain !", "exEn": "See you tomorrow!" },
+        { "fr": "hier", "en": "yesterday", "note": "The previous day.", "ex": "Hier, j'ai travaillé.", "exEn": "Yesterday I worked." },
+        { "fr": "maintenant", "en": "now", "note": "A time adverb.", "ex": "On part maintenant.", "exEn": "We're leaving now." },
+        { "fr": "l'heure (f)", "en": "the hour / time", "note": "Used to tell time.", "ex": "Quelle heure est-il ?", "exEn": "What time is it?" },
+        { "fr": "une minute", "en": "a minute", "note": "A unit of time.", "ex": "Attends une minute.", "exEn": "Wait a minute." }
+      ]
+    },
+    {
+      "id": "family-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "la mère", "en": "mother", "note": "A feminine family noun.", "ex": "Ma mère est gentille.", "exEn": "My mother is kind." },
+        { "fr": "le père", "en": "father", "note": "A masculine family noun.", "ex": "Mon père travaille.", "exEn": "My father works." },
+        { "fr": "le frère", "en": "brother", "note": "A masculine family noun.", "ex": "J'ai un frère.", "exEn": "I have a brother." },
+        { "fr": "la sœur", "en": "sister", "note": "A feminine family noun.", "ex": "Ma sœur est étudiante.", "exEn": "My sister is a student." },
+        { "fr": "les parents", "en": "parents", "note": "Always plural here.", "ex": "Mes parents habitent ici.", "exEn": "My parents live here." },
+        { "fr": "l'enfant", "en": "child", "note": "Can be masculine or feminine.", "ex": "Elle a un enfant.", "exEn": "She has a child." },
+        { "fr": "le fils", "en": "son", "note": "The final s is pronounced.", "ex": "Leur fils a dix ans.", "exEn": "Their son is ten." },
+        { "fr": "la fille", "en": "daughter / girl", "note": "Means both daughter and girl.", "ex": "Leur fille est petite.", "exEn": "Their daughter is small." },
+        { "fr": "les grands-parents", "en": "grandparents", "note": "A compound family noun.", "ex": "Je visite mes grands-parents.", "exEn": "I visit my grandparents." },
+        { "fr": "la famille", "en": "family", "note": "A feminine noun for family.", "ex": "J'aime ma famille.", "exEn": "I love my family." }
+      ]
+    },
+    {
+      "id": "food-drink-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "le café", "en": "coffee", "note": "Also means a café.", "ex": "Je voudrais un café.", "exEn": "I'd like a coffee." },
+        { "fr": "le thé", "en": "tea", "note": "A masculine drink noun.", "ex": "Elle boit du thé.", "exEn": "She drinks tea." },
+        { "fr": "le lait", "en": "milk", "note": "A masculine drink noun.", "ex": "Du lait, s'il vous plaît.", "exEn": "Milk, please." },
+        { "fr": "le fromage", "en": "cheese", "note": "A masculine food noun.", "ex": "J'adore le fromage.", "exEn": "I love cheese." },
+        { "fr": "la pomme", "en": "apple", "note": "A feminine fruit noun.", "ex": "Je mange une pomme.", "exEn": "I eat an apple." },
+        { "fr": "le vin", "en": "wine", "note": "A masculine drink noun.", "ex": "un verre de vin", "exEn": "a glass of wine" },
+        { "fr": "le poisson", "en": "fish", "note": "The food and the animal.", "ex": "On mange du poisson.", "exEn": "We're eating fish." },
+        { "fr": "la viande", "en": "meat", "note": "A feminine food noun.", "ex": "Je ne mange pas de viande.", "exEn": "I don't eat meat." },
+        { "fr": "le légume", "en": "vegetable", "note": "A masculine food noun.", "ex": "Mange tes légumes !", "exEn": "Eat your vegetables!" },
+        { "fr": "le repas", "en": "meal", "note": "A masculine noun.", "ex": "Le repas est prêt.", "exEn": "The meal is ready." }
+      ]
+    },
+    {
+      "id": "home-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "la cuisine", "en": "kitchen / cooking", "note": "Means both kitchen and cuisine.", "ex": "Je cuisine dans la cuisine.", "exEn": "I cook in the kitchen." },
+        { "fr": "la chambre", "en": "bedroom", "note": "A feminine room noun.", "ex": "Ma chambre est petite.", "exEn": "My bedroom is small." },
+        { "fr": "la salle de bains", "en": "bathroom", "note": "A compound noun.", "ex": "La salle de bains est là.", "exEn": "The bathroom is there." },
+        { "fr": "le salon", "en": "living room", "note": "A masculine room noun.", "ex": "On regarde la télé au salon.", "exEn": "We watch TV in the living room." },
+        { "fr": "la porte", "en": "door", "note": "A feminine noun.", "ex": "Ferme la porte.", "exEn": "Close the door." },
+        { "fr": "la fenêtre", "en": "window", "note": "A feminine noun.", "ex": "Ouvre la fenêtre.", "exEn": "Open the window." },
+        { "fr": "la table", "en": "table", "note": "A feminine noun.", "ex": "Le repas est sur la table.", "exEn": "The meal is on the table." },
+        { "fr": "la chaise", "en": "chair", "note": "A feminine noun.", "ex": "Assieds-toi sur la chaise.", "exEn": "Sit on the chair." },
+        { "fr": "le lit", "en": "bed", "note": "A masculine noun.", "ex": "Je vais au lit.", "exEn": "I'm going to bed." },
+        { "fr": "l'appartement (m)", "en": "apartment", "note": "A masculine noun.", "ex": "J'habite un appartement.", "exEn": "I live in an apartment." }
+      ]
+    },
+    {
+      "id": "colors-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "rouge", "en": "red", "note": "A colour adjective.", "ex": "une pomme rouge", "exEn": "a red apple", "diff": "easy" },
+        { "fr": "bleu", "en": "blue", "note": "Takes -e for feminine: bleue.", "ex": "le ciel bleu", "exEn": "the blue sky" },
+        { "fr": "vert", "en": "green", "note": "Feminine: verte.", "ex": "l'herbe verte", "exEn": "the green grass" },
+        { "fr": "jaune", "en": "yellow", "note": "Same form in masculine and feminine.", "ex": "le soleil jaune", "exEn": "the yellow sun" },
+        { "fr": "noir", "en": "black", "note": "Feminine: noire.", "ex": "un chat noir", "exEn": "a black cat" },
+        { "fr": "blanc", "en": "white", "note": "Irregular feminine: blanche.", "ex": "la neige blanche", "exEn": "the white snow" },
+        { "fr": "gris", "en": "grey", "note": "Feminine: grise.", "ex": "un ciel gris", "exEn": "a grey sky" },
+        { "fr": "orange", "en": "orange", "note": "Invariable: never changes form.", "ex": "des chaussures orange", "exEn": "orange shoes" },
+        { "fr": "rose", "en": "pink", "note": "Same form in both genders.", "ex": "une fleur rose", "exEn": "a pink flower" },
+        { "fr": "marron", "en": "brown", "note": "Invariable: never changes form.", "ex": "des yeux marron", "exEn": "brown eyes" }
+      ]
+    },
+    {
+      "id": "body-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "la tête", "en": "head", "note": "A feminine body noun.", "ex": "J'ai mal à la tête.", "exEn": "I have a headache." },
+        { "fr": "la main", "en": "hand", "note": "A feminine body noun.", "ex": "Lave-toi les mains.", "exEn": "Wash your hands." },
+        { "fr": "le bras", "en": "arm", "note": "Final s is silent.", "ex": "Il a mal au bras.", "exEn": "His arm hurts." },
+        { "fr": "la jambe", "en": "leg", "note": "A feminine body noun.", "ex": "Ma jambe est cassée.", "exEn": "My leg is broken." },
+        { "fr": "le pied", "en": "foot", "note": "A masculine body noun.", "ex": "J'ai froid aux pieds.", "exEn": "My feet are cold." },
+        { "fr": "les yeux", "en": "eyes", "note": "Irregular plural of l'œil.", "ex": "Elle a les yeux bleus.", "exEn": "She has blue eyes." },
+        { "fr": "la bouche", "en": "mouth", "note": "A feminine body noun.", "ex": "Ouvre la bouche.", "exEn": "Open your mouth." },
+        { "fr": "le nez", "en": "nose", "note": "Final z is silent.", "ex": "J'ai le nez bouché.", "exEn": "My nose is blocked." },
+        { "fr": "les cheveux", "en": "hair", "note": "Usually plural in French.", "ex": "Il a les cheveux courts.", "exEn": "He has short hair." },
+        { "fr": "le cœur", "en": "heart", "note": "A masculine body noun.", "ex": "Mon cœur bat vite.", "exEn": "My heart beats fast." }
+      ]
+    },
+    {
+      "id": "clothing-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "le pantalon", "en": "trousers", "note": "Singular in French, plural in English.", "ex": "Je porte un pantalon noir.", "exEn": "I'm wearing black trousers." },
+        { "fr": "la chemise", "en": "shirt", "note": "A feminine clothing noun.", "ex": "une chemise blanche", "exEn": "a white shirt" },
+        { "fr": "la robe", "en": "dress", "note": "A feminine clothing noun.", "ex": "Elle porte une robe rouge.", "exEn": "She's wearing a red dress." },
+        { "fr": "les chaussures", "en": "shoes", "note": "A feminine plural noun.", "ex": "J'achète des chaussures.", "exEn": "I'm buying shoes." },
+        { "fr": "le manteau", "en": "coat", "note": "Plural adds -x: manteaux.", "ex": "Mets ton manteau.", "exEn": "Put on your coat." },
+        { "fr": "le chapeau", "en": "hat", "note": "Plural adds -x: chapeaux.", "ex": "Il a un chapeau.", "exEn": "He has a hat." },
+        { "fr": "la jupe", "en": "skirt", "note": "A feminine clothing noun.", "ex": "une jupe longue", "exEn": "a long skirt" },
+        { "fr": "le pull", "en": "sweater", "note": "A masculine clothing noun.", "ex": "Ce pull est chaud.", "exEn": "This sweater is warm." },
+        { "fr": "les chaussettes", "en": "socks", "note": "A feminine plural noun.", "ex": "des chaussettes rouges", "exEn": "red socks" },
+        { "fr": "la veste", "en": "jacket", "note": "A feminine clothing noun.", "ex": "Ma veste est neuve.", "exEn": "My jacket is new." }
+      ]
+    },
+    {
+      "id": "weather-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "il fait beau", "en": "the weather is nice", "note": "Weather uses 'il fait'.", "ex": "Aujourd'hui il fait beau.", "exEn": "Today the weather is nice." },
+        { "fr": "il fait froid", "en": "it's cold", "note": "Weather with 'il fait'.", "ex": "En hiver il fait froid.", "exEn": "In winter it's cold." },
+        { "fr": "il fait chaud", "en": "it's hot", "note": "Weather with 'il fait'.", "ex": "En été il fait chaud.", "exEn": "In summer it's hot." },
+        { "fr": "il pleut", "en": "it's raining", "note": "From the verb pleuvoir.", "ex": "Prends un parapluie, il pleut.", "exEn": "Take an umbrella, it's raining." },
+        { "fr": "il neige", "en": "it's snowing", "note": "From the verb neiger.", "ex": "Il neige en décembre.", "exEn": "It snows in December." },
+        { "fr": "le soleil", "en": "sun", "note": "A masculine noun.", "ex": "Le soleil brille.", "exEn": "The sun is shining." },
+        { "fr": "le vent", "en": "wind", "note": "Used with 'il y a': il y a du vent.", "ex": "Il y a du vent.", "exEn": "It's windy." },
+        { "fr": "la pluie", "en": "rain", "note": "A feminine noun.", "ex": "J'aime la pluie.", "exEn": "I like the rain." },
+        { "fr": "le nuage", "en": "cloud", "note": "A masculine noun.", "ex": "Il y a des nuages.", "exEn": "There are clouds." },
+        { "fr": "la météo", "en": "weather forecast", "note": "A feminine noun.", "ex": "Je regarde la météo.", "exEn": "I check the forecast." }
+      ]
+    },
+    {
+      "id": "places-town-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "la gare", "en": "train station", "note": "A feminine place noun.", "ex": "Je vais à la gare.", "exEn": "I'm going to the station." },
+        { "fr": "le magasin", "en": "shop", "note": "A masculine place noun.", "ex": "Le magasin est ouvert.", "exEn": "The shop is open." },
+        { "fr": "le restaurant", "en": "restaurant", "note": "A masculine place noun.", "ex": "On dîne au restaurant.", "exEn": "We dine at the restaurant." },
+        { "fr": "l'école (f)", "en": "school", "note": "A feminine place noun.", "ex": "Les enfants vont à l'école.", "exEn": "The children go to school." },
+        { "fr": "l'hôpital (m)", "en": "hospital", "note": "Plural: hôpitaux.", "ex": "Il travaille à l'hôpital.", "exEn": "He works at the hospital." },
+        { "fr": "la banque", "en": "bank", "note": "A feminine place noun.", "ex": "La banque est fermée.", "exEn": "The bank is closed." },
+        { "fr": "le parc", "en": "park", "note": "A masculine place noun.", "ex": "On se promène au parc.", "exEn": "We walk in the park." },
+        { "fr": "la rue", "en": "street", "note": "A feminine place noun.", "ex": "J'habite dans cette rue.", "exEn": "I live on this street." },
+        { "fr": "l'aéroport (m)", "en": "airport", "note": "A masculine place noun.", "ex": "L'avion part de l'aéroport.", "exEn": "The plane leaves from the airport." },
+        { "fr": "le marché", "en": "market", "note": "A masculine place noun.", "ex": "J'achète des fruits au marché.", "exEn": "I buy fruit at the market." }
+      ]
+    },
+    {
+      "id": "directions-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "à gauche", "en": "on the left / to the left", "note": "A direction phrase.", "ex": "Tourne à gauche.", "exEn": "Turn left." },
+        { "fr": "à droite", "en": "on the right / to the right", "note": "A direction phrase.", "ex": "La banque est à droite.", "exEn": "The bank is on the right." },
+        { "fr": "tout droit", "en": "straight ahead", "note": "Don't confuse with 'à droite'.", "ex": "Continue tout droit.", "exEn": "Keep going straight." },
+        { "fr": "près de", "en": "near", "note": "Followed by a place.", "ex": "C'est près d'ici.", "exEn": "It's near here." },
+        { "fr": "loin de", "en": "far from", "note": "The opposite of près de.", "ex": "C'est loin du centre.", "exEn": "It's far from the centre." },
+        { "fr": "ici", "en": "here", "note": "Location word.", "ex": "Viens ici.", "exEn": "Come here." },
+        { "fr": "là-bas", "en": "over there", "note": "Location word.", "ex": "Le magasin est là-bas.", "exEn": "The shop is over there." },
+        { "fr": "à côté de", "en": "next to", "note": "Followed by a place.", "ex": "à côté de la gare", "exEn": "next to the station" },
+        { "fr": "en face de", "en": "opposite / across from", "note": "Followed by a place.", "ex": "en face de l'école", "exEn": "opposite the school" },
+        { "fr": "au coin", "en": "at the corner", "note": "A location phrase.", "ex": "Tourne au coin.", "exEn": "Turn at the corner." }
+      ]
+    },
+    {
+      "id": "jobs-vocab",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "le professeur", "en": "teacher", "note": "Often shortened to 'le prof'.", "ex": "Mon professeur est sympa.", "exEn": "My teacher is nice." },
+        { "fr": "le médecin", "en": "doctor", "note": "Used for both genders.", "ex": "Elle est médecin.", "exEn": "She's a doctor." },
+        { "fr": "l'étudiant / l'étudiante", "en": "student", "note": "Changes form by gender.", "ex": "Je suis étudiant.", "exEn": "I'm a student." },
+        { "fr": "le serveur / la serveuse", "en": "waiter / waitress", "note": "Changes form by gender.", "ex": "Le serveur apporte le café.", "exEn": "The waiter brings the coffee." },
+        { "fr": "l'ingénieur", "en": "engineer", "note": "A masculine job noun.", "ex": "Il est ingénieur.", "exEn": "He's an engineer." },
+        { "fr": "l'infirmier / l'infirmière", "en": "nurse", "note": "Changes form by gender.", "ex": "Elle est infirmière.", "exEn": "She's a nurse." },
+        { "fr": "le boulanger", "en": "baker", "note": "Feminine: la boulangère.", "ex": "Le boulanger fait du pain.", "exEn": "The baker makes bread." },
+        { "fr": "l'avocat / l'avocate", "en": "lawyer", "note": "Also means avocado!", "ex": "Mon frère est avocat.", "exEn": "My brother is a lawyer." },
+        { "fr": "le vendeur / la vendeuse", "en": "salesperson", "note": "Changes form by gender.", "ex": "Le vendeur est gentil.", "exEn": "The salesperson is kind." },
+        { "fr": "le patron / la patronne", "en": "boss", "note": "Changes form by gender.", "ex": "Mon patron est exigeant.", "exEn": "My boss is demanding." }
+      ]
+    },
+    {
+      "id": "days-months-seasons",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "lundi", "en": "Monday", "note": "Days are not capitalised in French.", "ex": "Lundi, je travaille.", "exEn": "On Monday I work." },
+        { "fr": "le week-end", "en": "weekend", "note": "A borrowed English word.", "ex": "Bon week-end !", "exEn": "Have a good weekend!" },
+        { "fr": "janvier", "en": "January", "note": "Months are not capitalised.", "ex": "Mon anniversaire est en janvier.", "exEn": "My birthday is in January." },
+        { "fr": "juillet", "en": "July", "note": "Months are not capitalised.", "ex": "En juillet, il fait chaud.", "exEn": "In July it's hot." },
+        { "fr": "le printemps", "en": "spring", "note": "Uses 'au printemps'.", "ex": "Au printemps, tout fleurit.", "exEn": "In spring everything blooms." },
+        { "fr": "l'été (m)", "en": "summer", "note": "Uses 'en été'.", "ex": "En été, on va à la plage.", "exEn": "In summer we go to the beach." },
+        { "fr": "l'automne (m)", "en": "autumn", "note": "Uses 'en automne'.", "ex": "En automne, les feuilles tombent.", "exEn": "In autumn the leaves fall." },
+        { "fr": "l'hiver (m)", "en": "winter", "note": "Uses 'en hiver'.", "ex": "En hiver, il neige.", "exEn": "In winter it snows." },
+        { "fr": "la semaine", "en": "week", "note": "A feminine time noun.", "ex": "la semaine prochaine", "exEn": "next week" },
+        { "fr": "le mois", "en": "month", "note": "Same form singular and plural.", "ex": "le mois dernier", "exEn": "last month" }
+      ]
+    },
+    {
+      "id": "common-adjectives",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "grand", "en": "big / tall", "note": "Goes before the noun.", "ex": "une grande maison", "exEn": "a big house" },
+        { "fr": "petit", "en": "small", "note": "Goes before the noun.", "ex": "un petit chat", "exEn": "a small cat" },
+        { "fr": "bon", "en": "good", "note": "Feminine: bonne.", "ex": "un bon repas", "exEn": "a good meal" },
+        { "fr": "mauvais", "en": "bad", "note": "Feminine: mauvaise.", "ex": "un mauvais jour", "exEn": "a bad day" },
+        { "fr": "beau", "en": "beautiful / handsome", "note": "Feminine: belle.", "ex": "un beau paysage", "exEn": "a beautiful landscape" },
+        { "fr": "nouveau", "en": "new", "note": "Feminine: nouvelle.", "ex": "une nouvelle voiture", "exEn": "a new car" },
+        { "fr": "vieux", "en": "old", "note": "Feminine: vieille.", "ex": "un vieux livre", "exEn": "an old book" },
+        { "fr": "jeune", "en": "young", "note": "Same form in both genders.", "ex": "une jeune femme", "exEn": "a young woman" },
+        { "fr": "heureux", "en": "happy", "note": "Feminine: heureuse.", "ex": "Je suis heureux.", "exEn": "I'm happy." },
+        { "fr": "facile", "en": "easy", "note": "Same form in both genders.", "ex": "C'est facile.", "exEn": "It's easy." }
+      ]
+    },
+    {
+      "id": "common-verbs",
+      "category": "vocabulary",
+      "items": [
+        { "fr": "faire", "en": "to do / make", "note": "An irregular high-frequency verb.", "ex": "Qu'est-ce que tu fais ?", "exEn": "What are you doing?" },
+        { "fr": "dire", "en": "to say / tell", "note": "An irregular verb.", "ex": "Qu'est-ce que tu dis ?", "exEn": "What are you saying?" },
+        { "fr": "voir", "en": "to see", "note": "An irregular verb.", "ex": "Je vois la mer.", "exEn": "I see the sea." },
+        { "fr": "venir", "en": "to come", "note": "An irregular verb of motion.", "ex": "Viens avec moi.", "exEn": "Come with me." },
+        { "fr": "prendre", "en": "to take", "note": "An irregular verb.", "ex": "Je prends le bus.", "exEn": "I take the bus." },
+        { "fr": "vouloir", "en": "to want", "note": "An irregular modal verb.", "ex": "Je veux un café.", "exEn": "I want a coffee." },
+        { "fr": "pouvoir", "en": "to be able to / can", "note": "An irregular modal verb.", "ex": "Je peux t'aider.", "exEn": "I can help you." },
+        { "fr": "devoir", "en": "to have to / must", "note": "An irregular modal verb.", "ex": "Je dois partir.", "exEn": "I have to leave." },
+        { "fr": "manger", "en": "to eat", "note": "A regular -er verb.", "ex": "On mange à midi.", "exEn": "We eat at noon." },
+        { "fr": "boire", "en": "to drink", "note": "An irregular verb.", "ex": "Je bois de l'eau.", "exEn": "I drink water." }
+      ]
+    },
+    {
+      "id": "noun-gender",
+      "category": "grammar",
+      "items": [
+        { "fr": "masculin / féminin", "en": "masculine / feminine", "note": "Every French noun has a gender.", "ex": "le soleil (m), la lune (f)", "exEn": "the sun (m), the moon (f)" },
+        { "fr": "le livre", "en": "the book (m)", "note": "Most learned by heart with the article.", "ex": "Le livre est intéressant.", "exEn": "The book is interesting." },
+        { "fr": "la table", "en": "the table (f)", "note": "Many nouns ending in -e are feminine.", "ex": "La table est ronde.", "exEn": "The table is round." },
+        { "fr": "-tion → féminin", "en": "nouns ending in -tion are feminine", "note": "A reliable gender clue.", "ex": "la nation, la question", "exEn": "the nation, the question" },
+        { "fr": "-age → masculin", "en": "nouns ending in -age are usually masculine", "note": "A common pattern.", "ex": "le fromage, le voyage", "exEn": "cheese, trip" },
+        { "fr": "un homme / une femme", "en": "a man / a woman", "note": "Some nouns follow natural gender.", "ex": "un homme et une femme", "exEn": "a man and a woman" },
+        { "fr": "le problème", "en": "the problem (m)", "note": "Many Greek-origin -ème words are masculine.", "ex": "C'est le problème.", "exEn": "That's the problem.", "diff": "hard" },
+        { "fr": "la couleur", "en": "the colour (f)", "note": "Many abstract -eur nouns are feminine.", "ex": "J'aime cette couleur.", "exEn": "I like this colour." },
+        { "fr": "-ment → masculin", "en": "nouns ending in -ment are masculine", "note": "A reliable pattern.", "ex": "le moment, le gouvernement", "exEn": "the moment, the government" },
+        { "fr": "le chanteur / la chanteuse", "en": "singer (m/f)", "note": "Person nouns change form by gender.", "ex": "un chanteur, une chanteuse", "exEn": "a male / female singer" }
+      ]
+    },
+    {
+      "id": "definite-articles",
+      "category": "grammar",
+      "items": [
+        { "fr": "le / la / les", "en": "the (m / f / pl)", "note": "Match the noun's gender and number.", "ex": "le chat, la table, les amis", "exEn": "the cat, the table, the friends" },
+        { "fr": "l'", "en": "the (before a vowel)", "note": "le/la become l' before a vowel or silent h.", "ex": "l'ami, l'eau", "exEn": "the friend, the water" },
+        { "fr": "le garçon", "en": "the boy", "note": "Masculine singular → le.", "ex": "Le garçon joue.", "exEn": "The boy plays." },
+        { "fr": "la fille", "en": "the girl", "note": "Feminine singular → la.", "ex": "La fille lit.", "exEn": "The girl reads." },
+        { "fr": "les enfants", "en": "the children", "note": "Plural → les for any gender.", "ex": "Les enfants jouent.", "exEn": "The children play." },
+        { "fr": "à + le = au", "en": "to / at the (m)", "note": "A required contraction.", "ex": "Je vais au parc.", "exEn": "I'm going to the park." },
+        { "fr": "à + les = aux", "en": "to / at the (pl)", "note": "A required contraction.", "ex": "Je parle aux élèves.", "exEn": "I speak to the pupils." },
+        { "fr": "de + le = du", "en": "of / from the (m)", "note": "A required contraction.", "ex": "la porte du jardin", "exEn": "the garden gate" },
+        { "fr": "de + les = des", "en": "of / from the (pl)", "note": "A required contraction.", "ex": "les noms des rues", "exEn": "the street names" },
+        { "fr": "le français", "en": "French (the language)", "note": "Use the article for languages and general ideas.", "ex": "J'apprends le français.", "exEn": "I'm learning French." }
+      ]
+    },
+    {
+      "id": "indefinite-articles",
+      "category": "grammar",
+      "items": [
+        { "fr": "un / une / des", "en": "a / an / some", "note": "For unspecified nouns.", "ex": "un livre, une pomme, des fleurs", "exEn": "a book, an apple, some flowers" },
+        { "fr": "un chien", "en": "a dog", "note": "Masculine singular → un.", "ex": "J'ai un chien.", "exEn": "I have a dog." },
+        { "fr": "une voiture", "en": "a car", "note": "Feminine singular → une.", "ex": "Elle a une voiture.", "exEn": "She has a car." },
+        { "fr": "des amis", "en": "some friends", "note": "Plural → des.", "ex": "J'ai des amis.", "exEn": "I have friends." },
+        { "fr": "un (= one)", "en": "one", "note": "un/une also means the number one.", "ex": "Il y a un problème.", "exEn": "There is one problem." },
+        { "fr": "c'est un...", "en": "it's a...", "note": "Identify something with c'est + article.", "ex": "C'est une bonne idée.", "exEn": "It's a good idea." },
+        { "fr": "pas de", "en": "not a / not any", "note": "un/une/des become 'de' after a negative.", "ex": "Je n'ai pas de chien.", "exEn": "I don't have a dog.", "diff": "hard" },
+        { "fr": "un homme", "en": "a man", "note": "The n links to the vowel (liaison).", "ex": "un homme sympa", "exEn": "a nice man" },
+        { "fr": "de + adjective", "en": "de before a plural adjective", "note": "In careful French, des → de before an adjective.", "ex": "de beaux jardins", "exEn": "beautiful gardens", "diff": "hard" },
+        { "fr": "un peu de", "en": "a little", "note": "A fixed quantity expression.", "ex": "un peu de sucre", "exEn": "a little sugar" }
+      ]
+    },
+    {
+      "id": "partitive-articles",
+      "category": "grammar",
+      "items": [
+        { "fr": "du / de la / des", "en": "some (uncountable)", "note": "Expresses 'some' of an uncountable noun.", "ex": "du pain, de la confiture", "exEn": "some bread, some jam" },
+        { "fr": "du pain", "en": "some bread", "note": "Masculine → du.", "ex": "Je voudrais du pain.", "exEn": "I'd like some bread." },
+        { "fr": "de la soupe", "en": "some soup", "note": "Feminine → de la.", "ex": "Je mange de la soupe.", "exEn": "I'm eating soup." },
+        { "fr": "de l'eau", "en": "some water", "note": "Before a vowel → de l'.", "ex": "Je bois de l'eau.", "exEn": "I drink water." },
+        { "fr": "des légumes", "en": "some vegetables", "note": "Plural → des.", "ex": "Achète des légumes.", "exEn": "Buy some vegetables." },
+        { "fr": "pas de", "en": "not any", "note": "Negation turns the partitive into 'de'.", "ex": "Je ne mange pas de viande.", "exEn": "I don't eat meat.", "diff": "hard" },
+        { "fr": "un peu de", "en": "a little of", "note": "Quantity word + de.", "ex": "un peu de lait", "exEn": "a little milk" },
+        { "fr": "beaucoup de", "en": "a lot of", "note": "Quantity word + de.", "ex": "beaucoup de travail", "exEn": "a lot of work" },
+        { "fr": "faire du sport", "en": "to do sport", "note": "Partitive in fixed activity expressions.", "ex": "Je fais du sport.", "exEn": "I do sport." },
+        { "fr": "de la musique", "en": "some music", "note": "Used with abstract uncountables.", "ex": "J'écoute de la musique.", "exEn": "I listen to music." }
+      ]
+    },
+    {
+      "id": "plurals",
+      "category": "grammar",
+      "items": [
+        { "fr": "-s (plural)", "en": "add -s for most nouns", "note": "The plural -s is usually silent.", "ex": "un chat → des chats", "exEn": "a cat → cats" },
+        { "fr": "-eau → -eaux", "en": "nouns in -eau add -x", "note": "A spelling pattern.", "ex": "un gâteau → des gâteaux", "exEn": "a cake → cakes" },
+        { "fr": "-al → -aux", "en": "nouns in -al become -aux", "note": "A common pattern.", "ex": "un animal → des animaux", "exEn": "an animal → animals", "diff": "hard" },
+        { "fr": "-eu → -eux", "en": "nouns in -eu add -x", "note": "A spelling pattern.", "ex": "un jeu → des jeux", "exEn": "a game → games" },
+        { "fr": "-s / -x / -z stay", "en": "no change if it already ends in s, x or z", "note": "These nouns are invariable.", "ex": "un bus → des bus", "exEn": "a bus → buses" },
+        { "fr": "les yeux", "en": "eyes", "note": "Irregular plural of l'œil.", "ex": "Il a de beaux yeux.", "exEn": "He has beautiful eyes." },
+        { "fr": "monsieur → messieurs", "en": "gentlemen", "note": "An irregular plural.", "ex": "Bonjour, messieurs.", "exEn": "Hello, gentlemen.", "diff": "hard" },
+        { "fr": "les (article)", "en": "'les' marks the plural", "note": "Often the only audible plural cue.", "ex": "les maisons", "exEn": "the houses" },
+        { "fr": "-ou → -ous", "en": "most -ou nouns add -s", "note": "A few add -x (bijoux, cailloux).", "ex": "un trou → des trous", "exEn": "a hole → holes" },
+        { "fr": "plural agreement", "en": "a plural noun takes a plural adjective", "note": "Adjectives agree in number too.", "ex": "des chats noirs", "exEn": "black cats" }
+      ]
+    },
+    {
+      "id": "subject-pronouns",
+      "category": "grammar",
+      "items": [
+        { "fr": "je", "en": "I", "note": "The first-person subject.", "ex": "Je parle.", "exEn": "I speak." },
+        { "fr": "tu", "en": "you (informal)", "note": "Singular and informal.", "ex": "Tu écoutes.", "exEn": "You listen." },
+        { "fr": "il / elle", "en": "he / she", "note": "Third person singular.", "ex": "Il mange, elle lit.", "exEn": "He eats, she reads." },
+        { "fr": "nous", "en": "we", "note": "First person plural.", "ex": "Nous mangeons.", "exEn": "We eat." },
+        { "fr": "vous", "en": "you (formal / plural)", "note": "Formal singular or any plural.", "ex": "Vous parlez français.", "exEn": "You speak French." },
+        { "fr": "ils / elles", "en": "they (m / f)", "note": "Use elles only for all-feminine groups.", "ex": "Ils arrivent.", "exEn": "They arrive." },
+        { "fr": "on", "en": "we (informal) / one", "note": "Very common spoken 'we'; takes il/elle endings.", "ex": "On y va ?", "exEn": "Shall we go?" },
+        { "fr": "j'", "en": "je before a vowel", "note": "je drops its e before a vowel.", "ex": "J'aime le café.", "exEn": "I like coffee." },
+        { "fr": "ce", "en": "it / this (with être)", "note": "The subject of c'est.", "ex": "C'est vrai.", "exEn": "It's true." },
+        { "fr": "tu vs vous", "en": "informal vs formal 'you'", "note": "Choose by your relationship to the listener.", "ex": "Vous désirez ?", "exEn": "What would you like? (formal)" }
+      ]
+    },
+    {
+      "id": "present-er-verbs",
+      "category": "grammar",
+      "items": [
+        { "fr": "parler → je parle", "en": "to speak (I speak)", "note": "The regular -er pattern, 1st person.", "ex": "Je parle français.", "exEn": "I speak French." },
+        { "fr": "tu parles", "en": "you speak", "note": "The -es ending is silent.", "ex": "Tu parles vite.", "exEn": "You speak fast." },
+        { "fr": "il / elle parle", "en": "he / she speaks", "note": "The -e ending.", "ex": "Elle parle bien.", "exEn": "She speaks well." },
+        { "fr": "nous parlons", "en": "we speak", "note": "The -ons ending.", "ex": "Nous parlons anglais.", "exEn": "We speak English." },
+        { "fr": "vous parlez", "en": "you speak", "note": "The -ez ending.", "ex": "Vous parlez trop.", "exEn": "You talk too much." },
+        { "fr": "ils / elles parlent", "en": "they speak", "note": "The -ent ending is silent.", "ex": "Ils parlent fort.", "exEn": "They speak loudly.", "diff": "hard" },
+        { "fr": "aimer → j'aime", "en": "to like / love (I like)", "note": "A high-frequency -er verb.", "ex": "J'aime le café.", "exEn": "I like coffee." },
+        { "fr": "habiter → j'habite", "en": "to live (I live)", "note": "An -er verb; note the elision.", "ex": "J'habite à Paris.", "exEn": "I live in Paris." },
+        { "fr": "travailler → je travaille", "en": "to work (I work)", "note": "A regular -er verb.", "ex": "Je travaille beaucoup.", "exEn": "I work a lot." },
+        { "fr": "manger → nous mangeons", "en": "we eat (spelling change)", "note": "Keep the e after g before -ons.", "ex": "Nous mangeons à midi.", "exEn": "We eat at noon.", "diff": "hard" }
+      ]
+    },
+    {
+      "id": "present-irregular",
+      "category": "grammar",
+      "items": [
+        { "fr": "être → je suis", "en": "to be (I am)", "note": "The most important irregular verb.", "ex": "Je suis étudiant.", "exEn": "I'm a student." },
+        { "fr": "tu es / il est", "en": "you are / he is", "note": "Common être forms.", "ex": "Tu es prêt ? Il est là.", "exEn": "Are you ready? He's here." },
+        { "fr": "nous sommes / vous êtes / ils sont", "en": "we / you / they are", "note": "The plural forms of être.", "ex": "Nous sommes amis.", "exEn": "We are friends.", "diff": "hard" },
+        { "fr": "avoir → j'ai", "en": "to have (I have)", "note": "The second key irregular verb.", "ex": "J'ai un chien.", "exEn": "I have a dog." },
+        { "fr": "tu as / il a", "en": "you have / he has", "note": "Common avoir forms.", "ex": "Tu as faim ?", "exEn": "Are you hungry?" },
+        { "fr": "nous avons / vous avez / ils ont", "en": "we / you / they have", "note": "The plural forms of avoir.", "ex": "Ils ont une maison.", "exEn": "They have a house." },
+        { "fr": "aller → je vais", "en": "to go (I go)", "note": "An irregular verb of motion.", "ex": "Je vais à Paris.", "exEn": "I'm going to Paris." },
+        { "fr": "tu vas / il va / nous allons", "en": "forms of aller", "note": "Common aller forms.", "ex": "On va au cinéma.", "exEn": "We're going to the cinema." },
+        { "fr": "faire → je fais", "en": "to do / make (I do)", "note": "A very frequent irregular verb.", "ex": "Je fais mes devoirs.", "exEn": "I do my homework." },
+        { "fr": "vous faites / ils font", "en": "you do / they do", "note": "Note the irregular 'faites'.", "ex": "Vous faites quoi ?", "exEn": "What are you doing?", "diff": "hard" }
+      ]
+    },
+    {
+      "id": "negation",
+      "category": "grammar",
+      "items": [
+        { "fr": "ne... pas", "en": "not", "note": "Wrap the two parts around the verb.", "ex": "Je ne sais pas.", "exEn": "I don't know." },
+        { "fr": "n'... pas", "en": "not (before a vowel)", "note": "ne becomes n' before a vowel.", "ex": "Je n'aime pas ça.", "exEn": "I don't like that." },
+        { "fr": "ne... jamais", "en": "never", "note": "A negation variant.", "ex": "Je ne fume jamais.", "exEn": "I never smoke." },
+        { "fr": "ne... plus", "en": "no more / no longer", "note": "A negation variant.", "ex": "Il n'y a plus de pain.", "exEn": "There's no more bread." },
+        { "fr": "ne... rien", "en": "nothing", "note": "A negation variant.", "ex": "Je ne vois rien.", "exEn": "I see nothing." },
+        { "fr": "ne... personne", "en": "nobody", "note": "A negation variant.", "ex": "Il n'y a personne.", "exEn": "There's nobody." },
+        { "fr": "pas de", "en": "not any", "note": "The article becomes 'de' after a negative.", "ex": "Je n'ai pas de voiture.", "exEn": "I don't have a car.", "diff": "hard" },
+        { "fr": "(ne) ... pas", "en": "dropped 'ne' in speech", "note": "Spoken French often drops the 'ne'.", "ex": "Je sais pas.", "exEn": "I dunno." },
+        { "fr": "ne pas + infinitif", "en": "not + verb", "note": "Both parts go before an infinitive.", "ex": "ne pas fumer", "exEn": "no smoking" },
+        { "fr": "moi non plus", "en": "me neither", "note": "Agreeing with a negative.", "ex": "— Je n'aime pas. — Moi non plus.", "exEn": "— I don't like it. — Me neither." }
+      ]
+    },
+    {
+      "id": "questions",
+      "category": "grammar",
+      "items": [
+        { "fr": "est-ce que", "en": "(question marker)", "note": "Turns a statement into a yes/no question.", "ex": "Est-ce que tu viens ?", "exEn": "Are you coming?" },
+        { "fr": "intonation", "en": "rising tone question", "note": "The most casual yes/no question.", "ex": "Tu viens ?", "exEn": "Coming?" },
+        { "fr": "inversion", "en": "verb-subject inversion", "note": "The most formal question form.", "ex": "Viens-tu ?", "exEn": "Are you coming?", "diff": "hard" },
+        { "fr": "qui", "en": "who", "note": "Asks about a person.", "ex": "Qui est là ?", "exEn": "Who's there?" },
+        { "fr": "que / quoi", "en": "what", "note": "que before a verb, quoi at the end.", "ex": "Que fais-tu ?", "exEn": "What are you doing?" },
+        { "fr": "où", "en": "where", "note": "Asks about a place.", "ex": "Où habites-tu ?", "exEn": "Where do you live?" },
+        { "fr": "quand", "en": "when", "note": "Asks about time.", "ex": "Quand pars-tu ?", "exEn": "When are you leaving?" },
+        { "fr": "comment", "en": "how", "note": "Asks about manner.", "ex": "Comment ça va ?", "exEn": "How are you?" },
+        { "fr": "pourquoi", "en": "why", "note": "Asks about a reason.", "ex": "Pourquoi pas ?", "exEn": "Why not?" },
+        { "fr": "combien", "en": "how much / how many", "note": "Asks about quantity.", "ex": "Combien ça coûte ?", "exEn": "How much is it?" }
+      ]
+    },
+    {
+      "id": "possessive-adjectives",
+      "category": "grammar",
+      "items": [
+        { "fr": "mon / ma / mes", "en": "my", "note": "Agrees with the noun, not the owner.", "ex": "mon livre, ma sœur, mes amis", "exEn": "my book, my sister, my friends" },
+        { "fr": "ton / ta / tes", "en": "your (informal)", "note": "Match the noun's gender and number.", "ex": "ton stylo, ta voiture", "exEn": "your pen, your car" },
+        { "fr": "son / sa / ses", "en": "his / her / its", "note": "Gender matches the noun, not the owner.", "ex": "son père, sa mère", "exEn": "his/her father, his/her mother", "diff": "hard" },
+        { "fr": "notre / nos", "en": "our", "note": "notre for singular, nos for plural nouns.", "ex": "notre maison, nos enfants", "exEn": "our house, our children" },
+        { "fr": "votre / vos", "en": "your (formal / plural)", "note": "Match the noun's number.", "ex": "votre nom, vos clés", "exEn": "your name, your keys" },
+        { "fr": "leur / leurs", "en": "their", "note": "Add -s for a plural noun.", "ex": "leur fils, leurs amis", "exEn": "their son, their friends" },
+        { "fr": "mon amie (f)", "en": "my friend (before a vowel)", "note": "Use mon, not ma, before a vowel sound.", "ex": "mon amie Claire", "exEn": "my friend Claire", "diff": "hard" },
+        { "fr": "à moi", "en": "mine", "note": "Stresses ownership.", "ex": "Ce livre est à moi.", "exEn": "This book is mine." },
+        { "fr": "sa / son by noun", "en": "choose by the noun's gender", "note": "Not by the owner's gender.", "ex": "sa voiture", "exEn": "his/her car" },
+        { "fr": "mes parents", "en": "my parents", "note": "A plural possessive.", "ex": "Mes parents sont gentils.", "exEn": "My parents are kind." }
+      ]
+    },
+    {
+      "id": "c-est-il-y-a",
+      "category": "grammar",
+      "items": [
+        { "fr": "c'est", "en": "it is / that is", "note": "Identify or describe something.", "ex": "C'est un livre.", "exEn": "It's a book." },
+        { "fr": "ce sont", "en": "they are", "note": "The plural of c'est.", "ex": "Ce sont mes amis.", "exEn": "They're my friends." },
+        { "fr": "il y a", "en": "there is / there are", "note": "States that something exists.", "ex": "Il y a un problème.", "exEn": "There is a problem." },
+        { "fr": "il y a (plural)", "en": "there are", "note": "Same form for singular and plural.", "ex": "Il y a des gens.", "exEn": "There are people." },
+        { "fr": "c'est + adjectif", "en": "it's (impersonal)", "note": "A general comment.", "ex": "C'est facile.", "exEn": "It's easy." },
+        { "fr": "est-ce que c'est...", "en": "is it...?", "note": "The question form of c'est.", "ex": "Est-ce que c'est vrai ?", "exEn": "Is it true?" },
+        { "fr": "il n'y a pas de", "en": "there isn't any", "note": "The negative of il y a.", "ex": "Il n'y a pas de lait.", "exEn": "There's no milk." },
+        { "fr": "c'est vs il est", "en": "c'est + noun, il est + adjective/job", "note": "A classic beginner choice.", "ex": "Il est médecin. C'est un médecin.", "exEn": "He's a doctor.", "diff": "hard" },
+        { "fr": "qu'est-ce que c'est ?", "en": "what is it?", "note": "Asks for an identity.", "ex": "Qu'est-ce que c'est ?", "exEn": "What is this?" },
+        { "fr": "voilà", "en": "there it is / here is", "note": "Points something out.", "ex": "Voilà ton café.", "exEn": "Here's your coffee." }
+      ]
+    },
+    {
+      "id": "basic-prepositions",
+      "category": "grammar",
+      "items": [
+        { "fr": "à", "en": "to / at / in", "note": "Direction or location.", "ex": "Je vais à Paris.", "exEn": "I'm going to Paris." },
+        { "fr": "de", "en": "of / from", "note": "Origin or possession.", "ex": "Je viens de Lyon.", "exEn": "I'm from Lyon." },
+        { "fr": "dans", "en": "in / inside", "note": "Containment.", "ex": "dans la boîte", "exEn": "in the box" },
+        { "fr": "sur", "en": "on", "note": "On a surface.", "ex": "sur la table", "exEn": "on the table" },
+        { "fr": "sous", "en": "under", "note": "Position below.", "ex": "sous le lit", "exEn": "under the bed" },
+        { "fr": "avec", "en": "with", "note": "Accompaniment.", "ex": "avec mes amis", "exEn": "with my friends" },
+        { "fr": "sans", "en": "without", "note": "The opposite of avec.", "ex": "un café sans sucre", "exEn": "a coffee without sugar" },
+        { "fr": "pour", "en": "for", "note": "Purpose or recipient.", "ex": "C'est pour toi.", "exEn": "It's for you." },
+        { "fr": "chez", "en": "at someone's place", "note": "A preposition with no English equivalent.", "ex": "chez moi", "exEn": "at my place" },
+        { "fr": "entre", "en": "between", "note": "Position between two things.", "ex": "entre nous", "exEn": "between us" }
+      ]
+    },
+    {
+      "id": "near-future",
+      "category": "grammar",
+      "items": [
+        { "fr": "aller + infinitif", "en": "to be going to", "note": "The near future: aller + a verb.", "ex": "Je vais manger.", "exEn": "I'm going to eat." },
+        { "fr": "je vais partir", "en": "I'm going to leave", "note": "aller (je vais) + infinitive.", "ex": "Je vais partir bientôt.", "exEn": "I'm going to leave soon." },
+        { "fr": "tu vas voir", "en": "you're going to see", "note": "aller (tu vas) + infinitive.", "ex": "Tu vas voir, c'est facile.", "exEn": "You'll see, it's easy." },
+        { "fr": "il va pleuvoir", "en": "it's going to rain", "note": "Weather in the near future.", "ex": "Il va pleuvoir ce soir.", "exEn": "It's going to rain tonight." },
+        { "fr": "nous allons visiter", "en": "we're going to visit", "note": "aller (nous allons) + infinitive.", "ex": "Nous allons visiter Paris.", "exEn": "We're going to visit Paris." },
+        { "fr": "ne va pas + infinitif", "en": "not going to", "note": "Negate the aller part.", "ex": "Je ne vais pas sortir.", "exEn": "I'm not going to go out.", "diff": "hard" },
+        { "fr": "demain", "en": "tomorrow (time marker)", "note": "Common with the near future.", "ex": "Demain, je vais travailler.", "exEn": "Tomorrow I'm going to work." },
+        { "fr": "on va y aller", "en": "we're going to go", "note": "A very common spoken phrase.", "ex": "Allez, on va y aller.", "exEn": "Come on, let's get going." },
+        { "fr": "tu vas faire quoi ?", "en": "what are you going to do?", "note": "Asking about plans.", "ex": "Tu vas faire quoi ce week-end ?", "exEn": "What are you doing this weekend?" },
+        { "fr": "ça va aller", "en": "it's going to be okay", "note": "A reassuring set phrase.", "ex": "Ne t'inquiète pas, ça va aller.", "exEn": "Don't worry, it'll be okay." }
+      ]
+    },
+    {
+      "id": "adjective-agreement",
+      "category": "grammar",
+      "items": [
+        { "fr": "-e (feminine)", "en": "add -e for feminine", "note": "The basic agreement rule.", "ex": "petit → petite", "exEn": "small (m → f)" },
+        { "fr": "-s (plural)", "en": "add -s for plural", "note": "Agreement in number.", "ex": "grand → grands", "exEn": "big (sg → pl)" },
+        { "fr": "-es (feminine plural)", "en": "add -es", "note": "Both endings combine.", "ex": "verte → vertes", "exEn": "green (f pl)" },
+        { "fr": "already ends in -e", "en": "no change in gender", "note": "Adjectives ending in -e don't change for gender.", "ex": "rouge → rouge", "exEn": "red (m / f)" },
+        { "fr": "-eux → -euse", "en": "feminine of -eux", "note": "A common pattern.", "ex": "heureux → heureuse", "exEn": "happy (m → f)", "diff": "hard" },
+        { "fr": "-f → -ve", "en": "feminine of -f", "note": "A common pattern.", "ex": "neuf → neuve", "exEn": "new (m → f)", "diff": "hard" },
+        { "fr": "beau → belle", "en": "irregular feminine", "note": "A frequent irregular adjective.", "ex": "un beau jardin, une belle maison", "exEn": "a beautiful garden / house" },
+        { "fr": "blanc → blanche", "en": "irregular feminine", "note": "An irregular colour adjective.", "ex": "blanc → blanche", "exEn": "white (m → f)" },
+        { "fr": "agreement with être", "en": "agrees with the subject", "note": "After être, the adjective agrees.", "ex": "Elle est grande.", "exEn": "She is tall." },
+        { "fr": "always agrees", "en": "agrees wherever it sits", "note": "Before or after the noun, it still agrees.", "ex": "une voiture rapide", "exEn": "a fast car" }
+      ]
+    },
+    {
+      "id": "adjective-placement",
+      "category": "grammar",
+      "items": [
+        { "fr": "noun + adjective", "en": "most adjectives follow the noun", "note": "The default word order.", "ex": "une voiture rouge", "exEn": "a red car" },
+        { "fr": "BAGS before noun", "en": "Beauty, Age, Good, Size go before", "note": "A handy memory aid.", "ex": "un beau chien", "exEn": "a beautiful dog" },
+        { "fr": "grand + noun", "en": "size before the noun", "note": "A 'size' adjective goes first.", "ex": "une grande maison", "exEn": "a big house" },
+        { "fr": "petit + noun", "en": "size before the noun", "note": "A 'size' adjective goes first.", "ex": "un petit problème", "exEn": "a small problem" },
+        { "fr": "bon + noun", "en": "good before the noun", "note": "A 'good/bad' adjective goes first.", "ex": "un bon livre", "exEn": "a good book" },
+        { "fr": "nouveau + noun", "en": "newness before the noun", "note": "An 'age' adjective goes first.", "ex": "une nouvelle idée", "exEn": "a new idea" },
+        { "fr": "vieux + noun", "en": "age before the noun", "note": "An 'age' adjective goes first.", "ex": "un vieil homme", "exEn": "an old man" },
+        { "fr": "colour after noun", "en": "colours follow the noun", "note": "Colours always come after.", "ex": "une robe bleue", "exEn": "a blue dress" },
+        { "fr": "nationality after noun", "en": "nationalities follow the noun", "note": "These always come after.", "ex": "un film français", "exEn": "a French film" },
+        { "fr": "ancien (position changes meaning)", "en": "former vs old", "note": "Before = former, after = old.", "ex": "un ancien ami", "exEn": "a former friend", "diff": "hard" }
+      ]
+    },
+    {
+      "id": "reflexive-verbs",
+      "category": "grammar",
+      "items": [
+        { "fr": "se laver", "en": "to wash oneself", "note": "The reflexive pronoun 'se' refers back to the subject.", "ex": "Je me lave.", "exEn": "I wash (myself)." },
+        { "fr": "se lever", "en": "to get up", "note": "A daily-routine reflexive verb.", "ex": "Je me lève à sept heures.", "exEn": "I get up at seven." },
+        { "fr": "me / te / se", "en": "reflexive pronouns", "note": "They match the subject.", "ex": "tu te laves", "exEn": "you wash yourself" },
+        { "fr": "nous nous / vous vous", "en": "plural reflexives", "note": "The pronoun is repeated.", "ex": "Nous nous levons tôt.", "exEn": "We get up early." },
+        { "fr": "s'appeler", "en": "to be called", "note": "Reflexive verb used for names.", "ex": "Je m'appelle Marie.", "exEn": "My name is Marie." },
+        { "fr": "se coucher", "en": "to go to bed", "note": "A daily-routine reflexive.", "ex": "Il se couche tard.", "exEn": "He goes to bed late." },
+        { "fr": "se reposer", "en": "to rest", "note": "A reflexive verb.", "ex": "On se repose le dimanche.", "exEn": "We rest on Sundays." },
+        { "fr": "ne me... pas", "en": "negative reflexive", "note": "Negation wraps the pronoun and verb.", "ex": "Je ne me lève pas tôt.", "exEn": "I don't get up early.", "diff": "hard" },
+        { "fr": "se dépêcher", "en": "to hurry", "note": "A reflexive verb.", "ex": "Dépêche-toi !", "exEn": "Hurry up!" },
+        { "fr": "s'amuser", "en": "to have fun", "note": "A reflexive verb.", "ex": "Les enfants s'amusent.", "exEn": "The children are having fun." }
+      ]
+    },
+    {
+      "id": "passe-compose-avoir",
+      "category": "grammar",
+      "items": [
+        { "fr": "avoir + participe passé", "en": "compound past with avoir", "note": "Most verbs form the past this way.", "ex": "J'ai mangé.", "exEn": "I ate." },
+        { "fr": "-er → -é", "en": "past participle of -er verbs", "note": "A reliable pattern.", "ex": "parler → parlé", "exEn": "spoken" },
+        { "fr": "-ir → -i", "en": "past participle of -ir verbs", "note": "A reliable pattern.", "ex": "finir → fini", "exEn": "finished" },
+        { "fr": "j'ai fait", "en": "I did / made", "note": "Irregular participle of faire.", "ex": "J'ai fait du sport.", "exEn": "I did some sport.", "diff": "hard" },
+        { "fr": "j'ai eu", "en": "I had", "note": "Irregular participle of avoir.", "ex": "J'ai eu de la chance.", "exEn": "I was lucky.", "diff": "hard" },
+        { "fr": "j'ai vu", "en": "I saw", "note": "Irregular participle of voir.", "ex": "J'ai vu un film.", "exEn": "I saw a film." },
+        { "fr": "j'ai pris", "en": "I took", "note": "Irregular participle of prendre.", "ex": "J'ai pris le train.", "exEn": "I took the train." },
+        { "fr": "n'ai pas + participe", "en": "negative past", "note": "Negation wraps the auxiliary.", "ex": "Je n'ai pas compris.", "exEn": "I didn't understand." },
+        { "fr": "hier", "en": "yesterday (time marker)", "note": "Signals a completed past action.", "ex": "Hier, j'ai travaillé.", "exEn": "Yesterday I worked." },
+        { "fr": "as-tu + participe ?", "en": "have you...?", "note": "Question form with inversion.", "ex": "As-tu mangé ?", "exEn": "Have you eaten?" }
+      ]
+    },
+    {
+      "id": "passe-compose-etre",
+      "category": "grammar",
+      "items": [
+        { "fr": "être + participe passé", "en": "compound past with être", "note": "Movement and state verbs use être.", "ex": "Je suis allé.", "exEn": "I went." },
+        { "fr": "agreement with être", "en": "participle agrees with the subject", "note": "Add -e / -s to match.", "ex": "Elle est allée.", "exEn": "She went.", "diff": "hard" },
+        { "fr": "aller → allé", "en": "past participle (gone)", "note": "A movement verb with être.", "ex": "Nous sommes allés.", "exEn": "We went." },
+        { "fr": "venir → venu", "en": "past participle (come)", "note": "A movement verb with être.", "ex": "Il est venu.", "exEn": "He came." },
+        { "fr": "partir → parti", "en": "past participle (left)", "note": "A movement verb with être.", "ex": "Elle est partie.", "exEn": "She left." },
+        { "fr": "arriver → arrivé", "en": "past participle (arrived)", "note": "A movement verb with être.", "ex": "Le train est arrivé.", "exEn": "The train arrived." },
+        { "fr": "naître → né", "en": "past participle (born)", "note": "A state-change verb with être.", "ex": "Je suis né en 1990.", "exEn": "I was born in 1990." },
+        { "fr": "rentrer / sortir / monter", "en": "the 'house of être' verbs", "note": "A group of movement verbs (DR & MRS VANDERTRAMP).", "ex": "Je suis rentré tard.", "exEn": "I came home late." },
+        { "fr": "reflexives use être", "en": "all reflexive verbs take être", "note": "se laver → je me suis lavé.", "ex": "Je me suis levé.", "exEn": "I got up.", "diff": "hard" },
+        { "fr": "ne suis pas + participe", "en": "negative past with être", "note": "Negation wraps être.", "ex": "Je ne suis pas sorti.", "exEn": "I didn't go out." }
+      ]
+    },
+    {
+      "id": "everyday-connectors",
+      "category": "phrasing",
+      "items": [
+        { "fr": "et", "en": "and", "note": "Joins words and ideas.", "ex": "du pain et du fromage", "exEn": "bread and cheese" },
+        { "fr": "mais", "en": "but", "note": "Introduces a contrast.", "ex": "C'est cher mais bon.", "exEn": "It's expensive but good." },
+        { "fr": "parce que", "en": "because", "note": "Introduces a reason.", "ex": "Je reste parce qu'il pleut.", "exEn": "I'm staying because it's raining." },
+        { "fr": "donc", "en": "so / therefore", "note": "Introduces a consequence.", "ex": "Je pense, donc je suis.", "exEn": "I think, therefore I am." },
+        { "fr": "alors", "en": "so / then", "note": "A casual consequence or transition.", "ex": "Alors, on y va ?", "exEn": "So, shall we go?" },
+        { "fr": "ou", "en": "or", "note": "Introduces a choice.", "ex": "thé ou café ?", "exEn": "tea or coffee?" },
+        { "fr": "aussi", "en": "also / too", "note": "Adds information.", "ex": "Moi aussi.", "exEn": "Me too." },
+        { "fr": "puis", "en": "then", "note": "Marks the next step.", "ex": "Je mange, puis je dors.", "exEn": "I eat, then I sleep." },
+        { "fr": "d'abord", "en": "first / first of all", "note": "Marks the first step.", "ex": "D'abord, on mange.", "exEn": "First, we eat." },
+        { "fr": "enfin", "en": "finally / at last", "note": "Marks the last step.", "ex": "Enfin, on arrive.", "exEn": "Finally, we arrive." }
+      ]
+    },
+    {
+      "id": "tu-vs-vous",
+      "category": "register",
+      "items": [
+        { "fr": "tu", "en": "you (informal)", "note": "For friends, family and children.", "ex": "Tu viens ?", "exEn": "You coming?" },
+        { "fr": "vous (formal)", "en": "you (formal)", "note": "For strangers, elders and professionals.", "ex": "Vous désirez ?", "exEn": "What would you like?" },
+        { "fr": "vous (plural)", "en": "you (plural)", "note": "For addressing several people.", "ex": "Vous êtes prêts ?", "exEn": "Are you (all) ready?" },
+        { "fr": "vouvoyer", "en": "to address as 'vous'", "note": "The verb for formal address.", "ex": "On se vouvoie.", "exEn": "We use 'vous'." },
+        { "fr": "tutoyer", "en": "to address as 'tu'", "note": "The verb for informal address.", "ex": "On peut se tutoyer ?", "exEn": "Can we use 'tu'?" },
+        { "fr": "bonjour vs salut", "en": "matching the register", "note": "Formal greeting vs casual greeting.", "ex": "Bonjour, madame.", "exEn": "Hello, madam." },
+        { "fr": "pouvez-vous...", "en": "formal request", "note": "Use vous for politeness.", "ex": "Pouvez-vous m'aider ?", "exEn": "Can you help me?" },
+        { "fr": "tu as l'heure ?", "en": "informal request", "note": "Use tu among friends.", "ex": "Tu as l'heure ?", "exEn": "Do you have the time?" },
+        { "fr": "se tutoyer", "en": "moving to 'tu'", "note": "Often suggested by the elder person.", "ex": "On peut se tutoyer.", "exEn": "We can use 'tu'." },
+        { "fr": "vous (safe default)", "en": "default politeness", "note": "Use vous when unsure.", "ex": "Excusez-moi, vous avez l'heure ?", "exEn": "Excuse me, do you have the time?" }
+      ]
+    },
+    {
+      "id": "prepositions-place-time",
+      "category": "grammar",
+      "items": [
+        { "fr": "à + ville", "en": "in / to a city", "note": "Use à before a city name.", "ex": "à Paris", "exEn": "in Paris" },
+        { "fr": "en + pays féminin", "en": "in / to a feminine country", "note": "Most countries ending in -e.", "ex": "en France", "exEn": "in France" },
+        { "fr": "au + pays masculin", "en": "in / to a masculine country", "note": "Masculine countries.", "ex": "au Canada", "exEn": "in Canada", "diff": "hard" },
+        { "fr": "aux + pays pluriel", "en": "in / to a plural country", "note": "Plural country names.", "ex": "aux États-Unis", "exEn": "in the USA" },
+        { "fr": "chez", "en": "at someone's place", "note": "Used with people.", "ex": "chez le médecin", "exEn": "at the doctor's" },
+        { "fr": "à + heure", "en": "at (a time)", "note": "Use à for clock times.", "ex": "à midi", "exEn": "at noon" },
+        { "fr": "en + mois / saison", "en": "in (a month or season)", "note": "Use en for months and most seasons.", "ex": "en juillet", "exEn": "in July" },
+        { "fr": "au printemps", "en": "in spring", "note": "Spring is the exception: au, not en.", "ex": "au printemps", "exEn": "in spring", "diff": "hard" },
+        { "fr": "depuis", "en": "since / for", "note": "Duration continuing up to now.", "ex": "depuis deux ans", "exEn": "for two years" },
+        { "fr": "pendant", "en": "during / for", "note": "A completed length of time.", "ex": "pendant les vacances", "exEn": "during the holidays" }
+      ]
+    }
+  ]
+}

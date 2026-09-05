@@ -1,0 +1,195 @@
+File: types/index.ts
+
+Update the GapItem interface:
+
+TypeScript
+
+
+export interface GapItem {
+  // --- Existing Fields ---
+  id: string;
+  frenchWord: string;
+  // ... (all other existing fields)
+
+  // --- NEW FIELDS for Optimized Flow ---
+  cefrLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
+  easeFactor: number;
+  currentInterval: number;
+  nextReviewAt?: string;
+}
+
+
+
+File: utils/conceptExtractor.ts
+
+Replace the EXTRACTION_PROMPT with this new version:
+
+TypeScript
+
+
+const EXTRACTION_PROMPT = `
+# ROLE: Senior AI Language Tutor
+# CONTEXT
+You are an expert AI language tutor for a French learning app. Your task is to analyze a learner's "gap" and create a structured, pedagogically sound learning object from it.
+# PROCESS
+## Step 1: Concept Identification
+- Identify the single, core linguistic concept.
+- Output a short, clear `conceptLabel`.
+## Step 2: Teaching Focus
+- Write a one-sentence `teachingFocus` explaining the concept.
+## Step 3: Canonical Examples
+- Generate 2-3 clean, correct, and diverse `canonicalExamples`.
+## Step 4: CEFR Level Assessment (NEW)
+- Classify the linguistic concept according to CEFR levels (A1, A2, B1, B2, C1, C2).
+- Output a single `cefrLevel` string.
+## Step 5: Practice Question Generation
+- Generate a `questionPool` of practice questions based on the CEFR level.
+- For A1/A2 concepts, generate 3-4 questions.
+- For B1+ concepts, generate 5-6 questions.
+- CRITICAL: Do NOT reuse the learner's original incorrect phrase.
+# OUTPUT FORMAT
+- Respond with a single, valid JSON object with the structure: { conceptLabel, teachingFocus, canonicalExamples, cefrLevel, questionPool }.
+`;
+
+
+
+File: utils/srs.ts (NEW FILE)
+
+Create this new file for the SRS logic:
+
+TypeScript
+
+
+import { GapItem } from '../types';
+
+export function updateSrsData(gap: GapItem, quality: number): GapItem {
+  const updatedGap = { ...gap };
+
+  if (quality < 3) {
+    updatedGap.consecutiveCorrect = Math.max(0, updatedGap.consecutiveCorrect - 2);
+    updatedGap.currentInterval = 1;
+  } else {
+    updatedGap.consecutiveCorrect++;
+    if (updatedGap.reviewCount === 0) {
+      updatedGap.currentInterval = 1;
+    } else if (updatedGap.reviewCount === 1) {
+      updatedGap.currentInterval = 6;
+    } else {
+      updatedGap.currentInterval = Math.ceil(updatedGap.currentInterval * updatedGap.easeFactor);
+    }
+    const newEF = updatedGap.easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+    updatedGap.easeFactor = Math.max(1.3, newEF);
+  }
+
+  updatedGap.reviewCount++;
+  updatedGap.lastReviewedAt = new Date().toISOString();
+  const nextReviewDate = new Date();
+  nextReviewDate.setDate(nextReviewDate.getDate() + updatedGap.currentInterval);
+  updatedGap.nextReviewAt = nextReviewDate.toISOString();
+
+  if (updatedGap.consecutiveCorrect >= 5) {
+    updatedGap.masteredAt = new Date().toISOString();
+  }
+
+  return updatedGap;
+}
+
+export function mapCorrectnessToQuality(isCorrect: boolean): number {
+  return isCorrect ? 4 : 1;
+}
+
+
+
+File: contexts/AppContext.tsx
+
+Update recordGapAttempt and add a migration function:
+
+TypeScript
+
+
+import { updateSrsData, mapCorrectnessToQuality } from '../utils/srs';
+
+// ... inside AppProvider
+
+const recordGapAttempt = (gapId: string, isCorrect: boolean) => {
+  setGaps(prevGaps => prevGaps.map(gap => {
+    if (gap.id === gapId) {
+      const quality = mapCorrectnessToQuality(isCorrect);
+      return updateSrsData(gap, quality);
+    }
+    return gap;
+  }));
+};
+
+// This should be called in your main data loading function
+const migrateGapsToV2 = (gapsToMigrate: GapItem[]): GapItem[] => {
+  return gapsToMigrate.map(gap => {
+    if (gap.easeFactor === undefined) {
+      return {
+        ...gap,
+        easeFactor: 2.5,
+        currentInterval: 0,
+        nextReviewAt: new Date().toISOString(),
+      };
+    }
+    return gap;
+  });
+};
+
+
+
+File: utils/gapLessonGenerator.ts
+
+Replace generateGapLesson with this improved logic:
+
+TypeScript
+
+
+// This is a conceptual outline. The full implementation is in the provided roadmap.
+export function generateGapLesson(allGaps: GapItem[], category: string): GapLesson | null {
+  // 1. Estimate learner's CEFR level from mastered gaps.
+  const learnerLevel = estimateLearnerLevel(allGaps);
+
+  // 2. Filter for active gaps that are due for review via SRS.
+  const dueGaps = allGaps.filter(g => !g.masteredAt && new Date(g.nextReviewAt) <= new Date());
+
+  // 3. Filter those gaps for the learner's level + 1 (i+1).
+  const finalPool = filterByCefr(dueGaps, learnerLevel);
+
+  // 4. Sort the pool by most overdue.
+  finalPool.sort((a, b) => new Date(a.nextReviewAt).getTime() - new Date(b.nextReviewAt).getTime());
+
+  // 5. Generate prompts and structure the lesson into Input -> Guided -> Production phases.
+  const { intro, prompts } = structureLesson(finalPool);
+
+  // 6. Return the final lesson object.
+  return { ... };
+}
+
+
+
+
+
+
+6. Supabase SQL Schema Updates
+
+Execute the following SQL to update your gaps table.
+
+SQL
+
+
+-- Add CEFR level column
+ALTER TABLE public.gaps
+ADD COLUMN cefr_level TEXT CHECK (cefr_level IN ('A1', 'A2', 'B1', 'B2', 'C1', 'C2'));
+
+-- Add SRS columns with defaults
+ALTER TABLE public.gaps
+ADD COLUMN ease_factor REAL NOT NULL DEFAULT 2.5,
+ADD COLUMN current_interval INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN next_review_at TIMESTAMPTZ;
+
+-- Add index for efficient querying of due gaps
+CREATE INDEX idx_gaps_next_review_at ON public.gaps (next_review_at ASC) WHERE mastered_at IS NULL;
+
+
+

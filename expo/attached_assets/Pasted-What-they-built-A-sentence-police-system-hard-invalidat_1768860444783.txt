@@ -1,0 +1,261 @@
+What they built
+
+A sentence police system:
+
+hard invalidation
+
+regex-style negation checks
+
+word count heuristics
+
+“NO QUESTIONS GENERATED”
+
+This optimizes for:
+
+safety
+
+cleanliness
+
+avoiding embarrassment
+
+But it kills the magic of your idea.
+
+What you actually want
+
+A gap-aware teaching engine that:
+
+understands what the learner was trying to say
+
+infers intent even from broken output
+
+teaches the underlying concept, not the literal string
+
+That’s a fundamentally different philosophy.
+
+And for a premium app like Okiri, yours is the right one.
+
+Why the hard-rejection approach is wrong (for Okiri)
+1️⃣ Learners don’t produce “valid sentences”
+
+Especially in:
+
+speech
+
+early writing
+
+emotional expression
+
+“je veux pas ne rien avoir”
+is not garbage — it’s a signal:
+
+confusion about negation
+
+confusion about subjunctive / infinitive
+
+interference from English logic
+
+Throwing that away is pedagogical malpractice.
+
+A human teacher would never say:
+
+“This is invalid. Moving on.”
+
+They’d say:
+
+“Ah — you’re mixing negation forms. Let’s fix that.”
+
+2️⃣ Rule-based invalidation doesn’t scale linguistically
+
+Those rules:
+
+double negation detection
+
+word count minimums
+
+pattern banning
+
+Will absolutely:
+
+break in informal French
+
+break in spoken registers
+
+break in other languages (Spanish, Portuguese, Japanese)
+
+You’ll spend forever patching rules instead of teaching.
+
+3️⃣ It contradicts your core promise
+
+Your promise is essentially:
+
+“Okiri understands you even when you don’t understand the language yet.”
+
+A hard INVALID state says the opposite.
+
+The correct middle ground (this is the fix)
+
+You don’t want:
+
+❌ “Generate questions no matter what”
+
+❌ “Reject everything that’s messy”
+
+You want:
+
+Intent-First Gap Resolution
+The right architecture (aligned with your vision)
+Step 1: Treat raw output as a learner signal, not a sentence
+
+Rename it internally:
+
+❌ sentence
+
+✅ learner_attempt
+
+This reframing matters a LOT.
+
+Step 2: AI infers what concept is broken
+
+Instead of asking:
+
+“Is this sentence valid French?”
+
+Ask:
+
+“What linguistic concepts does this attempt reveal confusion about?”
+
+For:
+
+je veux pas ne rien avoir
+
+The AI should infer:
+
+Negation stacking
+
+Verb complementation after vouloir
+
+English → French transfer error
+
+That’s gold, not trash.
+
+Step 3: Resolve to a canonical teaching target
+
+From the learner attempt, the AI generates:
+
+Canonical targets (examples):
+
+“Negation with ne…pas vs ne…rien”
+
+“Using vouloir + infinitive”
+
+“Expressing ‘I don’t want anything’ in French”
+
+This is what lessons are built from — not the raw sentence.
+
+Step 4: Generate lessons from the concept, not the attempt
+
+Now the question types make sense again.
+
+Example curriculum generated:
+
+Concept: French negation with ‘rien’
+
+Valid questions:
+
+Sentence completion
+
+Error correction
+
+Meaning
+
+Production
+
+Using clean, native sentences, not the broken one.
+
+The original learner attempt is only used as:
+
+diagnostic input
+
+explanation reference (“You said X because…”)
+
+What replaces INVALID (this is key)
+
+Instead of:
+
+INVALID → NO QUESTIONS GENERATED
+
+You use:
+
+UNSTABLE ATTEMPT → CONCEPT EXTRACTION MODE
+
+Behavior:
+
+Do NOT generate questions directly from the text
+
+DO extract:
+
+intent
+
+confusion category
+
+Generate lessons from clean examples of that concept
+
+This preserves:
+
+intelligence
+
+empathy
+
+pedagogical value
+
+The rule you actually want (write this down)
+
+If learner output is unstable, do not discard it — abstract it.
+
+That’s the difference between:
+
+an AI filter
+
+an AI teacher
+
+How your example SHOULD be handled
+
+Learner attempt:
+
+je veux pas ne rien avoir
+
+System response internally:
+
+Gap category: Negation logic
+
+Target concept: “I don’t want anything”
+
+Canonical forms:
+
+Je ne veux rien.
+
+Je ne veux pas avoir quelque chose.
+
+Generated questions:
+
+Which sentence correctly means “I don’t want anything”?
+
+Complete the sentence: Je ne veux ___ avoir.
+
+Which option fixes the error?
+
+Now everything makes sense again.
+
+What to tell your devs (very important)
+
+Here’s the exact correction I’d give them:
+
+Hard rejection is correct for question generation, but not for gap handling.
+
+Invalid learner output should not be dropped — it should be abstracted into a teachable concept, and lessons should be generated from clean, native examples of that concept.
+
+Raw learner attempts are diagnostics, not lesson sources.
+
+If they understand that, they’re aligned.
+
+If they push back — that’s a signal.

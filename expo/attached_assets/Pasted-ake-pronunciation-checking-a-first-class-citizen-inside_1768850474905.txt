@@ -1,0 +1,104 @@
+ake pronunciation checking a first-class citizen inside the foundation, but keep it tightly coupled to what they’re actually learning rather than as a separate “lab.”
+​
+
+Pronunciation goals for foundations
+Target: “clear, intelligible French” for all core beginner phrases, not perfect native imitation.
+​
+
+Focus especially on:
+
+Nasal vowels (an/en, in, on, un).
+
+u vs ou (tu / tout).
+
+French r /ʁ/.
+
+Silent letters and basic liaison (les amis, petit ami).
+​
+
+How to wire pronunciation into your current core
+1. In Foundation Lessons
+Every high-frequency phrase gets:
+
+A reference audio from ElevenLabs (native-quality TTS).
+​
+
+A “repeat & check” step:
+
+User presses mic → Web Speech / ElevenLabs STT transcribes.
+​
+
+Compare transcript to target phrase:
+
+If STT output matches exactly or near-exactly → mark as “understandable”.
+
+If substitutions happen on known problem sounds (u/ou, nasal vowels, r, missing liaisons), flag those and attach a short, phrase-specific tip from your curated error list.
+
+Use a simple traffic light UI:
+
+Green: “Clear!”
+
+Yellow: “Understandable, but work on this sound: [u] vs [ou].”
+
+Red: “Hard to understand, listen and try again with this tip.”
+
+Under the hood, you just score via:
+
+STT confidence on each word.
+
+Known confusion patterns (e.g., if “tout” is recognized instead of “tu”, surface your u/ou tip).
+​
+
+2. Tie it directly into the Deck
+Every pronunciation check is also a gap opportunity:
+
+If a phrase fails twice:
+
+Auto-add a Pronunciation Gap Card to the Deck:
+
+Phrase, slow audio, breakdown into syllables, a short tip (“Relax your lips for ou, tightly round for u”).
+​
+
+In Deck review, show a “Practice pronunciation” button:
+
+Plays reference audio.
+
+Prompts user to record; shows same traffic light + tip overlay.
+
+This way the SRS engine is not just for vocab/grammar – it also schedules targeted pronunciation reps on problem items.
+​
+
+3. Keep it “accent-aware” but not punishing
+Messaging should explicitly say:
+
+“Okiri checks if your French is easy to understand, not if you sound perfectly native.”
+​
+
+Feedback focuses on:
+
+Segmentals (specific sounds) where ASR is strongest.
+​
+
+A couple of suprasegmental cues (final-syllable stress, basic intonation) via short tips, not numeric scoring.
+​
+
+Avoid 0–100 “accent score”; instead use:
+
+Tags like “Clear but English-y r”, “Good vowels, watch liaison”.
+
+Visual progress per sound group (e.g., “Nasal vowels: 3/5 key words ‘clear’”).
+
+4. Where it lives in the app
+Foundation tab:
+
+Every lesson step that teaches a phrase ends with a small “Say it & check” block.
+
+Speak tab (early):
+
+Add a “Phrase practice” mode using your core phrases; same check pipeline as foundation.
+
+Deck:
+
+Cards can be marked as “Vocab”, “Grammar”, or “Pronunciation” gaps but all share the same SRS loop.
+
+That keeps everything aligned with Okiri’s core idea: whenever pronunciation actually blocks comprehension or confidence, it becomes a gap that the system tracks, explains, and resolves over time.

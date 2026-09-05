@@ -57,7 +57,13 @@ final class AppStore {
     private let lessonsSinceCapstoneKey = "ff.lessonsSinceCapstone.v1"
     private let localUpdatedAtKey = "ff.localUpdatedAt.v1"
 
-    init() {
+    /// Where state persists. `nil` means in-memory only: nothing is read from or
+    /// written to UserDefaults. The headless driver and tests use that so the
+    /// REAL engine runs on synthetic gaps/concepts without touching a device.
+    private let persistence: UserDefaults?
+
+    init(persistence: UserDefaults? = .standard) {
+        self.persistence = persistence
         load()
     }
 
@@ -153,21 +159,21 @@ final class AppStore {
     /// Resolve a declared intent into the candidate gap ids of a scoped request.
     /// This is the only place candidate sets are built — never in a View. The
     /// selector still applies eligibility, ordering, reasons and the size cap.
-    func candidateGapIds(for scope: SelectionScope) -> [String] {
+    func candidateGapIds(for scope: SelectionScope, now: Date = Date()) -> [String] {
         let pool: [GapItem]
         switch scope {
         case .category(let category):
             pool = gaps(in: category)
         case .dueInCategory(let category):
-            pool = (criticalGaps + dueGaps).filter { $0.category == category }
+            pool = (criticalGaps(at: now) + dueGaps(at: now)).filter { $0.category == category }
         case .reviewQueue:
-            pool = reviewQueue
+            pool = reviewQueue(at: now)
         case .critical:
-            pool = criticalGaps
+            pool = criticalGaps(at: now)
         case .mixed:
             pool = activeGaps
         case .retention(let bucket):
-            let buckets = retention
+            let buckets = retention(at: now)
             switch bucket {
             case .atRisk: pool = buckets.atRisk
             case .fading: pool = buckets.fading
@@ -190,7 +196,7 @@ final class AppStore {
         if case .errorPattern(let id) = scope, let pattern = errorPatterns.first(where: { $0.id == id }) {
             name = pattern.conceptLabel
         }
-        return SelectionRequest(mode: .scoped(candidateGapIds: candidateGapIds(for: scope)),
+        return SelectionRequest(mode: .scoped(candidateGapIds: candidateGapIds(for: scope, now: now)),
                                 now: now, scopeName: name)
     }
 
@@ -283,10 +289,10 @@ final class AppStore {
     // MARK: - Per-concept mastery
 
     /// Update a concept's Beta evidence when a lesson item tied to it is answered.
-    func recordConceptAnswer(conceptId: String?, correct: Bool, weight: Double = 1) {
+    func recordConceptAnswer(conceptId: String?, correct: Bool, weight: Double = 1, now: Date = Date()) {
         guard let conceptId, let idx = concepts.firstIndex(where: { $0.id == conceptId }) else { return }
         if correct { concepts[idx].alpha += weight } else { concepts[idx].beta += weight }
-        concepts[idx].lastTestedAt = Date()
+        concepts[idx].lastTestedAt = now
     }
 
     /// Recompute frontier unlocks after a lesson. Returns the names of concepts
@@ -382,22 +388,28 @@ final class AppStore {
     // MARK: - Scheduling (FSRS-driven)
 
     /// Gaps that are overdue by more than a day — "critical".
-    var criticalGaps: [GapItem] {
-        let now = Date()
-        return activeGaps.filter { $0.nextReviewAt < now.addingTimeInterval(-86_400) }
-    }
+    var criticalGaps: [GapItem] { criticalGaps(at: Date()) }
 
     /// Gaps due now (within tolerance).
-    var dueGaps: [GapItem] {
-        let now = Date()
-        return activeGaps.filter { $0.nextReviewAt <= now && $0.nextReviewAt >= now.addingTimeInterval(-86_400) }
+    var dueGaps: [GapItem] { dueGaps(at: Date()) }
+
+    var reviewQueue: [GapItem] { reviewQueue(at: Date()) }
+
+    // The same schedule views evaluated against an explicit clock, so scope
+    // resolution and the headless driver see one consistent "now".
+
+    func criticalGaps(at now: Date) -> [GapItem] {
+        activeGaps.filter { $0.nextReviewAt < now.addingTimeInterval(-86_400) }
     }
 
-    var reviewQueue: [GapItem] {
-        let now = Date()
-        return activeGaps
+    func dueGaps(at now: Date) -> [GapItem] {
+        activeGaps.filter { $0.nextReviewAt <= now && $0.nextReviewAt >= now.addingTimeInterval(-86_400) }
+    }
+
+    func reviewQueue(at now: Date) -> [GapItem] {
+        activeGaps
             .filter { $0.nextReviewAt <= now.addingTimeInterval(3 * 86_400) }
-            .sorted { $0.retrievability < $1.retrievability }
+            .sorted { $0.retrievability(at: now) < $1.retrievability(at: now) }
     }
 
     var gapHealth: (score: Int, label: String) {
@@ -420,11 +432,13 @@ final class AppStore {
         var mastered: [GapItem] = []
     }
 
-    var retention: RetentionBuckets {
+    var retention: RetentionBuckets { retention(at: Date()) }
+
+    func retention(at now: Date) -> RetentionBuckets {
         var b = RetentionBuckets()
         for gap in gaps {
             if gap.isMastered { b.mastered.append(gap); continue }
-            let r = gap.retrievability
+            let r = gap.retrievability(at: now)
             if r >= 0.8 { b.fresh.append(gap) }
             else if r >= 0.5 { b.fading.append(gap) }
             else { b.atRisk.append(gap) }
@@ -519,10 +533,11 @@ final class AppStore {
 
     // MARK: - Reviewing
 
-    func recordReview(gapId: String, correct: Bool, grade: ReviewGrade? = nil, conceptWeight: Double = 1) {
+    /// The evidence entry point for an answered item. `now` is injectable so the
+    /// headless driver can run multi-day sessions against the real schedule.
+    func recordReview(gapId: String, correct: Bool, grade: ReviewGrade? = nil, conceptWeight: Double = 1, now: Date = Date()) {
         guard let idx = gaps.firstIndex(where: { $0.id == gapId }) else { return }
         var gap = gaps[idx]
-        let now = Date()
         let g = grade ?? (correct ? .good : .again)
 
         gap.fsrs = FSRS.review(state: gap.fsrs, grade: g, now: now)
@@ -546,7 +561,7 @@ final class AppStore {
         // Concept mastery moves only when the concept is actually re-tested here
         // (no timer-based decay) — weight scales slightly with item difficulty.
         let weight: Double = gap.difficulty == .hard ? 1.3 : (gap.difficulty == .easy ? 0.8 : 1.0)
-        recordConceptAnswer(conceptId: gap.conceptId, correct: correct, weight: weight * conceptWeight)
+        recordConceptAnswer(conceptId: gap.conceptId, correct: correct, weight: weight * conceptWeight, now: now)
         save()
     }
 
@@ -598,7 +613,12 @@ final class AppStore {
     // MARK: - Persistence
 
     private func load() {
-        let defaults = UserDefaults.standard
+        guard let defaults = persistence else {
+            // In-memory: the seed taxonomy and nothing else, so fixtures are explicit.
+            concepts = ConceptTaxonomy.seed()
+            abilityTheta = 0.2
+            return
+        }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
@@ -781,7 +801,7 @@ final class AppStore {
 
     func save(pushToCloud: Bool = true) {
         if pushToCloud { localUpdatedAt = Date() }
-        let defaults = UserDefaults.standard
+        guard let defaults = persistence else { return }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         if let ts = localUpdatedAt {

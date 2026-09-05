@@ -37,12 +37,25 @@ struct LessonPipeline {
     /// Select, record the decision, assemble. Every lesson the app shows comes
     /// through here, so the SelectionLog is a complete trace of the Select stage.
     func lesson(for request: SelectionRequest) -> AssembledLesson? {
+        outcome(for: request).lesson
+    }
+
+    /// Select, record, assemble — and when the selector chose nothing (or nothing
+    /// could be resolved), hand back its own headline so the entry point can show
+    /// an honest empty state instead of silently doing nothing (C23).
+    func outcome(for request: SelectionRequest) -> LessonOutcome {
         let output = selector.select(request)
         store.selectionLog.record(output)
         // Stall bookkeeping (B15): remember the target's state at selection so
         // `completeLesson` can tell whether this lesson moved it.
         store.noteLessonSelected(output)
-        return assembler.assemble(output)
+        if let lesson = assembler.assemble(output) { return .lesson(lesson) }
+        return .empty(headline: output.headline)
+    }
+
+    /// The outcome for a declared intent; the store resolves the scope to candidates.
+    func outcome(for scope: SelectionScope, now: Date = Date()) -> LessonOutcome {
+        outcome(for: store.selectionRequest(for: scope, now: now))
     }
 
     /// A lesson for a declared intent; the store resolves the scope to candidates.
@@ -56,5 +69,22 @@ struct LessonPipeline {
 
     func capstoneLesson(now: Date = Date()) -> AssembledLesson? {
         lesson(for: .capstone(now: now))
+    }
+}
+
+/// What an entry point gets back: a lesson to present, or the selector's own
+/// explanation of why there is none ("Nothing to practice right now.").
+nonisolated enum LessonOutcome {
+    case lesson(AssembledLesson)
+    case empty(headline: String)
+
+    var lesson: AssembledLesson? {
+        if case .lesson(let l) = self { return l }
+        return nil
+    }
+
+    var emptyHeadline: String? {
+        if case .empty(let h) = self { return h }
+        return nil
     }
 }

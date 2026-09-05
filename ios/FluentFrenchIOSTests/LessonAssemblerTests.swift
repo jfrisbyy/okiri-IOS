@@ -138,4 +138,23 @@ struct LessonAssemblerTests {
         #expect(!lesson.gaps.contains { $0.id == "root-0" })
         #expect(Set(lesson.gaps.map { $0.id }).isSubset(of: Set(output.gapIds)))
     }
+
+    @Test func pipelineOutcomeExplainsAnEmptySelection() {
+        // Mastered, verified, next check-in weeks away, no gaps: nothing to build.
+        var resting = EngineFixtures.mastered("done")
+        resting.nextCheckInAt = EngineFixtures.now.addingTimeInterval(30 * EngineFixtures.day)
+        resting.checkInIntervalDays = Tuning.checkInInitialDays
+        let store = EngineFixtures.store(concepts: [resting], gaps: [])
+        let outcome = LessonPipeline(store: store).outcome(for: .smart(now: EngineFixtures.now))
+        #expect(outcome.lesson == nil)
+        #expect(outcome.emptyHeadline == "Nothing to practice right now.")
+    }
+
+    @Test func pipelineOutcomeCarriesTheLesson() throws {
+        let g = EngineFixtures.smallGraph()
+        let outcome = LessonPipeline(store: g.store).outcome(for: .smart(now: EngineFixtures.now))
+        let lesson = try #require(outcome.lesson)
+        #expect(lesson.targetConcept?.id == g.root)
+        #expect(outcome.emptyHeadline == nil)
+    }
 }

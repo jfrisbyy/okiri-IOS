@@ -125,11 +125,20 @@ final class AppStore {
     // MARK: - Package C stored state (edit only inside this block)
     // (lesson-loop stored properties go here)
 
-    // MARK: - Package D stored state (edit only inside this block)
-    // (home / gates / first-run stored properties go here)
+    // MARK: - Package D-home stored state (edit only inside this block)
+    // (Home screen / daily plan / gate stored properties go here)
 
-    // MARK: - Package E stored state (edit only inside this block)
-    // (content-surface stored properties go here)
+    // MARK: - Package D-flow stored state (edit only inside this block)
+    // (placement / preferences / deck / retention stored properties go here)
+
+    // MARK: - Package E-read stored state (edit only inside this block)
+    // (reading / capture / tagger stored properties go here)
+
+    // MARK: - Package E-talk stored state (edit only inside this block)
+    // (converse / speaking stored properties go here)
+
+    // MARK: - Package E-media stored state (edit only inside this block)
+    // (listening / watching stored properties go here)
 
     /// Calendar used for every day key (streaks, activity buckets). Injectable so
     /// tests can pin a time zone and walk a DST transition.
@@ -1988,9 +1997,21 @@ extension AppStore {
 }
 
 extension AppStore {
-    // MARK: Package D — home / gates / first-run store methods
+    // MARK: Package D-home — Home screen / daily plan / gate store methods
 }
 
 extension AppStore {
-    // MARK: Package E — content-surface store methods
+    // MARK: Package D-flow — placement / preferences / deck / retention store methods
+}
+
+extension AppStore {
+    // MARK: Package E-read — reading / capture / tagger store methods
+}
+
+extension AppStore {
+    // MARK: Package E-talk — converse / speaking store methods
+}
+
+extension AppStore {
+    // MARK: Package E-media — listening / watching store methods
 }

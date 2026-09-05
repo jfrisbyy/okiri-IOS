@@ -319,11 +319,26 @@ nonisolated extension Tuning {
 }
 
 nonisolated extension Tuning {
-    // MARK: Package D — home, gates, first-run constants
+    // MARK: Package D-home — Home screen, daily plan, gates constants
     // (append `static let` constants here, one-line comment each)
 }
 
 nonisolated extension Tuning {
-    // MARK: Package E — content-surface constants
+    // MARK: Package D-flow — placement, preferences, deck/gap-map/retention constants
+    // (append `static let` constants here, one-line comment each)
+}
+
+nonisolated extension Tuning {
+    // MARK: Package E-read — reading / capture / tagger constants
+    // (append `static let` constants here, one-line comment each)
+}
+
+nonisolated extension Tuning {
+    // MARK: Package E-talk — converse / speaking constants
+    // (append `static let` constants here, one-line comment each)
+}
+
+nonisolated extension Tuning {
+    // MARK: Package E-media — listening / watching constants
     // (append `static let` constants here, one-line comment each)
 }

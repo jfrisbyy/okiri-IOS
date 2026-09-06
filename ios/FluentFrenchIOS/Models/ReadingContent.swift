@@ -253,8 +253,6 @@ nonisolated enum ReadingLibrary {
                      body: "— Allô, bonjour, je voudrais parler à Marie. — C'est de la part de qui ? — De la part de Paul. — Un instant, je vous la passe. — Merci beaucoup. — Je vous en prie, bonne journée !"),
         ReadingPiece(id: "r6", title: "L'hiver à Québec", subtitle: "A Canadian winter", category: .culture, region: .quebec, difficulty: .medium, minutes: 6, level: .B1,
                      body: "À Québec, l'hiver n'est pas une saison qu'on subit : c'est une fête. Les gens patinent sur les rivières gelées, dégustent de la tire d'érable sur la neige, et le Carnaval illumine la ville. Malgré le froid, l'ambiance est toujours chaleureuse."),
-        ReadingPiece(id: "r7", title: "Le petit prince", subtitle: "Literary classic", category: .literature, region: .france, difficulty: .hard, minutes: 7, level: .B2,
-                     body: "On ne voit bien qu'avec le cœur. L'essentiel est invisible pour les yeux. C'est le temps que tu as perdu pour ta rose qui fait ta rose si importante. Les hommes ont oublié cette vérité, mais tu ne dois pas l'oublier."),
         ReadingPiece(id: "r8", title: "Histoire de Carthage", subtitle: "Ancient history", category: .history, region: .france, difficulty: .university, minutes: 8, level: .C1,
                      body: "Fondée au IXe siècle avant notre ère, Carthage devint l'une des plus grandes puissances de la Méditerranée. Sa rivalité avec Rome aboutit aux guerres puniques, dont l'issue détermina le destin du monde antique pour des siècles."),
         ReadingPiece(id: "r9", title: "Une journée à Bruxelles", subtitle: "City guide", category: .travel, region: .belgium, difficulty: .easy, minutes: 4, level: .A2,

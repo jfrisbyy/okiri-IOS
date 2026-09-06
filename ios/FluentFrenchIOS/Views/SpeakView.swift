@@ -242,7 +242,17 @@ struct SpeakView: View {
     }
 
     private var canGetFeedback: Bool {
-        feedbackAvailable && !writeText.trimmingCharacters(in: .whitespaces).isEmpty && !feedbackLoading
+        feedbackAvailable && !writeText.trimmingCharacters(in: .whitespaces).isEmpty
+            && !feedbackLoading && !isRepeatRequest
+    }
+
+    /// The answer on screen is already graded and unchanged: asking again would
+    /// book a second miss on the same card (talkmedia-4-4), so the button greys
+    /// out rather than staying lit and doing nothing when tapped.
+    private var isRepeatRequest: Bool {
+        guard feedback != nil, let lastRequest else { return false }
+        return lastRequest.response == writeText.trimmingCharacters(in: .whitespacesAndNewlines)
+            && lastRequest.prompt == prompt.text
     }
 
     // MARK: - Feedback flow (E13 / E26)

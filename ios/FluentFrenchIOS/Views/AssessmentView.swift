@@ -402,11 +402,13 @@ struct AssessmentView: View {
 
     /// Whether the results screen should promise a Foundation start.
     ///
-    /// "True beginner" only routes to Foundation on the FIRST run. On a retake
-    /// `applyPlacement` never re-locks reading, resets coverage or reseeds
-    /// Foundation (it only ever adds evidence), so a bottomed-out retake must
-    /// not promise a restart the app never performs — the coverage gate alone
-    /// decides.
+    /// "True beginner" routes to Foundation outright only on the FIRST run. A
+    /// retake defers wholly to `store.willEnterFoundation(after:)`, which never
+    /// promises a restart the app won't perform: a learner whose reading is
+    /// already open stays open (`applyPlacement`'s retake branch only ever adds
+    /// evidence — it never re-locks reading, resets coverage or reseeds
+    /// Foundation), while a learner still behind the reading bar is routed by
+    /// `isTrueBeginner` or the coverage gate, and Foundation is where they are.
     private func entersFoundation(_ result: PlacementResult) -> Bool {
         if isFirstRun && result.isTrueBeginner { return true }
         return store.willEnterFoundation(after: result)

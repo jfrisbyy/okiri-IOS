@@ -292,6 +292,14 @@ private struct ConverseCallView: View {
     @State private var hintSuggestion: String? = nil
     @State private var turnFailure: TalkServiceFailure? = nil
     @State private var micNotice: String? = nil
+    /// Shown when the system took the microphone mid-turn. It is separate from
+    /// `micNotice` because the interrupted fragment is usually sent straight
+    /// away, and `send()` clears `micNotice` — this notice has to outlive that
+    /// send so the learner is told their turn was cut short (talkmedia-4-3).
+    @State private var interruptionNotice: String? = nil
+    /// The interruption notice waiting to be attached to the turn the fragment
+    /// is about to become; `send()` promotes it to `interruptionNotice`.
+    @State private var pendingInterruptionNotice: String? = nil
     /// Note shown when a dictation was added to a reply the learner had typed
     /// (talkmedia-3-3) — informational, not a microphone failure.
     @State private var dictationNotice: String? = nil
@@ -465,6 +473,7 @@ private struct ConverseCallView: View {
             if let correction = lastCorrection { correctionBanner(correction) }
             hintRow
             if let micNotice { noticeRow(icon: "mic.slash", text: micNotice, color: Theme.error) }
+            if let interruptionNotice { noticeRow(icon: "exclamationmark.bubble", text: interruptionNotice, color: Theme.error) }
             if let dictationNotice { noticeRow(icon: "text.append", text: dictationNotice, color: accent) }
 
             HStack(spacing: 10) {
@@ -700,6 +709,8 @@ private struct ConverseCallView: View {
         Haptics.tap()
         micNotice = nil
         dictationNotice = nil
+        interruptionNotice = nil
+        pendingInterruptionNotice = nil
         NaturalVoice.shared.stop()
         Task {
             let result = await recorder.start(maxSeconds: Tuning.converseRecordingSeconds)
@@ -719,8 +730,12 @@ private struct ConverseCallView: View {
     /// there is enough of it to be a reply (talkmedia-4-3).
     private func handleInterruption(_ seconds: Int?) {
         guard let seconds else { return }
-        micNotice = InterruptedRecording.notice(secondsCaptured: seconds)
+        let notice = InterruptedRecording.notice(secondsCaptured: seconds)
+        interruptionNotice = notice
         if InterruptedRecording.isWorthTranscribing(secondsCaptured: seconds) {
+            // The fragment usually goes straight out as a turn; carry the notice
+            // across that send so it survives `send()` clearing the notice rows.
+            pendingInterruptionNotice = notice
             finishListening()
         } else {
             recorder.cancel()
@@ -744,11 +759,14 @@ private struct ConverseCallView: View {
                     draft = merged
                     dictationNotice = merge.notice
                     inputFocused = true
+                    pendingInterruptionNotice = nil
                 case .nothing:
                     micNotice = TranscriptionOutcome.nothingHeard.message
+                    pendingInterruptionNotice = nil
                 }
             case .nothingHeard, .failed:
                 micNotice = outcome.message
+                pendingInterruptionNotice = nil
             }
         }
     }
@@ -762,6 +780,9 @@ private struct ConverseCallView: View {
         hintSuggestion = nil
         micNotice = nil
         dictationNotice = nil
+        // An interruption notice belongs to the turn being sent, not the last one.
+        interruptionNotice = pendingInterruptionNotice
+        pendingInterruptionNotice = nil
         turnFailure = nil
         inputFocused = false
         withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.85), reduceMotion: reduceMotion)) {

@@ -602,4 +602,52 @@ struct TalkSurfaceTests {
         let back = try JSONDecoder().decode(ScenarioGuide.self, from: data)
         #expect(back == guide, "a stored guide comes back with the same ids and text")
     }
+
+    // MARK: talkmedia-5-3 — bookmarking is keyed on the guide, not the search text
+
+    private func namedGuide(_ title: String) -> ScenarioGuide {
+        ScenarioGuide(title: title, titleFrench: title, summary: "s",
+                      keyPhrases: [ScenarioPhrase(french: "fr-\(title)", english: "en", context: "c")],
+                      questionsAndAnswers: [], tips: [], nativeExpressions: [])
+    }
+
+    @Test func aRegeneratedGuideForTheSameSituationIsNotTheSavedOne() {
+        let first = ScenarioLibrary.save(namedGuide("first"), query: "Restaurant", into: [], id: "one")
+        #expect(ScenarioLibrary.contains("one", in: first.saved))
+        // The learner asked again and got a different guide: nothing on screen is saved yet.
+        #expect(!ScenarioLibrary.contains(nil, in: first.saved),
+                "a freshly generated guide has no saved id, so the bookmark reads unsaved")
+        let second = ScenarioLibrary.save(namedGuide("second"), query: "Restaurant", into: first.saved, id: "two")
+        #expect(second.saved.count == 1, "the newer guide replaces the older one, never sits beside it")
+        #expect(second.saved[0].id == "two")
+        #expect(second.saved[0].guide.title == "second", "Saved Scenarios opens what was saved last")
+    }
+
+    @Test func removingTheGuideOnScreenNeverTakesADifferentOne() {
+        let a = ScenarioLibrary.save(namedGuide("a"), query: "Hotel", into: [], id: "a-id")
+        let b = ScenarioLibrary.save(namedGuide("b"), query: "Doctor", into: a.saved, id: "b-id")
+        let afterRemove = ScenarioLibrary.remove("b-id", from: b.saved)
+        #expect(afterRemove.map(\.id) == ["a-id"], "only the guide on screen is dropped")
+        #expect(ScenarioLibrary.remove("missing", from: afterRemove).map(\.id) == ["a-id"])
+    }
+
+    @Test func savingKeepsThePhrasesTheLearnerAddedAndLaterOnesReachTheSavedCopy() {
+        let extra = ScenarioPhrase(french: "l'addition", english: "the bill", context: "Added from translator")
+        let saved = ScenarioLibrary.save(namedGuide("g"), query: "Restaurant", customPhrases: [extra], into: [], id: "g-id")
+        #expect(saved.saved[0].guide.keyPhrases.map(\.french) == ["fr-g", "l'addition"],
+                "a phrase added before saving is part of what Saved Scenarios opens")
+        let later = ScenarioPhrase(french: "sur place", english: "eat in", context: "Added from translator")
+        let updated = ScenarioLibrary.appendPhrase(later, toGuideWith: "g-id", in: saved.saved)
+        #expect(updated[0].guide.keyPhrases.map(\.french) == ["fr-g", "l'addition", "sur place"])
+        #expect(ScenarioLibrary.appendPhrase(later, toGuideWith: "gone", in: updated) == updated,
+                "a phrase for a guide that is no longer saved changes nothing")
+    }
+
+    @Test func theSameSituationTypedDifferentlyStillReplacesTheOlderGuide() {
+        let first = ScenarioLibrary.save(namedGuide("first"), query: "Restaurant", into: [], id: "one")
+        let second = ScenarioLibrary.save(namedGuide("second"), query: "  restaurant ", into: first.saved, id: "two")
+        #expect(second.saved.count == 1)
+        #expect(ScenarioLibrary.sameSituation("Train Station", "train station"))
+        #expect(!ScenarioLibrary.sameSituation("Hotel", "Doctor"))
+    }
 }

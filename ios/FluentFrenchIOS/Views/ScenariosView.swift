@@ -61,7 +61,13 @@ struct ScenariosView: View {
         .init(label: "Meeting People", icon: "person.2.fill", color: Color(hex: "DB2777")),
     ]
 
-    private var isCurrentSaved: Bool { saved.contains { $0.query == currentQuery } }
+    /// The kept guide currently on screen, if the learner saved this one or
+    /// opened it from Saved Scenarios. Keyed on the guide, never on the words
+    /// typed: a regenerated "Restaurant" guide is a different guide, so it must
+    /// read as unsaved rather than offer to delete the older one (talkmedia-5-3).
+    @State private var currentSavedId: String? = nil
+
+    private var isCurrentSaved: Bool { ScenarioLibrary.contains(currentSavedId, in: saved) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -583,6 +589,9 @@ struct ScenariosView: View {
         Haptics.select()
         inputFocused = false
         currentQuery = clean
+        // A new guide is being built: it is not the kept one, even for a
+        // situation the learner already saved (talkmedia-5-3).
+        currentSavedId = nil
         failure = nil
         customPhrases = []
         translatorOpen = false
@@ -638,6 +647,12 @@ struct ScenariosView: View {
         guard let translateResult else { return }
         Haptics.success()
         customPhrases.append(translateResult)
+        // The guide on screen is already kept: write the phrase through to the
+        // saved copy so reopening it from Saved Scenarios still has it.
+        if let id = currentSavedId, ScenarioLibrary.contains(id, in: saved) {
+            saved = ScenarioLibrary.appendPhrase(translateResult, toGuideWith: id, in: saved)
+            persistSaved()
+        }
         withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) {
             translateInput = ""
             self.translateResult = nil
@@ -655,13 +670,14 @@ struct ScenariosView: View {
     }
 
     private func toggleSave(_ guide: ScenarioGuide) {
-        if let existing = saved.firstIndex(where: { $0.query == currentQuery }) {
-            saved.remove(at: existing)
+        if let id = currentSavedId, ScenarioLibrary.contains(id, in: saved) {
+            saved = ScenarioLibrary.remove(id, from: saved)
+            currentSavedId = nil
             Haptics.tap()
         } else {
-            var merged = guide
-            merged.keyPhrases.append(contentsOf: customPhrases)
-            saved.insert(SavedScenario(id: UUID().uuidString, query: currentQuery, guide: merged, savedAt: Date()), at: 0)
+            let result = ScenarioLibrary.save(guide, query: currentQuery, customPhrases: customPhrases, into: saved)
+            saved = result.saved
+            currentSavedId = result.id
             Haptics.success()
         }
         persistSaved()
@@ -669,7 +685,8 @@ struct ScenariosView: View {
 
     private func deleteSaved(_ item: SavedScenario) {
         Haptics.tap()
-        saved.removeAll { $0.id == item.id }
+        saved = ScenarioLibrary.remove(item.id, from: saved)
+        if currentSavedId == item.id { currentSavedId = nil }
         persistSaved()
     }
 
@@ -687,6 +704,7 @@ struct ScenariosView: View {
         withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
             guide = item.guide
             currentQuery = item.query
+            currentSavedId = item.id
             activeTab = .phrases
             customPhrases = []
         }
@@ -696,6 +714,7 @@ struct ScenariosView: View {
         guide = nil
         query = ""
         currentQuery = ""
+        currentSavedId = nil
         customPhrases = []
         translatorOpen = false
         translateInput = ""

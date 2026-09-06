@@ -626,6 +626,58 @@ struct StoreTests {
         #expect(s.localUpdatedAt != nil)
     }
 
+    // MARK: store-5-1 — the big blobs are encoded off the MainActor
+
+    @Test func explicitFlushPersistsTheBigBlobsSynchronously() {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.gaps = [EngineFixtures.gap("a", concept: nil)]
+        s.save()
+        s.flush()
+        // No await here on purpose: ContentView calls `flush()` from `.background`
+        // and the app can be suspended the instant it returns, so an explicit
+        // flush must leave nothing encoding in the background (store-5-1).
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1") != nil)
+        #expect(scratch.defaults.data(forKey: "ff.concepts.v1") != nil)
+        #expect(scratch.defaults.data(forKey: "ff.errors.v1") != nil)
+        #expect(!s.hasPendingWrite)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["a"])
+    }
+
+    @Test func coalescedWriteStaysPendingUntilTheBlobsAreOnDisk() async throws {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.gaps = [EngineFixtures.gap("a", concept: nil)]
+        s.save()
+        #expect(s.hasPendingWrite)
+        for _ in 0..<40 where s.hasPendingWrite {
+            try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval))
+        }
+        // `hasPendingWrite` covers the background encode too, so when it clears the
+        // gaps blob really is written — the lifecycle hook can trust it.
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1") != nil)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["a"])
+    }
+
+    @Test func aBackgroundBlobEncodeNeverOverwritesNewerState() async throws {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        for i in 0..<4 {
+            s.gaps = [EngineFixtures.gap("g\(i)", concept: nil)]
+            s.save()
+            try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval))
+        }
+        s.gaps = [EngineFixtures.gap("final", concept: nil)]
+        s.save()
+        s.flush()
+        #expect(!s.hasPendingWrite)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["final"])
+        // Give anything still encoding every chance to land late.
+        try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval * 4))
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["final"],
+                "a stale background encode never lands on top of a newer inline write")
+    }
+
     @Test func snapshotApplyClearsLoadErrorAndKeepsCorruptCopy() {
         let scratch = ScratchDefaults()
         let garbage = Data("nope".utf8)

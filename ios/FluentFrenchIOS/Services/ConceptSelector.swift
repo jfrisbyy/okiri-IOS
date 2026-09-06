@@ -716,7 +716,10 @@ struct ConceptSelector {
         if misses >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
             return "You've missed this \(misses)× — time to lock it in."
         }
-        if let cid = gap.conceptId, let dep = store.dependents(of: cid).first {
+        // Only a dependent the learner has NOT mastered is still "unlocked" by this
+        // item (engine-5-3) — late in a run nearly every dependent is already
+        // mastered, and promising to unlock a finished skill reads as noise.
+        if let cid = gap.conceptId, let dep = store.dependents(of: cid).first(where: { !$0.isMastered }) {
             return "This unlocks \(dep.name)."
         }
         if let target, role == .target {

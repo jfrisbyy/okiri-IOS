@@ -141,3 +141,62 @@ nonisolated struct ScenarioGuide: Codable, Hashable {
         return guide
     }
 }
+
+// MARK: - Saved guides
+
+/// A guide the learner kept, with the situation they searched for.
+nonisolated struct SavedScenario: Codable, Hashable, Identifiable {
+    var id: String
+    var query: String
+    var guide: ScenarioGuide
+    var savedAt: Date
+}
+
+/// The saved-guides list as a value. Bookmarking is keyed on the guide that is
+/// on screen — its `SavedScenario.id` — never on the words the learner typed:
+/// asking for "Restaurant" twice builds two different guides, so keying on the
+/// query made a fresh guide read as already saved and the bookmark delete the
+/// one actually kept (talkmedia-5-3).
+nonisolated enum ScenarioLibrary {
+    /// True when `id` names a guide still in the list.
+    static func contains(_ id: String?, in saved: [SavedScenario]) -> Bool {
+        guard let id else { return false }
+        return saved.contains { $0.id == id }
+    }
+
+    /// Keep the guide on screen (plus any phrases the learner added through the
+    /// translator) at the top of the list. A guide kept earlier for the same
+    /// situation is REPLACED, so "Saved Scenarios" never shows two rows with the
+    /// same name and the newer guide is the one that opens. Returns the new list
+    /// and the id the surface should treat as "the saved guide on screen".
+    static func save(_ guide: ScenarioGuide, query: String, customPhrases: [ScenarioPhrase] = [],
+                     into saved: [SavedScenario], id: String = UUID().uuidString,
+                     now: Date = Date()) -> (saved: [SavedScenario], id: String) {
+        var merged = guide
+        merged.keyPhrases.append(contentsOf: customPhrases)
+        var result = saved.filter { !sameSituation($0.query, query) }
+        result.insert(SavedScenario(id: id, query: query, guide: merged, savedAt: now), at: 0)
+        return (result, id)
+    }
+
+    /// Drop one kept guide by id.
+    static func remove(_ id: String, from saved: [SavedScenario]) -> [SavedScenario] {
+        saved.filter { $0.id != id }
+    }
+
+    /// Add a phrase to a kept guide, so a phrase translated while a saved guide
+    /// is open is still there when it is reopened.
+    static func appendPhrase(_ phrase: ScenarioPhrase, toGuideWith id: String,
+                             in saved: [SavedScenario]) -> [SavedScenario] {
+        guard let index = saved.firstIndex(where: { $0.id == id }) else { return saved }
+        var result = saved
+        result[index].guide.keyPhrases.append(phrase)
+        return result
+    }
+
+    /// Two searches for the same situation, ignoring case and surrounding space.
+    static func sameSituation(_ a: String, _ b: String) -> Bool {
+        a.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(b.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+    }
+}

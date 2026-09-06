@@ -591,7 +591,15 @@ final class CloudSync {
                 .single()
                 .execute()
                 .value
-            hasPendingChange = false
+            // store-5-2: `snapshot` was taken BEFORE the round trip, so an answer
+            // saved while it was in flight is not in the row that was just
+            // written. Clearing the flag unconditionally marked that answer as
+            // backed up, and the background flush then skipped it. Only what was
+            // actually uploaded counts as synced.
+            hasPendingChange = SnapshotReconciler.recordMovedDuringUpload(
+                uploaded: snapshot.clientUpdatedAt,
+                current: store.localUpdatedAt
+            )
             saveMarkers(
                 userId: uid,
                 localUpdatedAt: snapshot.clientUpdatedAt,

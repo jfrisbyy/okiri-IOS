@@ -522,7 +522,7 @@ private struct ListenPlayerView: View {
         )
         .accessibilityElement()
         .accessibilityLabel("Capture the current line")
-        .accessibilityHint("Hold while lines play to select several; each line is saved as its own card")
+        .accessibilityHint("Hold while lines play to select several; each short line becomes its own card")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             captureStart = player.currentIndex

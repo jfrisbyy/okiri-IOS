@@ -250,6 +250,12 @@ final class AppStore {
     @ObservationIgnored private var isDirty = false
     @ObservationIgnored private var pendingCloudPush = false
     @ObservationIgnored private var saveTask: Task<Void, Never>? = nil
+    // store-5-1: the coalesced write encodes the three large blobs off the
+    // MainActor. `blobWriteTask` chains those encodes so writes stay ordered, and
+    // `blobWriteGeneration` lets a later (or inline) write invalidate an earlier
+    // one that is still encoding.
+    @ObservationIgnored private var blobWriteTask: Task<Void, Never>? = nil
+    @ObservationIgnored private var blobWriteGeneration = 0
 
     init(persistence: UserDefaults? = .standard) {
         self.persistence = persistence
@@ -494,7 +500,10 @@ final class AppStore {
             xp += Tuning.xpPerLessonComplete + (isCapstone ? Tuning.xpCapstoneBonus : 0)
         }
         markLessonOffered()
-        clearUnlockFlags()
+        // No flag reset here: `newlyUnlocked` IS the "already celebrated" bit, and
+        // clearing it before `expandFrontier` made every lesson re-announce the same
+        // unlock list (engine-5-2). `expandFrontier` retires the flag itself once the
+        // concept has actually been observed.
         let unlocked = expandFrontier()
         refreshUnlocks(now: now)
         pruneHistory(now: now)
@@ -690,6 +699,13 @@ final class AppStore {
             concept.checkInIntervalDays = nil
         }
         concepts[idx] = concept
+        // Whatever surface produced this evidence (lesson, probe, placement retake,
+        // Speak, Converse), the concept is now observed — so it leaves the frontier
+        // and can never be probed again. If nothing has ever seeded its curriculum,
+        // that would close the only door to its content: the concept would rank in
+        // the plan forever with an empty spine and could never become a lesson target
+        // (engine-5-1). The first evidence therefore opens the skill's material too.
+        seedConceptContentIfNeeded(conceptId, now: now)
     }
 
     // MARK: - Check-ins and the retention governor (Pass 3 F4/F6)
@@ -756,29 +772,33 @@ final class AppStore {
         return rate < Tuning.governorPassFloor
     }
 
-    /// Recompute frontier unlocks after a lesson. Returns the names of concepts
-    /// that became newly selectable so the UI can celebrate "New: ready for X".
+    /// Recompute frontier unlocks after a lesson. Returns the names of concepts that
+    /// became newly selectable so the UI can celebrate "New: ready for X" — each one
+    /// ONCE: `newlyUnlocked` persists as the "already celebrated" bit, so a concept
+    /// that is still waiting on the frontier is not re-announced after every lesson
+    /// (engine-5-2). The flag is retired here as soon as the concept has actually been
+    /// observed, so the lesson copy stops calling a skill in progress a new one.
     @discardableResult
     func expandFrontier() -> [String] {
         var unlocked: [String] = []
+        var changed = false
         for i in concepts.indices {
             let concept = concepts[i]
-            guard concept.state == .neverObserved, !concept.prerequisites.isEmpty else { continue }
-            let metNow = arePrerequisitesMet(concept)
-            if metNow && !concept.newlyUnlocked {
+            guard concept.state == .neverObserved, !concept.prerequisites.isEmpty else {
+                if concept.newlyUnlocked {
+                    concepts[i].newlyUnlocked = false
+                    changed = true
+                }
+                continue
+            }
+            if arePrerequisitesMet(concept) && !concept.newlyUnlocked {
                 concepts[i].newlyUnlocked = true
                 unlocked.append(concept.name)
+                changed = true
             }
         }
-        if !unlocked.isEmpty { save() }
+        if changed { save() }
         return unlocked
-    }
-
-    func clearUnlockFlags() {
-        for i in concepts.indices where concepts[i].newlyUnlocked {
-            concepts[i].newlyUnlocked = false
-        }
-        save()
     }
 
     // MARK: - Readiness gate (per modality)
@@ -1548,7 +1568,7 @@ final class AppStore {
         return decoder
     }
 
-    private static func makeEncoder() -> JSONEncoder {
+    private nonisolated static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return encoder
@@ -1853,6 +1873,8 @@ final class AppStore {
     private func resetAllState() {
         saveTask?.cancel()
         saveTask = nil
+        // A background encode of the OLD record must never land after the wipe.
+        cancelPendingBlobWrite()
         pendingCloudPush = false
         gaps = []
         concepts = ConceptTaxonomy.seed()
@@ -2144,23 +2166,39 @@ final class AppStore {
             try? await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval))
             guard !Task.isCancelled, let self else { return }
             self.saveTask = nil
-            self.flush()
+            self.flushCoalesced()
         }
     }
 
-    /// True while a coalesced write is still pending (tests and lifecycle hooks).
-    var hasPendingWrite: Bool { isDirty }
+    /// True while a coalesced write is still pending (tests and lifecycle hooks) —
+    /// including a blob encode that has been handed to the background but not yet
+    /// written back.
+    var hasPendingWrite: Bool { isDirty || blobWriteTask != nil }
 
     /// Write pending state now (lesson end, placement, app backgrounding). Refused —
     /// and left pending — while a load error is unresolved, so a bad read can never
     /// be persisted over the learner's real data. The cloud push rides on this.
-    func flush() {
+    /// Fully synchronous: when this returns every value has been handed to
+    /// UserDefaults, so the app can suspend immediately afterwards with nothing
+    /// still encoding in the background.
+    func flush() { performFlush(encodeBlobsInline: true) }
+
+    /// The write the 250 ms coalescing timer performs. Identical to `flush()`
+    /// except that the three large blobs (gaps, concepts, errors) are encoded off
+    /// the MainActor: every answer in a lesson schedules one of these and the
+    /// record is a few hundred KB from day one, so encoding it on the answer frame
+    /// is a visible hitch — the same reason `CloudSync.encodeForUpload` moved the
+    /// identical encode off the main actor (store-5-1). Explicit flushes stay
+    /// inline so nothing is ever in flight when the app suspends.
+    private func flushCoalesced() { performFlush(encodeBlobsInline: false) }
+
+    private func performFlush(encodeBlobsInline: Bool) {
         saveTask?.cancel()
         saveTask = nil
-        guard isDirty else { return }
+        guard isDirty || blobWriteTask != nil else { return }
         guard loadError == nil else { return }
         isDirty = false
-        writeToPersistence()
+        writeToPersistence(encodeBlobsInline: encodeBlobsInline)
         if pendingCloudPush {
             pendingCloudPush = false
             cloud?.progressDidChange(self)
@@ -2181,7 +2219,7 @@ final class AppStore {
         }
     }
 
-    private func writeToPersistence() {
+    private func writeToPersistence(encodeBlobsInline: Bool) {
         guard let defaults = persistence else { return }
         let encoder = Self.makeEncoder()
         if let ts = localUpdatedAt {
@@ -2194,8 +2232,6 @@ final class AppStore {
         } else {
             defaults.removeObject(forKey: preferencesKey)
         }
-        if let data = try? encoder.encode(gaps) { defaults.set(data, forKey: gapsKey) }
-        if let data = try? encoder.encode(concepts) { defaults.set(data, forKey: conceptsKey) }
         if let data = try? encoder.encode(activityProgress) { defaults.set(data, forKey: activityProgressKey) }
         if let data = try? encoder.encode(lifetimeMinutes) { defaults.set(data, forKey: lifetimeMinutesKey) }
         if let data = try? encoder.encode(lessonMinutes) { defaults.set(data, forKey: lessonMinutesKey) }
@@ -2203,7 +2239,6 @@ final class AppStore {
         defaults.set(totalLessonMinutes, forKey: totalLessonMinutesKey)
         defaults.set(gapsSinceLastLesson, forKey: gapsSinceLessonKey)
         defaults.set(lessonsSinceCapstone, forKey: lessonsSinceCapstoneKey)
-        if let data = try? encoder.encode(errors) { defaults.set(data, forKey: errorsKey) }
         defaults.set(sessionIndex, forKey: sessionKey)
         defaults.set(abilityTheta, forKey: thetaKey)
         defaults.set(Array(masteryDays), forKey: masteryKey)
@@ -2227,6 +2262,61 @@ final class AppStore {
         } else {
             defaults.removeObject(forKey: journeyStartedAtKey)
         }
+        // The three big blobs last, either here or off the MainActor (store-5-1).
+        if encodeBlobsInline {
+            cancelPendingBlobWrite()
+            write(Self.encodeBlobs(gaps: gaps, concepts: concepts, errors: errors), to: defaults)
+        } else {
+            scheduleBlobWrite(gaps: gaps, concepts: concepts, errors: errors)
+        }
+    }
+
+    /// Encode gaps/concepts/errors off the MainActor and write the resulting
+    /// `Data` back here. Chained behind any encode already in flight so writes
+    /// land in the order they were requested; a generation stamp lets a newer
+    /// request (or an inline `flush()`) drop an older one, whose data it already
+    /// supersedes.
+    private func scheduleBlobWrite(gaps: [GapItem], concepts: [Concept], errors: [ErrorRecord]) {
+        blobWriteGeneration &+= 1
+        let generation = blobWriteGeneration
+        let previous = blobWriteTask
+        blobWriteTask = Task { [weak self] in
+            await previous?.value
+            guard !Task.isCancelled, let self, self.blobWriteGeneration == generation,
+                  let defaults = self.persistence else { return }
+            let blobs = await Self.encodeBlobsOffMainActor(gaps: gaps, concepts: concepts, errors: errors)
+            guard !Task.isCancelled, self.blobWriteGeneration == generation else { return }
+            self.write(blobs, to: defaults)
+            self.blobWriteTask = nil
+        }
+    }
+
+    /// Drop any background encode: the caller is about to write newer data itself.
+    private func cancelPendingBlobWrite() {
+        blobWriteGeneration &+= 1
+        blobWriteTask?.cancel()
+        blobWriteTask = nil
+    }
+
+    private func write(_ blobs: EncodedBlobs, to defaults: UserDefaults) {
+        if let data = blobs.gaps { defaults.set(data, forKey: gapsKey) }
+        if let data = blobs.concepts { defaults.set(data, forKey: conceptsKey) }
+        if let data = blobs.errors { defaults.set(data, forKey: errorsKey) }
+    }
+
+    private nonisolated static func encodeBlobs(gaps: [GapItem], concepts: [Concept],
+                                                errors: [ErrorRecord]) -> EncodedBlobs {
+        let encoder = makeEncoder()
+        return EncodedBlobs(gaps: try? encoder.encode(gaps),
+                            concepts: try? encoder.encode(concepts),
+                            errors: try? encoder.encode(errors))
+    }
+
+    private nonisolated static func encodeBlobsOffMainActor(gaps: [GapItem], concepts: [Concept],
+                                                            errors: [ErrorRecord]) async -> EncodedBlobs {
+        await Task.detached(priority: .utility) {
+            encodeBlobs(gaps: gaps, concepts: concepts, errors: errors)
+        }.value
     }
 
     /// Wipe all progress back to a fresh install (DEBUG tooling only — the release
@@ -2255,6 +2345,15 @@ final class AppStore {
 }
 
 // MARK: - Persistence helpers
+
+/// The three large persisted blobs, already encoded. Encoding them off the
+/// MainActor and handing back plain `Data` keeps everything MainActor-isolated
+/// on this side of the boundary (store-5-1).
+private nonisolated struct EncodedBlobs: Sendable {
+    var gaps: Data?
+    var concepts: Data?
+    var errors: Data?
+}
 
 /// Outcome of reading one persisted blob.
 private nonisolated enum BlobResult<T> {

@@ -111,6 +111,21 @@ struct SnapshotReconcilerTests {
                 "a device with no activity at all has nothing to back up")
     }
 
+    // MARK: Change during an upload (store-5-2)
+
+    @Test func anAnswerSavedDuringTheUploadStaysPending() {
+        // The snapshot goes out at t=10; the round trip lands at t=13 with an
+        // answer saved at t=12 that the row does not contain.
+        #expect(SnapshotReconciler.recordMovedDuringUpload(uploaded: Self.at(10), current: Self.at(12)),
+                "an answer saved mid-upload is not in the row that was just written")
+        #expect(!SnapshotReconciler.recordMovedDuringUpload(uploaded: Self.at(10), current: Self.at(10)),
+                "the snapshot that was uploaded is backed up")
+        #expect(!SnapshotReconciler.recordMovedDuringUpload(uploaded: Self.at(10), current: Self.at(9)),
+                "an older clock is never an unsynced change")
+        #expect(!SnapshotReconciler.recordMovedDuringUpload(uploaded: Self.at(10), current: nil),
+                "a device with no local activity owes nothing")
+    }
+
     // MARK: Deferred restore (store-4-1)
 
     /// "Continue on this device" hands the ordinary reconcile rule a record it

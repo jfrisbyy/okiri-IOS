@@ -100,6 +100,16 @@ nonisolated enum SnapshotReconciler {
         !hasPendingChange && !local.isDirty
     }
 
+    /// True when the record moved after the snapshot that was just uploaded was
+    /// taken — an answer saved during the network round trip. That answer is not
+    /// in the row the server now holds, so the device still owes an upload
+    /// (store-5-2). `uploaded` is the snapshot's client clock; `current` is the
+    /// store's clock read after the upload returned.
+    static func recordMovedDuringUpload(uploaded: Date, current: Date?) -> Bool {
+        guard let current else { return false }
+        return current > uploaded
+    }
+
     /// Client-clock fallback: newest activity wins, cloud wins ties, and a device
     /// with no local activity always takes the cloud row.
     static func byClientClock(local: LocalState, remote: RemoteState) -> Decision {

@@ -14,13 +14,6 @@ import Foundation
 // The guide shape itself (and its tolerant decoding) lives in
 // `Models/ScenarioGuide.swift` so the harness can compile and test the parse.
 
-nonisolated struct SavedScenario: Codable, Hashable, Identifiable {
-    var id: String
-    var query: String
-    var guide: ScenarioGuide
-    var savedAt: Date
-}
-
 // MARK: - Generation
 
 nonisolated enum ScenariosService {

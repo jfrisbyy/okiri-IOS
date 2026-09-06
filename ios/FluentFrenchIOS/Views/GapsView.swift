@@ -87,10 +87,13 @@ struct GapsView: View {
     }
 
     /// Declare intent only; when the selector has nothing for this category the
-    /// learner sees its headline instead of a dead tap (C23).
-    private func practice(_ category: GapCategory) {
+    /// learner sees its headline instead of a dead tap (C23). `dueOnly` is the
+    /// scope behind a card whose only remaining work is mastery checks: the same
+    /// pool the "N due now" badge counts (`store.dueNow`, D13).
+    private func practice(_ category: GapCategory, dueOnly: Bool = false) {
         Haptics.select()
-        switch LessonPipeline(store: store).outcome(for: .category(category)) {
+        let scope: SelectionScope = dueOnly ? .dueInCategory(category) : .category(category)
+        switch LessonPipeline(store: store).outcome(for: scope) {
         case .lesson(let lesson): scopedLesson = lesson
         case .empty(let headline): emptyHeadline = headline
         }
@@ -139,7 +142,10 @@ struct GapsView: View {
         let masteryProgress = Double(stat.mastered) / Double(total)
         let healthLabel: String
         let healthColor: Color
-        if stat.active == 0 { healthLabel = "All clear"; healthColor = Theme.success }
+        // Nothing unmastered left, but the schedule still wants some checks back:
+        // "All clear" would contradict the "N due now" line right below it.
+        if stat.active == 0 && stat.due > 0 { healthLabel = "Due for a check"; healthColor = Theme.warning }
+        else if stat.active == 0 { healthLabel = "All clear"; healthColor = Theme.success }
         // Never reviewed: no recall evidence yet, so no health claim either (D19).
         else if stat.reviewed == 0 { healthLabel = "New"; healthColor = Theme.primary }
         else if stat.retention >= Tuning.gapHealthHealthyFloor { healthLabel = "Healthy"; healthColor = Theme.success }
@@ -147,11 +153,17 @@ struct GapsView: View {
         else { healthLabel = "At risk"; healthColor = Theme.error }
 
         return Button {
-            guard stat.active > 0 else {
+            // A card that says "N due now" has to be startable. When everything
+            // unmastered is gone, those N are mastery checks the schedule wants
+            // back (B3) — practise exactly that pool instead of claiming the
+            // category is empty one line under the badge.
+            if stat.active > 0 {
+                practice(stat.category)
+            } else if stat.due > 0 {
+                practice(stat.category, dueOnly: true)
+            } else {
                 emptyHeadline = "No \(stat.category.label.lowercased()) gaps yet — capture words while reading or speaking, or keep going with your lessons."
-                return
             }
-            practice(stat.category)
         } label: {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
@@ -191,9 +203,9 @@ struct GapsView: View {
                             .scaledFont(12).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
-                    if stat.active > 0 {
+                    if stat.active > 0 || stat.due > 0 {
                         HStack(spacing: 4) {
-                            Text("Practice").scaledFont(12, weight: .semibold)
+                            Text(stat.active > 0 ? "Practice" : "Review").scaledFont(12, weight: .semibold)
                             Image(systemName: "arrow.right").scaledFont(10, weight: .bold).accessibilityHidden(true)
                         }
                         .foregroundStyle(stat.category.color)
@@ -213,7 +225,9 @@ struct GapsView: View {
         .accessibilityValue(stat.due > 0
                             ? "\(stat.due) due now"
                             : (stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention) percent retention"))
-        .accessibilityHint(stat.active > 0 ? "Starts a focused lesson." : "Nothing to practice here yet.")
+        .accessibilityHint(stat.active > 0 ? "Starts a focused lesson."
+                           : (stat.due > 0 ? "Starts the mastery checks that are due."
+                              : "Nothing to practice here yet."))
     }
 
     private func icon(_ c: GapCategory) -> String {

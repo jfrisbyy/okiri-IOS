@@ -8,58 +8,67 @@
 import SwiftUI
 import UIKit
 
+// The project builds with SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, so every
+// declaration below would otherwise be MainActor-isolated. The design tokens
+// are immutable `Sendable` values read from nonisolated code too (GapCategory.
+// color, ReadDifficulty.color, PronunciationCategory.color, SpeakingData, and
+// Theme.chromeScale), which produces "main actor-isolated static property ...
+// can not be referenced from a nonisolated context" warnings -- a hard error
+// under Swift 6 / strict concurrency. Marking them `nonisolated` (as `Config`
+// already is) makes them readable from any isolation domain; keep the keyword.
 enum Theme {
     // Backgrounds
-    static let background = Color(hex: "FFF9F7")
-    static let backgroundSecondary = Color(hex: "FEF2EE")
-    static let backgroundTertiary = Color(hex: "FDE8E1")
-    static let card = Color.white
+    nonisolated static let background = Color(hex: "FFF9F7")
+    nonisolated static let backgroundSecondary = Color(hex: "FEF2EE")
+    nonisolated static let backgroundTertiary = Color(hex: "FDE8E1")
+    nonisolated static let card = Color.white
 
     // Primary (orange)
-    static let primary = Color(hex: "F97316")
-    static let primaryLight = Color(hex: "FFF0E6")
-    static let primaryDark = Color(hex: "EA580C")
-    static let primaryGradientStart = Color(hex: "FB923C")
-    static let primaryGradientEnd = Color(hex: "F97316")
+    nonisolated static let primary = Color(hex: "F97316")
+    nonisolated static let primaryLight = Color(hex: "FFF0E6")
+    nonisolated static let primaryDark = Color(hex: "EA580C")
+    nonisolated static let primaryGradientStart = Color(hex: "FB923C")
+    nonisolated static let primaryGradientEnd = Color(hex: "F97316")
 
     // Secondary (teal)
-    static let secondary = Color(hex: "0D9488")
-    static let secondaryLight = Color(hex: "E6F7F5")
+    nonisolated static let secondary = Color(hex: "0D9488")
+    nonisolated static let secondaryLight = Color(hex: "E6F7F5")
 
     // Accent
-    static let accent = Color(hex: "FDBA74")
-    static let accentLight = Color(hex: "FFF4EB")
+    nonisolated static let accent = Color(hex: "FDBA74")
+    nonisolated static let accentLight = Color(hex: "FFF4EB")
 
     // Text
-    static let text = Color(hex: "1A1A1A")
+    nonisolated static let text = Color(hex: "1A1A1A")
     /// 6.9:1 on white, 6.6:1 on the cream background — passes AA at any size.
-    static let textSecondary = Color(hex: "5A5A5A")
+    nonisolated static let textSecondary = Color(hex: "5A5A5A")
     /// De-emphasised, but still real text: 5.0:1 on white, 4.8:1 on cream.
     /// The old #9B9B9B was 2.8:1 and failed AA everywhere it was used.
-    static let textMuted = Color(hex: "6F6F6F")
-    static let textLight = Color.white
+    nonisolated static let textMuted = Color(hex: "6F6F6F")
+    nonisolated static let textLight = Color.white
 
     // Borders
-    static let border = Color(hex: "F0E0DA")
-    static let borderLight = Color(hex: "FEF2EE")
+    nonisolated static let border = Color(hex: "F0E0DA")
+    nonisolated static let borderLight = Color(hex: "FEF2EE")
 
     // Status
-    static let success = Color(hex: "10B981")
-    static let successLight = Color(hex: "ECFDF5")
-    static let warning = Color(hex: "F59E0B")
-    static let warningLight = Color(hex: "FFFBEB")
-    static let error = Color(hex: "EF4444")
-    static let errorLight = Color(hex: "FEF2F2")
+    nonisolated static let success = Color(hex: "10B981")
+    nonisolated static let successLight = Color(hex: "ECFDF5")
+    nonisolated static let warning = Color(hex: "F59E0B")
+    nonisolated static let warningLight = Color(hex: "FFFBEB")
+    nonisolated static let error = Color(hex: "EF4444")
+    nonisolated static let errorLight = Color(hex: "FEF2F2")
 
     // Purple (pronunciation / SRS accents)
-    static let purple = Color(hex: "7C3AED")
-    static let indigo = Color(hex: "4338CA")
+    nonisolated static let purple = Color(hex: "7C3AED")
+    nonisolated static let indigo = Color(hex: "4338CA")
 
     // Warm shadow tint — softer & more premium than pure black on cream.
-    static let shadowTint = Color(hex: "6B3F1F")
+    nonisolated static let shadowTint = Color(hex: "6B3F1F")
 
     // Gradients — eased to a smoother, slightly less saturated three-stop
-    // ramp so headers read as premium rather than loud.
+    // ramp so headers read as premium rather than loud. These stay
+    // MainActor-isolated: only views draw them.
     static let primaryGradient = LinearGradient(
         colors: [Color(hex: "FFA75C"), primaryGradientStart, primaryGradientEnd],
         startPoint: .topLeading, endPoint: .bottomTrailing
@@ -98,7 +107,7 @@ enum Radius {
 
 extension Theme {
     /// Apple's minimum comfortable touch target, in points.
-    static let minimumHitTarget: CGFloat = 44
+    nonisolated static let minimumHitTarget: CGFloat = 44
 
 
     /// The Dynamic Type text style a fixed point size is scaled against
@@ -187,7 +196,7 @@ extension Theme {
     /// scaled by the full accessibility curve (up to ~3.1x) would push every
     /// neighbouring control off screen, so containers stop here and their glyphs
     /// shrink to fit instead.
-    static let maxChromeScale: CGFloat = 1.6
+    nonisolated static let maxChromeScale: CGFloat = 1.6
 
     /// Clamp a raw `@ScaledMetric` multiplier for use on chrome dimensions.
     nonisolated static func chromeScale(_ raw: CGFloat) -> CGFloat {
@@ -351,7 +360,9 @@ extension View {
 }
 
 extension Color {
-    init(hex: String) {
+    /// `nonisolated` so the palette above -- and the nonisolated model types
+    /// that build colours from hex strings -- can call it outside the main actor.
+    nonisolated init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         var int: UInt64 = 0
         Scanner(string: hex).scanHexInt64(&int)

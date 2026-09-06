@@ -118,8 +118,15 @@ struct ReadView: View {
                     bridgeBanner
                     LibraryView(readiness: .foundation)
                 case .unlocked:
-                    if searching { searchBar }
-                    segmented
+                    // Search replaces the Feed/Library switch rather than sitting
+                    // above it: while search is open the switch could only move its
+                    // own highlight — `content` shows the results either way — so a
+                    // control that cannot do anything is not offered.
+                    if searching {
+                        searchBar
+                    } else {
+                        segmented
+                    }
                     content
                 }
             }
@@ -168,7 +175,9 @@ struct ReadView: View {
                 Button {
                     Haptics.tap()
                     withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching.toggle() }
-                    if !searching { search = .idle }
+                    // Closing search clears the query too, so re-opening it starts
+                    // empty instead of showing a stale term with no results.
+                    if !searching { search = .idle; searchText = "" }
                 } label: {
                     Image(systemName: searching ? "xmark" : "magnifyingglass")
                         .scaledFont(17, weight: .semibold).foregroundStyle(.white)
@@ -618,13 +627,39 @@ private struct LibraryView: View {
 
     private var level: CEFRLevel { store.learnerLevel }
 
-    /// The shelf the gate allows, in level order, then the learner's own filters.
+    /// The shelf the gate allows, in level order — before the learner's own
+    /// filters, so it is also what the filter menus may offer.
+    private var shelf: [ReadingPiece] { ReadingShelf.pieces(for: level, readiness: readiness) }
+
+    /// The shelf after the learner's own filters.
     private var pieces: [ReadingPiece] {
-        ReadingShelf.pieces(for: level, readiness: readiness).filter {
-            (regionGroup == .all || $0.region.group == regionGroup) &&
-            (difficulty == nil || $0.difficulty == difficulty) &&
-            (category == nil || $0.category == category)
+        shelf.filter {
+            (activeRegionGroup == .all || $0.region.group == activeRegionGroup) &&
+            (activeDifficulty == nil || $0.difficulty == activeDifficulty) &&
+            (activeCategory == nil || $0.category == activeCategory)
         }
+    }
+
+    /// Filter options built from what the shelf actually holds, so no menu entry
+    /// or pill can only ever produce "No pieces match your filters".
+    private var levels: [ReadDifficulty] { ReadingShelf.availableDifficulties(in: shelf) }
+    private var categories: [ReadCategory] { ReadingShelf.availableCategories(in: shelf) }
+    private var regionGroups: [ReadRegionGroup] { ReadingShelf.availableRegionGroups(in: shelf) }
+
+    /// A filter the shelf no longer offers (the gate opened, the level moved) is
+    /// treated as "all" rather than silently emptying the library.
+    private var activeDifficulty: ReadDifficulty? {
+        guard let difficulty, levels.contains(difficulty) else { return nil }
+        return difficulty
+    }
+
+    private var activeCategory: ReadCategory? {
+        guard let category, categories.contains(category) else { return nil }
+        return category
+    }
+
+    private var activeRegionGroup: ReadRegionGroup {
+        regionGroups.contains(regionGroup) ? regionGroup : .all
     }
 
     var body: some View {
@@ -666,50 +701,64 @@ private struct LibraryView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Region pills, shown only when the shelf spans more than one region — with
+    /// a single region, "All" and that region are the same list.
+    @ViewBuilder
     private var regionPills: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                ForEach(ReadRegionGroup.allCases) { group in
-                    let active = regionGroup == group
-                    Button { Haptics.tap(); regionGroup = group } label: {
-                        HStack(spacing: 5) {
-                            Text(group.emoji).scaledFont(12)
-                            Text(group.label).font(.footnote.weight(.medium))
+        if regionGroups.filter({ $0 != .all }).count > 1 {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(regionGroups) { group in
+                        let active = activeRegionGroup == group
+                        Button { Haptics.tap(); regionGroup = group } label: {
+                            HStack(spacing: 5) {
+                                Text(group.emoji).scaledFont(12)
+                                Text(group.label).font(.footnote.weight(.medium))
+                            }
+                            .foregroundStyle(active ? Theme.primaryDark : Theme.textSecondary)
+                            .padding(.horizontal, 12).frame(minHeight: Theme.minimumHitTarget)
+                            .background(active ? Theme.primaryLight : Theme.backgroundSecondary)
+                            .clipShape(.capsule)
                         }
-                        .foregroundStyle(active ? Theme.primaryDark : Theme.textSecondary)
-                        .padding(.horizontal, 12).frame(minHeight: Theme.minimumHitTarget)
-                        .background(active ? Theme.primaryLight : Theme.backgroundSecondary)
-                        .clipShape(.capsule)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(group.label)
+                        .accessibilityAddTraits(active ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(group.label)
-                    .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
+            .contentMargins(.horizontal, 0, for: .scrollContent)
+            .scrollIndicators(.hidden)
         }
-        .contentMargins(.horizontal, 0, for: .scrollContent)
-        .scrollIndicators(.hidden)
     }
 
+    /// Level and Type menus, each offered only when the shelf holds more than one
+    /// of that thing to choose between (a single-option menu is decoration).
+    @ViewBuilder
     private var filterChips: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                Menu {
-                    Button("All levels") { difficulty = nil }
-                    ForEach(ReadDifficulty.allCases) { d in Button(d.label) { difficulty = d } }
-                } label: { filterLabel(difficulty?.label ?? "Level", active: difficulty != nil) }
-                    .accessibilityLabel("Filter by level")
-                    .accessibilityValue(difficulty?.label ?? "All levels")
-                Menu {
-                    Button("All types") { category = nil }
-                    ForEach(ReadCategory.allCases) { c in Button(c.label) { category = c } }
-                } label: { filterLabel(category?.label ?? "Type", active: category != nil) }
-                    .accessibilityLabel("Filter by type")
-                    .accessibilityValue(category?.label ?? "All types")
+        if levels.count > 1 || categories.count > 1 {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    if levels.count > 1 {
+                        Menu {
+                            Button("All levels") { difficulty = nil }
+                            ForEach(levels) { d in Button(d.label) { difficulty = d } }
+                        } label: { filterLabel(activeDifficulty?.label ?? "Level", active: activeDifficulty != nil) }
+                            .accessibilityLabel("Filter by level")
+                            .accessibilityValue(activeDifficulty?.label ?? "All levels")
+                    }
+                    if categories.count > 1 {
+                        Menu {
+                            Button("All types") { category = nil }
+                            ForEach(categories) { c in Button(c.label) { category = c } }
+                        } label: { filterLabel(activeCategory?.label ?? "Type", active: activeCategory != nil) }
+                            .accessibilityLabel("Filter by type")
+                            .accessibilityValue(activeCategory?.label ?? "All types")
+                    }
+                }
             }
+            .contentMargins(.horizontal, 0, for: .scrollContent)
+            .scrollIndicators(.hidden)
         }
-        .contentMargins(.horizontal, 0, for: .scrollContent)
-        .scrollIndicators(.hidden)
     }
 
     private func filterLabel(_ text: String, active: Bool) -> some View {

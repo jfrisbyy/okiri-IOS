@@ -202,6 +202,31 @@ nonisolated enum ReadingShelf {
         }
     }
 
+    // MARK: Filter options that can actually match
+
+    /// The levels present on a shelf, in canonical order. The library builds its
+    /// Level menu from this rather than from `ReadDifficulty.allCases`: in the
+    /// bridge state the shelf holds three short pieces, so offering "University"
+    /// only leads to "No short pieces match these filters yet".
+    static func availableDifficulties(in pieces: [ReadingPiece]) -> [ReadDifficulty] {
+        let present = Set(pieces.map(\.difficulty))
+        return ReadDifficulty.allCases.filter { present.contains($0) }
+    }
+
+    /// The piece types present on a shelf, in canonical order (no curated piece
+    /// is a "News" item, so that option is never offered).
+    static func availableCategories(in pieces: [ReadingPiece]) -> [ReadCategory] {
+        let present = Set(pieces.map(\.category))
+        return ReadCategory.allCases.filter { present.contains($0) }
+    }
+
+    /// The region groups present on a shelf, `.all` first — the region pills a
+    /// library can offer.
+    static func availableRegionGroups(in pieces: [ReadingPiece]) -> [ReadRegionGroup] {
+        let present = Set(pieces.map(\.region.group))
+        return ReadRegionGroup.allCases.filter { $0 == .all || present.contains($0) }
+    }
+
     /// Where a piece sits relative to the learner.
     static func fit(of level: CEFRLevel, for learnerLevel: CEFRLevel) -> Fit {
         let delta = rank(level) - rank(learnerLevel)

@@ -62,7 +62,10 @@ nonisolated enum ReadinessCopy {
             case .unlocked:
                 return nil
             case .foundation:
-                return bridgeCondition
+                // The governor can hold reading in the bridge (AppStore.readiness):
+                // the surface stays open, so say why authentic pieces are waiting
+                // rather than repeating the coverage bridge note.
+                return governorActive ? governorBridgeCondition : bridgeCondition
             case .locked:
                 return governorActive ? governorCondition(for: modality) : "Unlocks as you build the basics — keep going with your Foundation lessons."
             }
@@ -120,6 +123,9 @@ nonisolated enum ReadinessCopy {
 
     /// Reading in the bridge state (D5): open, but only short, level-capped pieces.
     static let bridgeCondition = "Almost there — short pieces at your level for now."
+    /// Reading held in the bridge by the retention governor (Pass 3 F6): the surface
+    /// the learner already had stays open, authentic pieces wait for the base to hold.
+    static let governorBridgeCondition = "Consolidating your base — short pieces at your level for now."
     /// The stat line an open-in-bridge Read card shows.
     static let bridgeStat = "Short pieces at your level"
 }

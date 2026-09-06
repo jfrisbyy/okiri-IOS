@@ -819,13 +819,23 @@ final class AppStore {
     /// coverage says right now — it is re-locked only at a bookkeeping point, and
     /// only once coverage has fallen below the bridge (`refreshUnlocks`, B8), so
     /// the gate never flip-flops day to day. While the retention governor is active
-    /// (Pass 3 F6) a modality that has not yet been unlocked reads `.locked` —
-    /// consolidate first.
+    /// (Pass 3 F6) a modality that has not yet been unlocked is HELD one step below
+    /// what coverage says — consolidate first. Held never means "less than the
+    /// learner already had": Reading falls back to the bridge (`.foundation`), the
+    /// state its coverage passed through on the way up, so getting better at the
+    /// base can never close a surface that was open a moment ago. Every other
+    /// modality has no bridge state, so it is held `.locked`.
     func readiness(for modality: LearningModality, config: ReadinessConfig = .tuning) -> ModalityReadiness {
         if unlockedModalities.contains(modality.rawValue) { return .unlocked }
         let verdict = baseReadiness(for: modality, config: config)
         guard verdict == .unlocked, isGovernorActive else { return verdict }
-        return .locked
+        return governorHeldVerdict(for: modality)
+    }
+
+    /// What an `.unlocked` verdict becomes while the governor holds it: the highest
+    /// state below `.unlocked` the modality actually has.
+    private func governorHeldVerdict(for modality: LearningModality) -> ModalityReadiness {
+        modality == .reading ? .foundation : .locked
     }
 
     /// The gate with no governor and no recorded unlocks applied — what coverage
@@ -896,6 +906,23 @@ final class AppStore {
     }
 
     var foundationTotal: Int { ConceptTaxonomy.baseConceptIds.count }
+
+    /// How many base concepts must be VERIFIED before Reading opens — the gate's own
+    /// arithmetic (`baseCoverage >= ReadinessConfig.readingUnlock`) expressed as a
+    /// count. `foundationMastered >= foundationUnlockTarget` is exactly the gate,
+    /// because an integer count clears a fractional bar precisely at its ceiling.
+    func foundationUnlockTarget(config: ReadinessConfig = .tuning) -> Int {
+        let needed = (Double(foundationTotal) * config.readingUnlock).rounded(.up)
+        return max(1, min(foundationTotal, Int(needed)))
+    }
+
+    /// The Foundation progress bar (D10): verified base concepts against the number
+    /// the gate actually asks for. The track ENDS when reading opens, so the bar
+    /// counts to that finish line — a learner shown a goal always reaches it.
+    func foundationProgress(config: ReadinessConfig = .tuning) -> (done: Int, target: Int) {
+        let target = foundationUnlockTarget(config: config)
+        return (min(foundationMastered, target), target)
+    }
 
     // MARK: - Engine metrics (Package B14)
 
@@ -975,9 +1002,11 @@ final class AppStore {
 
     /// The spaced-repetition queue: everything due within the window, weakest first.
     /// Mastered gaps ride along when their schedule wants a check — that is what
-    /// spaced repetition means (B3).
+    /// spaced repetition means (B3). Gaps still waiting for a meaning are left out
+    /// for the same reason `dueNow` leaves them out: a lesson scoped to this queue
+    /// could not ask them.
     func reviewQueue(at now: Date) -> [GapItem] {
-        (visibleGaps + dueMasteredGaps(at: now))
+        (visibleGaps.filter { !$0.needsTranslation } + dueMasteredGaps(at: now))
             .filter { $0.nextReviewAt <= now.addingTimeInterval(Tuning.dueWindowDays * 86_400) }
             .sorted { $0.retrievability(at: now) < $1.retrievability(at: now) }
     }
@@ -1259,7 +1288,8 @@ final class AppStore {
                 category: linked?.category ?? .phrasing,
                 cefrLevel: linked?.cefrLevel,
                 originalContext: OriginalContext(sentence: original, translation: nil, sourceTab: "converse",
-                                                 capturedAt: now, reExposureCount: 0),
+                                                 capturedAt: now, reExposureCount: 0,
+                                                 isLearnerAuthored: true),
                 conceptId: linked?.id,
                 now: now
             )
@@ -2307,9 +2337,20 @@ extension AppStore {
 
     /// "Due now": every learner-visible gap whose schedule wants it at `now` — unmastered
     /// gaps at or past `nextReviewAt`, plus mastered gaps due for a check
-    /// (`dueMasteredGaps`). Probes never count.
+    /// (`dueMasteredGaps`). Probes never count, and neither do gaps still waiting
+    /// for a meaning (`needsTranslation`, E4): the selector cannot offer them
+    /// (`ConceptSelector.isPracticable`), so counting them would promise a lesson
+    /// that opens on "Nothing is ready to practice". They are surfaced separately
+    /// as `waitingForMeaning`.
     func dueNow(at now: Date) -> [GapItem] {
-        visibleGaps.filter { $0.nextReviewAt <= now } + dueMasteredGaps(at: now)
+        visibleGaps.filter { $0.nextReviewAt <= now && !$0.needsTranslation } + dueMasteredGaps(at: now)
+    }
+
+    /// Words saved without a meaning (offline, no key, service down) that a lesson
+    /// cannot ask about until `resolvePendingTranslations` fills them in — the
+    /// honest home for what `dueNow` leaves out.
+    var waitingForMeaning: [GapItem] {
+        visibleGaps.filter { $0.needsTranslation }
     }
 
     var dueNow: [GapItem] { dueNow(at: Date()) }
@@ -2319,7 +2360,7 @@ extension AppStore {
     /// check falls inside it. Disjoint from `dueNow`.
     func upcoming(at now: Date) -> [GapItem] {
         let horizon = now.addingTimeInterval(Tuning.upcomingWindowDays * 86_400)
-        let unmastered = visibleGaps.filter { $0.nextReviewAt > now && $0.nextReviewAt <= horizon }
+        let unmastered = visibleGaps.filter { $0.nextReviewAt > now && $0.nextReviewAt <= horizon && !$0.needsTranslation }
         let mastered = masteredGaps.filter {
             !$0.isDueForMasteryCheck(at: now) && $0.nextReviewAt > now && $0.nextReviewAt <= horizon
         }
@@ -2442,9 +2483,11 @@ extension AppStore {
     @discardableResult
     func capture(_ draft: CaptureDraft, now: Date = Date()) -> CaptureOutcome {
         let word = draft.frenchWord.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A headword has to be a word: "2030" or "%" picked out of an article body
-        // is text, not vocabulary, and must never become a card.
-        guard word.contains(where: { $0.isLetter }) else { return .rejected }
+        // A headword has to be a word or a short phrase: "2030" or "%" picked out
+        // of an article body is text, not vocabulary, and a whole paragraph swept
+        // up by a long drag in the reader is not a card either — a lesson could
+        // only ever ask "What does <paragraph> mean?" and never grade it.
+        guard CaptureBuilder.isAcceptableHeadword(word) else { return .rejected }
         if let existing = existingGap(forWord: word) { return .duplicate(existing) }
 
         let level = CaptureBuilder.level(sourceLevel: draft.sourceLevel, learnerLevel: learnerLevel)
@@ -2490,6 +2533,10 @@ extension AppStore {
         )
         gap.needsTranslation = translation.isEmpty
         gap.isTestable = draft.isTestable
+        let alternatives = (draft.acceptedAnswers ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != word }
+        gap.acceptedAnswers = alternatives.isEmpty ? nil : alternatives
         guard captureGap(gap) else {
             return existingGap(forWord: word).map { .duplicate($0) } ?? .rejected
         }
@@ -2662,7 +2709,8 @@ extension AppStore {
                 category: linked?.category ?? .phrasing,
                 cefrLevel: linked?.cefrLevel,
                 originalContext: OriginalContext(sentence: spec.originalFrench, translation: nil, sourceTab: "speak",
-                                                 capturedAt: now, reExposureCount: 0),
+                                                 capturedAt: now, reExposureCount: 0,
+                                                 isLearnerAuthored: true),
                 conceptId: linked?.id,
                 now: now
             )

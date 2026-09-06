@@ -136,7 +136,7 @@ enum LessonService {
         - kind is one of: "multipleChoice","fillBlank","trueFalse","translation".
         - multipleChoice: prompt asks the meaning/usage; answer is the correct English meaning; options has \(optionCount) plausible English choices INCLUDING the answer.
         - fillBlank: prompt is a natural French sentence with the target word replaced by "_____"; answer is the missing French word.
-        - trueFalse: statement is a claim about the word; answer is exactly "True" or "False".
+        - trueFalse: statement is a MEANING claim in exactly this shape — "<the French word>" means "<an English meaning>" — using the word from the list; answer is exactly "True" or "False". For a false one, use a clearly different meaning, not a near synonym. Claims about gender, conjugation or usage are not accepted.
         - translation: statement is the English to translate; answer is the correct French.
         - explanation: one short, helpful teaching note (English).
         Make \(Tuning.masteryTarget) questions per word, mixing formats. Keep everything level-appropriate.

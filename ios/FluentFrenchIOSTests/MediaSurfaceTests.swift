@@ -464,9 +464,10 @@ struct MediaSurfaceTests {
 
     @Test func theEnglishFallbackResultKeepsTheLinesTaggedEnglish() {
         let lines = englishLines(3)
-        let result = TranscriptResult.segments(lines, language: .english)
-        guard case .segments(let got, let language) = result else { Issue.record("expected segments"); return }
+        let result = TranscriptResult.segments(lines, language: .english, origin: .translatedFromEnglish)
+        guard case .segments(let got, let language, let origin) = result else { Issue.record("expected segments"); return }
         #expect(language == .english)
+        #expect(origin == .translatedFromEnglish)
         #expect(got.allSatisfy { $0.language == .english })
         #expect(TranscriptSegment(id: "x", text: "x", start: 0, duration: 1).language == .french, "lines default to French")
         // EM-2: an English line offers no word lookup, so a caption word can
@@ -585,6 +586,34 @@ struct MediaSurfaceTests {
         )
         #expect(complete.coverage == .french)
         #expect(TranscriptCopy.coverageFootnote(.french) == nil)
+    }
+
+    // talkmedia-3-2: once the English → French pass finishes every line is
+    // tagged `.french` and the coverage footnote goes away, so the provenance
+    // has to live somewhere the pass cannot erase. Only the video's own French
+    // captions are unlabelled.
+    @Test func translatedFrenchIsAlwaysLabelledAsATranslation() async {
+        #expect(TranscriptCopy.originFootnote(.nativeFrench) == nil)
+        #expect(TranscriptOrigin.nativeFrench.isNativeFrench)
+        #expect(!TranscriptOrigin.providerTranslated.isNativeFrench)
+        #expect(!TranscriptOrigin.translatedFromEnglish.isNativeFrench)
+
+        let provider = TranscriptCopy.originFootnote(.providerTranslated)
+        let fromEnglish = TranscriptCopy.originFootnote(.translatedFromEnglish)
+        #expect(provider?.contains("Auto-translated") == true)
+        #expect(fromEnglish?.contains("English captions") == true)
+        #expect(fromEnglish != provider, "the two translated sources are not described the same way")
+
+        // A fully translated transcript reads as `.french` coverage — which is
+        // exactly the state that used to leave the panel unlabelled.
+        let complete = await TranscriptTranslation.run(
+            englishLines(20), batchSize: 10, maxBatches: 5, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: CallCounter())
+        )
+        #expect(complete.coverage == .french)
+        #expect(TranscriptCopy.coverageFootnote(complete.coverage) == nil)
+        #expect(TranscriptCopy.originFootnote(.translatedFromEnglish) != nil,
+                "the provenance note survives a finished translation pass")
     }
 
     @Test func aReplyOnlyTouchesItsOwnBatch() {

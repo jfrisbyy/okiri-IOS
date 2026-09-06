@@ -395,12 +395,18 @@ nonisolated struct LessonScheduler {
 
     /// The interstitial for a lesson: up to `matchGroupSize` non-probe gaps with
     /// distinct English, only when at least `matchInterstitialMinGaps` qualify.
+    ///
+    /// CHECK-IN gaps are left out along with probes. A match round pairs the word with
+    /// its meaning, so including one either hands over the answer to the check-in that
+    /// follows or, after it, banks a SECOND check-in outcome on the same concept —
+    /// growing the interval the miss just halved and feeding the governor a pass the
+    /// learner never earned. One check-in asked is one check-in recorded.
     func matchInterstitial(for lesson: AssembledLesson, roles: [String: SelectedItemRole]? = nil,
                            rng: inout LessonRandom) -> LessonQuestion? {
         let roles = roles ?? Self.roles(in: lesson)
         var seen = Set<String>()
         var distinct: [GapItem] = []
-        for gap in lesson.gaps where !gap.isProbe && roles[gap.id] != .probe {
+        for gap in lesson.gaps where !gap.isProbe && roles[gap.id] != .probe && roles[gap.id] != .checkIn {
             let key = AnswerGrader.fold(AnswerGrader.normalize(gap.englishTranslation))
             guard !key.isEmpty, seen.insert(key).inserted else { continue }
             distinct.append(gap)

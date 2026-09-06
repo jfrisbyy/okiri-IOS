@@ -289,6 +289,9 @@ private struct ConverseCallView: View {
     @State private var hintSuggestion: String? = nil
     @State private var turnFailure: TalkServiceFailure? = nil
     @State private var micNotice: String? = nil
+    /// Note shown when a dictation was added to a reply the learner had typed
+    /// (talkmedia-3-3) — informational, not a microphone failure.
+    @State private var dictationNotice: String? = nil
     @State private var showSettingsAlert = false
     @State private var savedTutorIds: Set<UUID> = []
     @State private var savedCorrectionIds: Set<UUID> = []
@@ -453,6 +456,7 @@ private struct ConverseCallView: View {
             if let correction = lastCorrection { correctionBanner(correction) }
             hintRow
             if let micNotice { noticeRow(icon: "mic.slash", text: micNotice, color: Theme.error) }
+            if let dictationNotice { noticeRow(icon: "text.append", text: dictationNotice, color: accent) }
 
             HStack(spacing: 10) {
                 Button { Haptics.tap(); requestHint() } label: {
@@ -686,6 +690,7 @@ private struct ConverseCallView: View {
         }
         Haptics.tap()
         micNotice = nil
+        dictationNotice = nil
         NaturalVoice.shared.stop()
         Task {
             let result = await recorder.start(maxSeconds: Tuning.converseRecordingSeconds)
@@ -700,14 +705,26 @@ private struct ConverseCallView: View {
         }
     }
 
-    /// Stop the recording (or pick up one the cap stopped) and send what was heard.
+    /// Stop the recording (or pick up one the cap stopped) and use what was heard.
+    /// A reply the learner had already typed is never thrown away: speech is
+    /// appended to it and left for them to send (talkmedia-3-3).
     private func finishListening() {
         Task {
             let outcome = await recorder.stopAndTranscribe(language: "fra")
             switch outcome {
             case .text(let text):
-                draft = text
-                send()
+                let merge = DictationMerge.apply(heard: text, toDraft: draft)
+                switch merge {
+                case .send(let spoken):
+                    draft = spoken
+                    send()
+                case .appended(let merged):
+                    draft = merged
+                    dictationNotice = merge.notice
+                    inputFocused = true
+                case .nothing:
+                    micNotice = TranscriptionOutcome.nothingHeard.message
+                }
             case .nothingHeard, .failed:
                 micNotice = outcome.message
             }
@@ -722,6 +739,7 @@ private struct ConverseCallView: View {
         hintNotice = nil
         hintSuggestion = nil
         micNotice = nil
+        dictationNotice = nil
         turnFailure = nil
         inputFocused = false
         withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.85), reduceMotion: reduceMotion)) {

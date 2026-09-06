@@ -66,18 +66,25 @@ struct WatchPlayerView: View {
     /// The transcript panel's explicit states.
     enum TranscriptState: Equatable {
         case loading
-        case loaded([TranscriptSegment], coverage: TranscriptCoverage)
+        case loaded([TranscriptSegment], coverage: TranscriptCoverage, origin: TranscriptOrigin)
         case noCaptions
         case unavailable(MediaServiceFailure)
 
         var segments: [TranscriptSegment] {
-            if case .loaded(let s, _) = self { return s }
+            if case .loaded(let s, _, _) = self { return s }
             return []
         }
 
         var coverage: TranscriptCoverage {
-            if case .loaded(_, let c) = self { return c }
+            if case .loaded(_, let c, _) = self { return c }
             return .french
+        }
+
+        /// Where the French on screen came from — kept on the state so the
+        /// provenance note stays after the translation pass finishes.
+        var origin: TranscriptOrigin {
+            if case .loaded(_, _, let o) = self { return o }
+            return .nativeFrench
         }
     }
 
@@ -98,6 +105,10 @@ struct WatchPlayerView: View {
         .ignoresSafeArea(edges: .bottom)
         .task(id: attempt) { await loadTranscript() }
         .task(id: translationAttempt) { await translateRemainingLines() }
+        // A word or example spoken from the capture sheet lives on the shared
+        // natural voice, not on the video player, so leaving Watch has to
+        // silence it explicitly (talkmedia-3-4).
+        .onDisappear { NaturalVoice.shared.stop() }
         .onChange(of: controller.currentTime) { _, newValue in
             updateActiveIndex(for: newValue)
         }
@@ -214,7 +225,7 @@ struct WatchPlayerView: View {
                 switch transcript {
                 case .loading:
                     transcriptLoading
-                case .loaded(let lines, _):
+                case .loaded(let lines, _, _):
                     if lines.isEmpty {
                         transcriptNotice(title: TranscriptCopy.noCaptionsTitle, message: TranscriptCopy.noCaptionsMessage,
                                          icon: "captions.bubble", retry: nil)
@@ -295,6 +306,9 @@ struct WatchPlayerView: View {
             if let footnote = TranscriptCopy.coverageFootnote(coverage) {
                 coverageFootnote(footnote, coverage: coverage)
             }
+            if let provenance = TranscriptCopy.originFootnote(transcript.origin) {
+                originFootnote(provenance)
+            }
         }
         .padding(.bottom, 6)
     }
@@ -322,6 +336,22 @@ struct WatchPlayerView: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.white.opacity(0.05), in: .rect(cornerRadius: 10))
+    }
+
+    /// Where the French came from, for anything but the video's own French
+    /// captions. Stays on screen for the whole session — a machine translation
+    /// of English speech must never read as the French spoken in the video
+    /// (talkmedia-3-2).
+    private func originFootnote(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle").font(.caption).foregroundStyle(.white.opacity(0.6)).accessibilityHidden(true)
+            Text(text).font(.caption).foregroundStyle(.white.opacity(0.7))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.white.opacity(0.05), in: .rect(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
     }
 
     private func segmentRow(_ seg: TranscriptSegment, index: Int) -> some View {
@@ -461,17 +491,17 @@ struct WatchPlayerView: View {
         activeIndex = -1
         let result = await TranscriptService.fetch(videoId: video.videoId)
         switch result {
-        case .segments(let lines, let language):
+        case .segments(let lines, let language, let origin):
             guard !lines.isEmpty else { transcript = .noCaptions; return }
             switch language {
             case .french:
-                transcript = .loaded(lines, coverage: .french)
+                transcript = .loaded(lines, coverage: .french, origin: origin)
             case .english:
-                transcript = .loaded(lines, coverage: .translating(done: 0, total: lines.count))
+                transcript = .loaded(lines, coverage: .translating(done: 0, total: lines.count), origin: origin)
                 updateActiveIndex(for: controller.currentTime)
                 for await progress in TranscriptService.translateToFrench(lines) {
                     guard !Task.isCancelled else { return }
-                    transcript = .loaded(progress.segments, coverage: progress.coverage)
+                    transcript = .loaded(progress.segments, coverage: progress.coverage, origin: origin)
                 }
             }
         case .noCaptions: transcript = .noCaptions
@@ -498,10 +528,11 @@ struct WatchPlayerView: View {
         translationRunFor = translationAttempt
         let lines = segments
         guard lines.contains(where: { $0.language == .english }) else { return }
-        transcript = .loaded(lines, coverage: .of(lines, finished: false, stop: nil))
+        let origin = transcript.origin
+        transcript = .loaded(lines, coverage: .of(lines, finished: false, stop: nil), origin: origin)
         for await progress in TranscriptService.translateToFrench(lines) {
             guard !Task.isCancelled else { return }
-            transcript = .loaded(progress.segments, coverage: progress.coverage)
+            transcript = .loaded(progress.segments, coverage: progress.coverage, origin: origin)
         }
     }
 
@@ -1061,6 +1092,8 @@ private struct WordCaptureSheet: View {
         }
         .background(Theme.background)
         .toolbar(.hidden, for: .navigationBar)
+        // Closing the sheet silences whatever it was speaking (talkmedia-3-4).
+        .onDisappear { NaturalVoice.shared.stop() }
         .task(id: attempt) {
             lookup = .loading
             let result = await TranslationService.lookup(term: word, context: context)

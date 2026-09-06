@@ -297,7 +297,7 @@ struct Pass3EngineTests {
         // Governor engages before the unlock was ever recorded → held.
         s.checkInHistory = [false, false, false, false, true, true]
         #expect(s.isGovernorActive)
-        #expect(s.readiness(for: .reading) == .locked, "not yet opened → held while consolidating")
+        #expect(s.readiness(for: .reading) == .foundation, "not yet opened → held in the bridge while consolidating")
         #expect(s.isInFoundation)
         let plan = DailyPlanEngine(store: s).makePlan(now: now)
         #expect(plan.rationale == "Consolidating your base before opening reading.")

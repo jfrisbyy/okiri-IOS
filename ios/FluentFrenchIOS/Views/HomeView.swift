@@ -668,9 +668,13 @@ struct HomeView: View {
     // MARK: - Foundation track (the beginner front door)
 
     private var foundationSection: some View {
-        let mastered = store.foundationSeededMastered
-        let total = max(store.foundationSeedTotal, 1)
-        let progress = min(1, Double(mastered) / Double(total))
+        // The bar counts to the gate's own finish line, not to every base skill:
+        // the Foundation card disappears the moment reading opens, so a bar that
+        // counted all 28 skills could only ever fill halfway (D10, round 3).
+        let (mastered, total) = store.foundationProgress()
+        let progress = min(1, Double(mastered) / Double(max(1, total)))
+        let progressCaption = HomeCopy.foundationProgress(done: mastered, target: total,
+                                                          governorHeld: store.isGovernorActive)
         let next = nextTargetConcept
         let lessonTarget = dailyPlan.lessonItem?.target ?? Tuning.foundationLessonsPerDay
         let lessonsDone = store.lessonsCompletedToday
@@ -687,14 +691,18 @@ struct HomeView: View {
                     .accessibilityHidden(true)
             }
 
-            Text("Let's lock in the core basics first. Each lesson builds on the last — reading unlocks once you've got the essentials.")
+            Text("Let's lock in the core basics first. Each lesson builds on the last.")
                 .font(.subheadline).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            progressBar(progress, tint: Theme.secondary, height: 8)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Foundation progress")
-                .accessibilityValue("\(mastered) of \(total) skills")
+            VStack(alignment: .leading, spacing: 6) {
+                progressBar(progress, tint: Theme.secondary, height: 8)
+                Text(progressCaption)
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Foundation progress")
+            .accessibilityValue(progressCaption)
 
             // Pace (B10): "Lesson 2 of 3 today", straight from the store's count.
             HStack(spacing: 8) {
@@ -1228,8 +1236,14 @@ struct HomeView: View {
         featureCards.firstIndex { $0.id == currentCardId } ?? 0
     }
     /// Compact capsule that floats over the background — not a solid full-width bar.
-    private var navBarWidth: CGFloat { min(screenW - 140, 230) }
-    private var navItemWidth: CGFloat { navBarWidth / CGFloat(featureCards.count) }
+    /// Sized from the item COUNT, not from a fixed 230 pt: seven indicators inside
+    /// 230 pt are ~33 pt wide each, well under the 44 pt touch target, and adjacent
+    /// targets that small get mis-tapped. It shrinks only if the screen genuinely
+    /// cannot fit `count × 44` plus a margin.
+    private var navBarWidth: CGFloat {
+        min(screenW - 40, CGFloat(featureCards.count) * Theme.minimumHitTarget)
+    }
+    private var navItemWidth: CGFloat { navBarWidth / CGFloat(max(1, featureCards.count)) }
 
     private var miniNavBar: some View {
         HStack(spacing: 0) {
@@ -1247,8 +1261,9 @@ struct HomeView: View {
                         .scaleEffect(active && !reduceMotion ? 1.12 : 1)
                         .reducedMotionAnimation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
                         // The pill stays 34 pt tall (drawn behind); the tappable
-                        // area is the full 44 pt so the row still clears the
-                        // minimum touch target without changing the bar's height.
+                        // area is a full 44 pt square (the bar is sized from the
+                        // item count so the width clears the target too), which
+                        // leaves the bar's visible height unchanged.
                         .frame(width: navItemWidth, height: Theme.minimumHitTarget)
                         .contentShape(Rectangle())
                 }

@@ -31,6 +31,9 @@ final class LessonViewModel {
     private(set) var matchRights: [GapItem] = []
     private(set) var matchSelectedLeft: String? = nil
     private(set) var matchWrongRight: String? = nil
+    /// A meaning was tapped before any French word: the left column flashes so the
+    /// order is visible instead of the tap simply doing nothing.
+    private(set) var matchNeedsLeft = false
     private(set) var revealed = false
     private(set) var feedback: LessonFeedback? = nil
     /// B11: "Nice — you've got <concept>, moving on."
@@ -53,6 +56,7 @@ final class LessonViewModel {
     @ObservationIgnored private var generation: Task<Void, Never>? = nil
     @ObservationIgnored private var explaining: Task<Void, Never>? = nil
     @ObservationIgnored private var wrongFlash: Task<Void, Never>? = nil
+    @ObservationIgnored private var needsLeftFlash: Task<Void, Never>? = nil
     @ObservationIgnored private var masteryTask: Task<Void, Never>? = nil
     @ObservationIgnored private var popTask: Task<Void, Never>? = nil
     @ObservationIgnored private var timer = LessonTimer()
@@ -78,11 +82,17 @@ final class LessonViewModel {
     /// A quit from practice (or while generating) asks first (C13); earlier stages just close.
     var needsQuitConfirmation: Bool { stage == .practice || stage == .generating }
 
-    /// Word cards for the teaching stage: never-reviewed items first, capped by `Tuning.teachingWordCards`.
+    /// Word cards for the teaching stage: ONLY never-reviewed items, capped by
+    /// `Tuning.teachingWordCards`.
+    ///
+    /// A word card shows the meaning, the example sentence and its translation — it
+    /// is the answer to every question the lesson can ask about that item. Showing it
+    /// for an item that is about to be TESTED (a check-in on a mastered concept, an
+    /// interleaved review) turns the test into a memory test of the last screen: the
+    /// check-in banks a pass the learner has not earned, and the review answer becomes
+    /// FSRS interval growth. New items are the only ones a card can honestly teach.
     var teachingGaps: [GapItem] {
-        let practicable = gaps.filter { !$0.isProbe }
-        let ordered = practicable.filter { $0.isNew } + practicable.filter { !$0.isNew }
-        return Array(ordered.prefix(Tuning.teachingWordCards))
+        Array(gaps.filter { !$0.isProbe && $0.isNew }.prefix(Tuning.teachingWordCards))
     }
 
     /// "Show me" is offered for the current question (C12).
@@ -120,10 +130,12 @@ final class LessonViewModel {
 
     // MARK: Stage intents
 
-    /// "Start" on the intro: capstones go straight to practice, everything else teaches first.
+    /// "Start" on the intro: capstones go straight to practice, everything else teaches
+    /// first — unless there is nothing honest to teach (no skill card and no new word),
+    /// which would leave an empty carousel between the intro and the questions.
     func begin(store: AppStore) {
         guard !gaps.isEmpty else { return }
-        if isCapstone {
+        if isCapstone || (conceptBlocks.isEmpty && teachingGaps.isEmpty) {
             startPractice(store: store)
         } else {
             withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { stage = .teaching }
@@ -196,6 +208,8 @@ final class LessonViewModel {
         arranged = []
         matchSelectedLeft = nil
         matchWrongRight = nil
+        needsLeftFlash?.cancel()
+        matchNeedsLeft = false
         revealed = false
         feedback = nil
         releaseNote = nil
@@ -256,11 +270,31 @@ final class LessonViewModel {
     func selectMatchLeft(_ gapId: String) {
         guard !revealed, !session.matchedIds.contains(gapId) else { return }
         Haptics.tap()
+        // The "pick a French word first" flash has been answered: end it now, or
+        // its remaining 900 ms would highlight every left button and hide which
+        // word was just picked (lesson-3-6).
+        needsLeftFlash?.cancel()
+        if matchNeedsLeft {
+            withAnimation(motion(.default)) { matchNeedsLeft = false }
+        }
         matchSelectedLeft = gapId
     }
 
+    /// True while the round still needs a French word picked: the right column is
+    /// dimmed until then, and a tap on it flashes the left column (lesson-3-6).
+    var matchAwaitsLeft: Bool {
+        guard let q = current, q.kind == .match, !revealed else { return false }
+        return matchSelectedLeft == nil
+    }
+
     func selectMatchRight(_ gapId: String, store: AppStore) {
-        guard !revealed, let left = matchSelectedLeft else { return }
+        guard !revealed else { return }
+        guard let left = matchSelectedLeft else {
+            // A meaning tapped with no word picked is not an answer, but it must not
+            // be a dead tap either: say so instead of ignoring it.
+            flashNeedsLeft()
+            return
+        }
         guard let outcome = session.matchPair(left: left, right: gapId) else {
             // A pair already tried this round: flash it again, but record nothing.
             if left != gapId, !session.matchedIds.contains(gapId) { flashWrongRight(gapId) }
@@ -328,6 +362,11 @@ final class LessonViewModel {
         }
         if let wrong = evidence.loggedAnswer {
             store.recordError(gap: evidence.gap, userAnswer: wrong, correctAnswer: evidence.correctAnswer)
+        }
+        // A miss that named another item on the table is a mix-up: link the pair so
+        // the selector can rank it and the assembler can show the two together.
+        if let partner = evidence.confusedWithGapId {
+            store.recordConfusion(gapId: evidence.gapId, partnerGapId: partner)
         }
     }
 
@@ -449,6 +488,17 @@ final class LessonViewModel {
     }
 
     // MARK: Transient flashes
+
+    private func flashNeedsLeft() {
+        Haptics.tap()
+        withAnimation(motion(.default)) { matchNeedsLeft = true }
+        needsLeftFlash?.cancel()
+        needsLeftFlash = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled, let self else { return }
+            withAnimation(self.motion(.default)) { self.matchNeedsLeft = false }
+        }
+    }
 
     private func flashWrongRight(_ gapId: String) {
         withAnimation(motion(.default)) { matchWrongRight = gapId }

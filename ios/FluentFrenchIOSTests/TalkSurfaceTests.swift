@@ -204,10 +204,17 @@ struct TalkSurfaceTests {
         #expect(corrected.reviewCount == 1, "the corrected line starts with the miss the learner just made")
         #expect(corrected.originalContext?.sentence == "slip")
         #expect(corrected.originalContext?.sourceTab == "speak")
+        // talkmedia-3-1: "slip" is the learner's own transcribed line. Flagged so
+        // the deck card shows it as what they said, never as French "seen in the
+        // wild", and so the tagger is not told it is an example of "fixed".
+        #expect(corrected.originalContext?.isLearnerAuthored == true)
+        #expect(corrected.contextForTagging == corrected.exampleSentence)
+        #expect(corrected.contextForTagging != "slip")
         #expect(corrected.explanation == "why · Prompt: prompt", "the prompt the learner answered stays on the card")
 
         let natural = try #require(store.gaps.first { $0.frenchWord == "smoother" })
         #expect(natural.reviewCount == 0, "the natural phrasing is new material, not a miss")
+        #expect(natural.originalContext?.isLearnerAuthored == true, "its context is the learner's line too")
         #expect(natural.explanation.hasSuffix("Prompt: prompt"))
 
         #expect(store.concept("c1")!.beta > betaBefore, "a named mistake is a miss on the concept")
@@ -341,5 +348,26 @@ struct TalkSurfaceTests {
         #expect(TranscriptionOutcome.nothingHeard.message != nil)
         #expect(TranscriptionOutcome.text("x").message == nil)
         #expect(TranscriptionOutcome.failed(.offline).message == TalkServiceFailure.offline.message)
+    }
+
+    // MARK: talkmedia-3-3 — dictation never destroys a typed reply
+
+    @Test func dictationFillsAnEmptyBoxButAppendsToATypedReply() {
+        // Empty box (whitespace counts as empty): the spoken line is the reply
+        // and Converse sends it, exactly as before.
+        #expect(DictationMerge.apply(heard: " Je voudrais un café ", toDraft: "") == .send("Je voudrais un café"))
+        #expect(DictationMerge.apply(heard: "Bonjour", toDraft: "   \n ") == .send("Bonjour"))
+        #expect(DictationMerge.send("Bonjour").notice == nil, "nothing to explain when the box was empty")
+
+        // A reply already in the box: the words the learner typed survive, the
+        // speech is added behind them, and nothing is sent for them.
+        let merged = DictationMerge.apply(heard: " un café ", toDraft: "Je voudrais ")
+        #expect(merged == .appended("Je voudrais un café"))
+        #expect(merged.notice != nil, "the learner is told what happened to their reply")
+
+        // Nothing usable heard: the typed reply is untouched.
+        #expect(DictationMerge.apply(heard: "   ", toDraft: "Je voudrais") == .nothing)
+        #expect(DictationMerge.apply(heard: "", toDraft: "") == .nothing)
+        #expect(DictationMerge.nothing.notice == nil)
     }
 }

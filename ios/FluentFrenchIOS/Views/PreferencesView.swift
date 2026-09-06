@@ -97,18 +97,20 @@ struct PreferencesView: View {
 
     /// What the gate says about a picked activity that is not open yet (D2). The
     /// plan skips a locked activity until it unlocks; the learner should know why
-    /// their pick is not showing up. Nil when the activity is open.
+    /// their pick is not showing up — and know the actual condition, with the same
+    /// live numbers Home quotes. `ReadinessCopy` (via the store) is the ONE place
+    /// that wording lives, so Preferences never writes its own guess at the rule.
+    /// Nil when the activity is open.
     private func lockNote(_ m: LearningModality) -> String? {
-        switch store.readiness(for: m) {
-        case .unlocked: return nil
-        case .foundation: return "Opening up — short pieces at your level for now."
-        case .locked: return "Not open yet — your plan skips it until it unlocks."
-        }
+        store.unlockCondition(for: m)
     }
 
     private func activityRow(_ m: LearningModality) -> some View {
         let selected = modalities.contains(m)
         let note = lockNote(m)
+        // Reading in the bridge is OPEN (short pieces): it carries the note, but
+        // never the padlock — only a surface the plan actually skips does.
+        let locked = !store.canOpen(m)
         return Button {
             Haptics.tap()
             if selected { modalities.remove(m) } else { modalities.insert(m) }
@@ -121,14 +123,14 @@ struct PreferencesView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(m.label).scaledFont(16, weight: .semibold).foregroundStyle(Theme.text)
-                        if note != nil {
+                        if locked {
                             Image(systemName: "lock.fill").font(.caption2).foregroundStyle(Theme.textMuted)
                                 .accessibilityHidden(true)
                         }
                     }
                     Text(m.subtitle).font(.footnote).foregroundStyle(Theme.textSecondary)
                     if selected, let note {
-                        Text(note).font(.caption).foregroundStyle(Theme.warning)
+                        Text(note).font(.caption).foregroundStyle(locked ? Theme.warning : Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

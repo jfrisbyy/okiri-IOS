@@ -394,8 +394,9 @@ struct LessonSessionTests {
     }
 
     /// A check-in riding a probe item is a scored check-in: it counts toward the
-    /// lesson's accuracy, costs a heart when missed, is listed in the recap and
-    /// is remediated — none of the exemptions a blind-spot probe gets.
+    /// lesson's accuracy, costs a heart when missed and is listed in the recap —
+    /// none of the exemptions a blind-spot probe gets. It is NOT remediated: see
+    /// `aMissedCheckInIsNeverRemediatedIntoASecondCheckIn`.
     @Test func aCheckInRidingAProbeItemIsScoredLikeAnyCheckIn() throws {
         var probe = gap("p", concept: "K")
         probe.isProbe = true
@@ -411,9 +412,163 @@ struct LessonSessionTests {
         #expect(s.scored == 1 && s.scoredCorrect == 0, "it counts in the honest accuracy base")
         #expect(out.evidence.first?.isCheckIn == true && out.evidence.first?.format != .probe)
         #expect(s.summary.missed.contains { $0.gap.id == "p" }, "it reaches the recap")
-        #expect(out.remedialQueued)
-        let remedial = try #require(s.schedule.first { $0.isRemedial && $0.gap.id == "p" })
-        #expect(Set(remedial.options) == ["d1", "d2", "d3", "p-en"])
+        #expect(!out.remedialQueued, "a check-in is asked once")
+        #expect(!s.schedule.contains { $0.isRemedial && $0.gap.id == "p" })
+    }
+
+    /// One check-in asked is one check-in recorded.
+    ///
+    /// The stepped-down remedial shows the correct option before the pick and keeps
+    /// the gap's selected role, so re-scoring it would bank a PASSED check-in on the
+    /// concept the learner just failed: the adaptive interval would grow instead of
+    /// halving, the governor's rolling window would take a spurious pass, and a
+    /// provisional placement seed could be "verified" by an answer it was handed.
+    @Test func aMissedCheckInIsNeverRemediatedIntoASecondCheckIn() throws {
+        let checkIn = gap("c1", concept: "M", reviewCount: 4, consecutiveCorrect: 2)
+        let l = lesson([checkIn] + (1...3).map { gap("g\($0)", concept: "G") }, roles: ["c1": .checkIn])
+        var s = session(for: l, config: config(hearts: 20))
+
+        let q = try #require(s.current)
+        #expect(q.gap.id == "c1" && q.isCheckIn)
+        let out = try answerWrongly(&s)
+        #expect(!out.correct && out.evidence.first?.isCheckIn == true)
+        #expect(!out.remedialQueued, "no remedial: it would be the second check-in on this concept")
+        #expect(!s.schedule.contains { $0.isRemedial && $0.gap.id == "c1" })
+        let match = try #require(s.schedule.first { $0.isInterstitial })
+        #expect(!match.matchGaps.contains { $0.id == "c1" }, "nor is it paired with its meaning in the match round")
+
+        // Everything else in the lesson still answers as usual, and no other
+        // check-in evidence appears anywhere in it.
+        var checkInOutcomes = out.evidence.filter { $0.isCheckIn }.map { $0.correct }
+        while s.end == nil, s.advance() {
+            let next = try answerCorrectly(&s)
+            checkInOutcomes += next.evidence.filter { $0.isCheckIn }.map { $0.correct }
+        }
+        #expect(checkInOutcomes == [false], "exactly one check-in outcome, and it is the miss")
+        #expect(s.schedule.contains { $0.isRemedial } == false)
+    }
+
+    /// A "Show me" on a check-in is the same story: an admitted miss, and nothing
+    /// that could re-score it as a pass.
+    @Test func revealingACheckInQueuesNoRemedial() throws {
+        let checkIn = gap("c1", concept: "M", reviewCount: 4, consecutiveCorrect: 2)
+        var s = session(for: lesson([checkIn] + (1...2).map { gap("g\($0)", concept: "G") }, roles: ["c1": .checkIn]))
+        #expect(s.current?.gap.id == "c1")
+        let revealed = s.reveal()
+        let out = try #require(revealed)
+        #expect(!out.correct && out.evidence.first?.isCheckIn == true)
+        #expect(!out.remedialQueued && !s.schedule.contains { $0.isRemedial })
+    }
+
+    /// End to end on the REAL store: one check-in asked is one check-in booked.
+    ///
+    /// The headless driver answers each selected gap exactly once and never builds a
+    /// match round, so only a real session feeding a real `AppStore` can hold this
+    /// line — and it is the line `Tuning.seedVerificationPasses`, the governor window
+    /// (`Tuning.governorWindow`) and the adaptive check-in interval all stand on.
+    @Test func aMissedCheckInBooksExactlyOneOutcomeInTheStore() throws {
+        let long = now.addingTimeInterval(-20 * EngineFixtures.day)
+        var doneGap = EngineFixtures.gap("done-0", concept: "done", category: .vocabulary,
+                                         consecutiveCorrect: Tuning.gapMasteryStreak,
+                                         reviewCount: Tuning.gapMasteryStreak,
+                                         lastReviewed: long, mastered: long)
+        var state = FSRS.makeInitialState(grade: .easy, now: long)
+        state.dueAt = now.addingTimeInterval(-EngineFixtures.day)
+        doneGap.fsrs = state
+        doneGap.nextReviewAt = state.dueAt
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("root", mastery: 0.5),
+                                                    EngineFixtures.mastered("done", category: .vocabulary)],
+                                         gaps: (0..<3).map { EngineFixtures.gap("root-\($0)", concept: "root") } + [doneGap])
+        store.sessionIndex = 1
+        let assembled = try #require(LessonPipeline(store: store).lesson(for: .smart(now: now)))
+        #expect(assembled.selection.items.first { $0.gapId == "done-0" }?.role == .checkIn)
+
+        var s = session(for: assembled, config: config(hearts: 20))
+        var asked = 0
+        while s.end == nil, asked < 60 {
+            asked += 1
+            let q = try #require(s.current)
+            var outcomes: [LessonAnswerOutcome] = []
+            if q.kind == .match {
+                #expect(!q.matchGaps.contains { s.role(for: $0, in: q) == .checkIn },
+                        "the check-in is not paired with its own meaning")
+                for g in q.matchGaps { if let o = s.matchPair(left: g.id, right: g.id) { outcomes.append(o) } }
+            } else {
+                // `#require` rewrites its argument into a closure: hoist the mutating call.
+                let submitted = s.submit(s.role(for: q.gap, in: q) == .checkIn ? wrongAnswer(for: q)
+                                                                              : correctAnswer(for: q))
+                outcomes.append(try #require(submitted))
+            }
+            // Exactly what LessonViewModel forwards for each piece of evidence.
+            for e in outcomes.flatMap({ $0.evidence }) {
+                store.recordAnswer(gapId: e.gapId, correct: e.correct, format: e.format, firstTry: e.firstTry,
+                                   conceptWeight: e.conceptWeight, isCheckIn: e.isCheckIn, now: now)
+            }
+            if !s.advance() { break }
+        }
+
+        #expect(store.checkInHistory == [false], "one check-in asked, one outcome booked — and it is the miss")
+        let concept = try #require(store.concept("done"))
+        let halved = max(Tuning.checkInMinDays, Tuning.checkInInitialDays / Tuning.checkInMissDivisor)
+        #expect(concept.checkInIntervalDays == halved,
+                "the miss shortens the interval; a second, aided pass would have grown it again")
+        #expect(concept.nextCheckInAt == now.addingTimeInterval(halved * EngineFixtures.day))
+    }
+
+    // MARK: Confusion evidence (lesson-3-3)
+
+    /// A wrong answer that IS another item on the table names that item, so the store
+    /// can link the pair: the selector ranks concepts on confusion and the assembler
+    /// places a confused pair side by side. Without the partner both are dead code.
+    @Test func aWrongPickNamesTheLessonItemItBelongsTo() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps), config: config(hearts: 20))
+
+        #expect(s.confusedGapId(for: "g2-en", excluding: "g1") == "g2", "another item's meaning")
+        #expect(s.confusedGapId(for: "g2-fr", excluding: "g1") == "g2", "or its French form")
+        #expect(s.confusedGapId(for: "g1-en", excluding: "g1") == nil, "the item itself is not a confusion")
+        #expect(s.confusedGapId(for: "something nobody wrote", excluding: "g1") == nil)
+
+        let q = try #require(s.current)
+        #expect(q.kind == .multipleChoice)
+        let wrong = try #require(q.options.first { !AnswerGrader.optionMatches($0, q.correctAnswer) })
+        let submitted = s.submit(.option(wrong))
+        let ev = try #require(submitted?.evidence.first)
+        #expect(!ev.correct && ev.confusedWithGapId == s.confusedGapId(for: wrong, excluding: ev.gapId))
+        #expect(ev.confusedWithGapId != nil, "the distractors come from the lesson's own items")
+    }
+
+    /// A wrong pair in a match round knows both halves already: the word asked and
+    /// the meaning tapped. A right pair names nobody.
+    @Test func aWrongMatchPairCarriesTheConfusedPartner() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps), config: config(hearts: 20))
+        var q = try #require(s.current)
+        var steps = 0
+        while q.kind != .match, steps < 40 {
+            _ = try answerCorrectly(&s)
+            let advanced = s.advance()
+            #expect(advanced)
+            q = try #require(s.current)
+            steps += 1
+        }
+        #expect(q.kind == .match)
+        let left = q.matchGaps[0].id, other = q.matchGaps[1].id
+        let crossed = s.matchPair(left: left, right: other)
+        let wrong = try #require(crossed?.evidence.first)
+        #expect(wrong.gapId == left && wrong.confusedWithGapId == other)
+
+        let paired = s.matchPair(left: left, right: left)
+        let right = try #require(paired?.evidence.first)
+        #expect(right.correct && right.confusedWithGapId == nil)
+    }
+
+    /// A miss on an ordinary item still gets its stepped-down remedial (C6) — the
+    /// check-in rule is the only exemption.
+    @Test func anOrdinaryMissIsStillRemediated() throws {
+        var s = session(for: lesson([gap("g1"), gap("g2")], roles: ["g1": .review]))
+        let out = try answerWrongly(&s)
+        #expect(out.remedialQueued && s.schedule.contains { $0.isRemedial && $0.gap.id == "g1" })
     }
 
     // MARK: Option grading keeps tags

@@ -82,15 +82,47 @@ struct HomeGateTests {
         s.recordActivityMinutes(.reading, minutes: config.higherDemonstratedMinutes, now: now)
         s.checkInHistory = [false, false, false, false, true, true]
         #expect(s.isGovernorActive)
-        #expect(!s.canOpen(.reading), "never recorded open → held")
-        #expect(s.unlockCondition(for: .reading) == ReadinessCopy.governorCondition(for: .reading))
+        // Held one step below unlocked, never below what coverage already earned:
+        // reading falls back to the bridge, so the surface stays open.
+        #expect(s.readiness(for: .reading) == .foundation, "never recorded open → held in the bridge")
+        #expect(s.canOpen(.reading))
+        #expect(s.unlockCondition(for: .reading) == ReadinessCopy.governorBridgeCondition)
+        #expect(s.isInFoundation, "Home still paces the day in lessons")
 
         // Reading recorded open before the governor engaged stays open; listening
         // (never opened) is held with the governor line, not the minutes line.
         s.unlockedModalities = [LearningModality.reading.rawValue]
         #expect(s.canOpen(.reading))
+        #expect(s.unlockCondition(for: .reading) == nil)
         #expect(!s.canOpen(.listening))
         #expect(s.unlockCondition(for: .listening) == "Consolidating your base before opening listening.")
+    }
+
+    /// A governed learner who is ALREADY reading in the bridge must not lose that
+    /// surface by verifying one more base concept: crossing `readingUnlock` while
+    /// the governor holds keeps the bridge open instead of dropping to locked.
+    @Test func governorNeverClosesABridgeTheLearnerAlreadyHad() {
+        let s = store(coverage: config.readingBridge)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(s.readiness(for: .reading) == .foundation && s.canOpen(.reading))
+
+        // Master the rest of the base — coverage now clears the unlock bar.
+        let base = Array(ConceptTaxonomy.baseConceptIds).sorted()
+        for cid in base {
+            let idx = s.concepts.firstIndex { $0.id == cid }!
+            s.concepts[idx] = EngineFixtures.mastered(cid, category: s.concepts[idx].category,
+                                                      level: s.concepts[idx].cefrLevel,
+                                                      prerequisites: s.concepts[idx].prerequisites)
+        }
+        #expect(s.baseCoverage >= config.readingUnlock)
+        #expect(s.readiness(for: .reading) == .foundation, "getting better never closes the bridge")
+        #expect(s.canOpen(.reading), "the Read surface the learner had stays open")
+        #expect(!s.canOpen(.listening), "higher modalities have no bridge — still held")
+
+        // Once the governor releases, the bridge becomes a real unlock.
+        s.checkInHistory = []
+        #expect(s.readiness(for: .reading) == .unlocked)
     }
 
     @Test func readinessCopyNamesModalitiesNaturally() {
@@ -289,6 +321,40 @@ struct HomeGateTests {
         #expect(HomeCopy.gapsToReview(1) == "1 gap to review" && HomeCopy.gapsToReview(3) == "3 gaps to review")
         #expect(HomeCopy.captured(1) == "Saved 1 thing you didn't know")
         #expect(HomeCopy.dueNowLabel == "Due now" && HomeCopy.upcomingLabel == "Coming up")
+    }
+
+    // MARK: D10 (round 3) — the Foundation bar counts to the gate's finish line
+
+    @Test func foundationProgressCountsToTheUnlockBarAndFillsExactlyWhenReadingOpens() {
+        let s = EngineFixtures.store()
+        let target = s.foundationUnlockTarget()
+        #expect(target == Int((Double(s.foundationTotal) * config.readingUnlock).rounded(.up)))
+        #expect(target < s.foundationTotal, "the track ends before every base concept is mastered")
+        #expect(s.foundationProgress().done == 0 && s.foundationProgress().target == target)
+        #expect(HomeCopy.foundationProgress(done: 0, target: target) == "0 of \(target) skills — reading opens here")
+        // A full bar is only ever on screen while the governor holds the gate.
+        #expect(HomeCopy.foundationProgress(done: target, target: target, governorHeld: true)
+                == "\(target) of \(target) skills — consolidating before reading opens")
+        #expect(HomeCopy.foundationProgress(done: target + 5, target: target) == "\(target) of \(target) skills — reading opens now")
+
+        let base = Array(ConceptTaxonomy.baseConceptIds).sorted()
+        func master(_ ids: ArraySlice<String>) {
+            for cid in ids {
+                let idx = s.concepts.firstIndex { $0.id == cid }!
+                s.concepts[idx] = EngineFixtures.mastered(cid, category: s.concepts[idx].category,
+                                                          level: s.concepts[idx].cefrLevel,
+                                                          prerequisites: s.concepts[idx].prerequisites)
+            }
+        }
+        master(base.prefix(target - 1))
+        #expect(s.foundationProgress().done == target - 1)
+        #expect(s.isInFoundation, "one short of the bar → the card is still on screen")
+
+        // The last one fills the bar and opens reading in the same step: the goal
+        // the learner was shown is a goal they actually reach.
+        master(base[(target - 1)..<target])
+        #expect(s.foundationProgress().done == target && s.foundationProgress().target == target)
+        #expect(s.readiness(for: .reading) == .unlocked && !s.isInFoundation)
     }
 
     @Test func greetingFollowsTheClock() {

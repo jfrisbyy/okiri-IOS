@@ -122,6 +122,24 @@ struct LessonAssemblerTests {
         #expect(!lesson.conceptBlocks.isEmpty, "the lesson still teaches its target")
     }
 
+    /// A check-in tests what the learner is believed to already know: its miss weighs
+    /// double and feeds the retention governor and the unlock gate. A skill card —
+    /// the rule, the examples, and the check-in's own item worked through it — right
+    /// before the question hands the answer over, exactly as it would for a probe.
+    @Test func theCheckedSkillIsNotTaughtBeforeItIsChecked() throws {
+        let g = EngineFixtures.smallGraph()
+        let output = ConceptSelector(store: g.store).select(.smart(now: EngineFixtures.now))
+        let checkIn = try #require(output.checkInItems.first)
+        let lesson = try #require(LessonAssembler(store: g.store).assemble(output))
+
+        #expect(lesson.gaps.contains { $0.id == checkIn.gapId }, "the check-in is still asked")
+        #expect(!lesson.conceptBlocks.contains { $0.concept.id == checkIn.conceptId },
+                "no skill card for the concept that is about to be checked")
+        #expect(lesson.conceptBlocks.allSatisfy { $0.example?.id != checkIn.gapId },
+                "and the check-in item is never a card's worked example")
+        #expect(!lesson.conceptBlocks.isEmpty, "the lesson still teaches its target")
+    }
+
     @Test func capstoneIsAPureTestWithNoSkillCards() throws {
         let concept = EngineFixtures.learning("k", mastery: 0.7)
         let gaps = (0..<4).map {

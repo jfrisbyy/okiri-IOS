@@ -45,6 +45,49 @@ struct StoreTests {
         return d
     }
 
+    // MARK: talkmedia-3-1 — whose French a context quotes
+
+    @Test func aContextPersistedBeforeTheLearnerAuthoredFlagStillDecodesAsSourceFrench() throws {
+        // Every context written by an older build quotes French the learner MET,
+        // so the missing key has to read as `false` — not fail the decode and not
+        // relabel an article sentence as something the learner said.
+        let legacy = Data("""
+        {"sentence":"Il a plu toute la nuit.","sourceTab":"read","capturedAt":"2025-01-01T00:00:00Z","reExposureCount":2}
+        """.utf8)
+        let ctx = try decoder().decode(OriginalContext.self, from: legacy)
+        #expect(ctx.sentence == "Il a plu toute la nuit.")
+        #expect(ctx.reExposureCount == 2)
+        #expect(ctx.isLearnerAuthored == false)
+
+        // And the flag survives a round trip once it is set.
+        let mine = OriginalContext(sentence: "Je suis vingt-cinq ans", sourceTab: "converse",
+                                   capturedAt: now, reExposureCount: 0, isLearnerAuthored: true)
+        let round = try decoder().decode(OriginalContext.self, from: encoder().encode(mine))
+        #expect(round == mine)
+        #expect(round.isLearnerAuthored)
+    }
+
+    @Test func onlySourceFrenchIsOfferedToTheTaggerAsContext() {
+        var read = EngineFixtures.gap("g1", concept: nil)
+        read.exampleSentence = "example"
+        read.originalContext = OriginalContext(sentence: "Il a plu toute la nuit.", sourceTab: "read",
+                                               capturedAt: now, reExposureCount: 0)
+        #expect(read.contextForTagging == "Il a plu toute la nuit.", "French the learner met is real context")
+
+        var mine = read
+        mine.originalContext = OriginalContext(sentence: "Je suis vingt-cinq ans", sourceTab: "converse",
+                                               capturedAt: now, reExposureCount: 0, isLearnerAuthored: true)
+        #expect(mine.contextForTagging == "example", "the learner's own slip is not evidence of usage")
+
+        var blank = read
+        blank.originalContext = OriginalContext(sentence: "   ", sourceTab: "read", capturedAt: now, reExposureCount: 0)
+        #expect(blank.contextForTagging == "example")
+
+        var none = read
+        none.originalContext = nil
+        #expect(none.contextForTagging == "example")
+    }
+
     // MARK: A1 / A3 — fresh install and empty-array authority
 
     @Test func freshStoreIsHonestlyEmpty() {
@@ -978,6 +1021,12 @@ struct StoreTests {
         #expect(gap.needsTranslation, "no gloss was supplied")
         #expect(gap.originalContext?.sentence == "orig-x")
         #expect(gap.originalContext?.sourceTab == "converse")
+        // talkmedia-3-1: "orig-x" is the learner's own slip. It is flagged so the
+        // deck card never quotes it as French "seen in the wild", and so it is
+        // never handed to the tagger as an example of how the phrase is used.
+        #expect(gap.originalContext?.isLearnerAuthored == true)
+        #expect(gap.contextForTagging == gap.exampleSentence)
+        #expect(gap.contextForTagging != "orig-x")
         // A store-made gap starts from the seeded `.again` state (lapses 1); the slip adds one.
         let seededLapses = FSRS.makeInitialState(grade: .again, now: now).lapses
         #expect(gap.fsrs != nil && gap.fsrs?.lapses == seededLapses + 1)
@@ -1234,5 +1283,27 @@ struct StoreSessionSafetyTests {
         store.beginLesson()
         store.clearForSignOut()
         #expect(store.isLessonInProgress == false, "a reset never leaves the flag stuck")
+    }
+
+    // MARK: lesson-3-3 — the confusion signal the lesson now sends
+
+    /// `recordConfusion` is what turns a wrong match pair (or a wrong option that is
+    /// another item on the table) into the link the selector ranks on and the
+    /// assembler places side by side. Repeats strengthen it; the link sits on the
+    /// gap that was missed.
+    @Test func recordingAConfusionLinksThePairAndStrengthensIt() throws {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.4)],
+                                         gaps: [EngineFixtures.gap("a", concept: "c"),
+                                                EngineFixtures.gap("b", concept: "c")])
+        store.recordConfusion(gapId: "a", partnerGapId: "b")
+        let first = try #require(store.gaps.first { $0.id == "a" }?.confusionLinks.first)
+        #expect(first.partnerGapId == "b" && first.wrongPicks == 1)
+        #expect(store.gaps.first { $0.id == "b" }?.confusionLinks.isEmpty == true,
+                "the link sits on the item that was missed")
+
+        store.recordConfusion(gapId: "a", partnerGapId: "b")
+        let again = try #require(store.gaps.first { $0.id == "a" }?.confusionLinks.first)
+        #expect(again.wrongPicks == 2 && again.strength > first.strength)
+        #expect(store.gaps.first { $0.id == "a" }?.confusionLinks.count == 1, "one link per partner")
     }
 }

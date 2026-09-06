@@ -274,7 +274,13 @@ private struct ListenPlayerView: View {
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
         .onAppear { player.load(item) }
-        .onDisappear { player.stop() }
+        // The dialogue AND anything the capture sheet spoke through the natural
+        // voice — two independent players, both have to stop when the surface
+        // closes (talkmedia-3-4).
+        .onDisappear {
+            player.stop()
+            NaturalVoice.shared.stop()
+        }
         .sheet(item: $captured, onDismiss: {
             if resumeAfterCapture {
                 resumeAfterCapture = false
@@ -614,6 +620,9 @@ private struct ListeningCaptureSheet: View {
         }
         .padding(.horizontal, 20).padding(.bottom, 16)
         .background(Theme.background)
+        // A "Replay" started here keeps talking over the dialogue once the sheet
+        // is gone unless it is stopped explicitly (talkmedia-3-4).
+        .onDisappear { NaturalVoice.shared.stop() }
     }
 
     private func lineCard(_ spec: ListeningCaptureSpec) -> some View {

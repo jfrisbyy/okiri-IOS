@@ -345,6 +345,10 @@ final class CloudSync {
 
         reconcileInFlight = true
         if initial { isReconciling = true }
+        // Restored when the pass is abandoned before it changes anything, so the
+        // profile card falls back to what it honestly knew rather than sticking
+        // on "Backing up…".
+        let stateBeforePass = syncState
         syncState = .syncing
         debounceTask?.cancel()
         debounceTask = nil
@@ -360,6 +364,20 @@ final class CloudSync {
 
         let fetch = await fetchRemoteWithRetry(userId: uid)
         guard stillCurrent() else { return }
+        // store-3-1: callers check `isLessonInProgress` BEFORE this pass starts,
+        // but the read above is a full network round trip (up to `fetchAttempts`
+        // with backoff) and the learner can tap into a lesson while it is in
+        // flight. Applying the row now would swap `gaps`/`concepts` out from under
+        // the open lesson: answers already recorded are rolled back and every
+        // later one no-ops against an id the remote snapshot does not carry
+        // (store-1-3). Abandon the pass WITHOUT recording `lastReconcileAt`, so
+        // ContentView's `onChange(of: store.isLessonInProgress)` runs it again the
+        // moment the lesson closes. Sign-in / recovery passes (`initial`) are
+        // exempt: they run behind a blocking screen, where no lesson can be open.
+        if !initial, store.isLessonInProgress {
+            syncState = stateBeforePass
+            return
+        }
 
         switch fetch {
         case .failed(let error):
@@ -482,7 +500,20 @@ final class CloudSync {
             return userId != nil
         }
         guard let uid = userId else { return false }
-        guard hasPendingChange else { return true }
+        guard hasPendingChange else {
+            // store-3-4: nothing to upload — but the card can still be showing a
+            // failure from a READ that failed after the last successful upload.
+            // Returning here left "Backup failed — retry" on screen with a Retry
+            // button that did nothing at all. Re-establish contact instead; the
+            // reconcile is what actually clears (or confirms) the failure.
+            guard case .failed = syncState else { return true }
+            // A reconcile replaces `gaps`/`concepts`, so never under an open
+            // lesson (store-1-3); it runs when the lesson closes.
+            guard !store.isLessonInProgress else { return false }
+            await reconcile(store: store, userId: uid, initial: false)
+            if case .failed = syncState { return false }
+            return true
+        }
         debounceTask?.cancel()
         debounceTask = nil
         return await pushNow(store: store, userId: uid)
@@ -495,6 +526,18 @@ final class CloudSync {
         guard let uid = userId else { return false }
         debounceTask?.cancel()
         debounceTask = nil
+        // store-3-2: an offline sign-out was refused — with a warning that unsynced
+        // progress would be lost — even when the device was already fully backed
+        // up. If nothing is pending AND the record has not moved since the last
+        // successful sync with THIS account's row, there is nothing to upload, so
+        // the sign-out is safe and must not be blocked by the network.
+        if store.loadError == nil,
+           SnapshotReconciler.isFullyBackedUp(
+               hasPendingChange: hasPendingChange,
+               local: localState(store: store, userId: uid)
+           ) {
+            return true
+        }
         return await pushNow(store: store, userId: uid)
     }
 

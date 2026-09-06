@@ -61,7 +61,7 @@ enum ConceptTagger {
         - english: "\(gap.englishTranslation)"
         - category: \(gap.category.rawValue)
         - part of speech: "\(gap.partOfSpeech ?? "")"
-        - context: "\(gap.originalContext?.sentence ?? gap.exampleSentence)"
+        - context: "\(gap.contextForTagging)"
 
         Existing concepts (id | name [category]):
         \(conceptList)

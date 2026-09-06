@@ -356,6 +356,12 @@ nonisolated struct PlacementEngine {
     /// concept are a trusted read of that concept's band even when its items were
     /// spread over two bands (a band-2 hand item plus two band-1 content probes),
     /// so a learner who demonstrably knows a concept never reads as a true beginner.
+    /// How many items the BANK holds at a category/band — the ceiling on how much
+    /// evidence the staircase could ever gather there.
+    private func bankSupply(category: GapCategory, band: Int) -> Int {
+        bank.filter { $0.category == category && $0.band == band }.count
+    }
+
     private func clearedBand(for category: GapCategory) -> Int {
         let fullyProbed = fullyProbedConceptIds
         // The band a fully probed concept vouches for: the LOWEST band among its
@@ -368,11 +374,23 @@ nonisolated struct PlacementEngine {
         var cleared = 0
         for b in minBand...maxBand {
             let pool = asked.filter { $0.category == category && $0.band == b }
+            let hit = pool.filter { !missed.contains($0) }.count
             guard pool.count >= probesPerConcept else {
-                if b <= vouchedBand { cleared = b }                        // a trusted concept read covers this band
+                if b <= vouchedBand {
+                    cleared = b                                             // a trusted concept read covers this band
+                } else if bankSupply(category: category, band: b) < probesPerConcept,
+                          hit == pool.count, hit >= Tuning.placementThinBandMinItems {
+                    // A band the BANK ITSELF cannot probe in full — the top band holds
+                    // only a couple of hand-written items (no taxonomy concept reaches
+                    // B2), so `probesPerConcept` of them can never be asked and the band
+                    // could never be cleared however well the learner answers: the
+                    // placement could only ever report B1. A CLEAN sweep of at least
+                    // `placementThinBandMinItems` of them clears it. One lucky answer
+                    // still does not, and a band the bank CAN probe in full is unaffected.
+                    cleared = b
+                }
                 continue                                                    // otherwise untested / thin — skip, keep going
             }
-            let hit = pool.filter { !missed.contains($0) }.count
             if Double(hit) / Double(pool.count) >= 0.5 || b <= vouchedBand { cleared = b } else { break }
         }
         return cleared

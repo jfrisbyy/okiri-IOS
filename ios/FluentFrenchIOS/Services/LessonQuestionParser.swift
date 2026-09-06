@@ -59,6 +59,58 @@ nonisolated enum LessonQuestionParser {
         return !given.isDisjoint(with: LessonScheduler.distractorSides(of: gap.englishTranslation))
     }
 
+    /// The two halves of a MEANING claim — `“le pain” means “bread”`, `"le pain" = "bread"`,
+    /// `« le pain » veut dire « bread »` — or nil when the statement is not one.
+    ///
+    /// Only double-quote-style marks delimit the halves, so a French elision (`l'eau`)
+    /// is never read as a quote, and the words BETWEEN the two halves must say
+    /// "means" (or an equivalent): `“le pain” is the opposite of “bread”` is not a
+    /// meaning claim and must not be graded as one.
+    static func meaningClaim(in statement: String) -> (french: String, english: String)? {
+        let marks: Set<Character> = ["\"", "“", "”", "«", "»", "„", "‟"]
+        let parts = statement.split(omittingEmptySubsequences: false, whereSeparator: { marks.contains($0) })
+        guard parts.count >= 4 else { return nil }
+        let french = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        let english = parts[3].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !french.isEmpty, !english.isEmpty else { return nil }
+        let connector = AnswerGrader.normalize(String(parts[2]))
+        guard meaningConnectors.contains(connector) else { return nil }
+        return (french, english)
+    }
+
+    /// What the words between the two halves of a meaning claim may say — the whole
+    /// connector, not a substring of it, so "is the opposite meaning of" is not read
+    /// as "means".
+    /// Only explicit meaning verbs: `“le pain” is “masculine”` is a gender claim the
+    /// content cannot settle, and reading its "is" as "means" would grade a true
+    /// statement False.
+    private static let meaningConnectors: Set<String> = ["means", "mean", "means:", "is the english for",
+                                                         "is english for", "translates to", "translates as",
+                                                         "veut dire", "signifie", "="]
+
+    /// Whether an English half is CLEARLY a different meaning from the gap's gloss:
+    /// it shares no content word with it.
+    ///
+    /// A meaning claim is settled as FALSE only on this. "the bread" against the gloss
+    /// "bread" is a restatement the content cannot adjudicate, and grading it False
+    /// would teach the learner that a correct meaning is wrong.
+    static func isClearlyDifferentMeaning(_ english: String, from gloss: String) -> Bool {
+        let claimed = meaningWords(english), own = meaningWords(gloss)
+        guard !claimed.isEmpty, !own.isEmpty else { return false }
+        return claimed.isDisjoint(with: own)
+    }
+
+    /// The content words of a gloss, folded — articles and other function words carry
+    /// no meaning for this comparison.
+    private static func meaningWords(_ s: String) -> Set<String> {
+        let stop: Set<String> = ["the", "a", "an", "to", "of", "some", "any", "is", "it", "be", "and", "or"]
+        let words = AnswerGrader.fold(AnswerGrader.normalize(s))
+            .split(whereSeparator: { !$0.isLetter })
+            .map(String.init)
+            .filter { !stop.contains($0) }
+        return Set(words)
+    }
+
     /// Whether an AI-written French answer is a form the content already carries:
     /// the headword, the blank form, or a content `acceptedAnswers` alternative.
     /// The model may write a new sentence, never a new answer.
@@ -178,8 +230,14 @@ nonisolated enum LessonQuestionParser {
                 let expected = answer.isEmpty ? AnswerGrader.blankForm(for: gap) : answer
                 guard isContentForm(expected, of: gap, kind: .fillBlank) else { return nil }
                 let completed = prompt.replacingOccurrences(of: blank, with: expected)
+                // NO hint: the sentence on screen is the model's own, and
+                // `exampleTranslation` is the English of the CONTENT's example. Printing
+                // it under the field captions one sentence with the translation of a
+                // different one, which a beginner reads as the translation of what they
+                // are filling in. Only the local branch below, where the prompt IS the
+                // content example, may use it.
                 return LessonQuestion(gap: gap, kind: .fillBlank, prompt: prompt, correctAnswer: expected,
-                                      hint: gap.exampleTranslation.isEmpty ? nil : gap.exampleTranslation,
+                                      hint: nil,
                                       explanation: note.map { "\(completed)\n\($0)" } ?? completed)
             }
             // No usable AI sentence: the content's own blank, or nothing.
@@ -193,8 +251,22 @@ nonisolated enum LessonQuestionParser {
                                   explanation: explanation)
 
         case "truefalse", "true_false", "true-false", "tf":
-            guard let isTrue = trueFalseValue(answer), !statement.isEmpty else { return nil }
+            // The model never writes the truth. A true/false item is accepted only
+            // when its statement is a MEANING claim the content can settle — “le pain”
+            // means “bread” — whose French half is this gap's own form: the verdict is
+            // then computed here from the content's gloss and the model's own answer
+            // must agree with it. A claim about gender, conjugation or usage cannot be
+            // checked, and its feedback would be a meaning sentence that answers a
+            // different question, so it is rejected and the gap keeps the scheduler's
+            // own verified true/false.
+            guard let claimed = trueFalseValue(answer), !statement.isEmpty,
+                  let claim = meaningClaim(in: statement),
+                  isContentForm(claim.french, of: gap, kind: .translation) else { return nil }
+            let isTrue = matchesGloss(claim.english, of: gap)
+            guard claimed == isTrue,
+                  isTrue || isClearlyDifferentMeaning(claim.english, from: gap.englishTranslation) else { return nil }
             var explanation = "“\(gap.frenchWord)” means “\(gap.englishTranslation)”."
+            if !isTrue { explanation += " It does not mean “\(claim.english)”." }
             if let note { explanation += "\n\(note)" }
             return LessonQuestion(gap: gap, kind: .trueFalse, prompt: "True or false?",
                                   correctAnswer: isTrue ? "True" : "False", statement: statement,

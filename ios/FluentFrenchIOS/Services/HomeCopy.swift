@@ -99,6 +99,18 @@ nonisolated enum HomeCopy {
         return "Lesson \(done + 1) of \(target) today"
     }
 
+    /// The Foundation bar's caption: the track ends where reading opens, so the
+    /// number the learner is counting to is the gate's, not every base skill. A full
+    /// bar is only ever on screen while the retention governor is holding the gate
+    /// (otherwise the card has already been replaced by the open plan), so it says so.
+    static func foundationProgress(done: Int, target: Int, governorHeld: Bool = false) -> String {
+        let target = max(1, target)
+        let done = min(max(0, done), target)
+        guard done >= target else { return "\(done) of \(target) skills — reading opens here" }
+        return governorHeld ? "\(done) of \(target) skills — consolidating before reading opens"
+                            : "\(done) of \(target) skills — reading opens now"
+    }
+
     /// "3 gaps to review" / "1 gap to review".
     static func gapsToReview(_ count: Int) -> String {
         "\(count) gap\(count == 1 ? "" : "s") to review"

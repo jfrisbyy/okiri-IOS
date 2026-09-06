@@ -119,7 +119,10 @@ struct WordReader: View {
     @State private var selectionMode = false
     @State private var anchorId: Int? = nil
     @State private var focusId: Int? = nil
-    @State private var anchorBlock: Int? = nil
+    /// The token-id range the current selection may cover: the sentence it
+    /// started in (token ids run through the whole article, so without this a
+    /// drag could sweep paragraphs into one "word").
+    @State private var anchorSpan: ClosedRange<Int>? = nil
     @State private var clearTask: Task<Void, Never>? = nil
     @State private var tokenFrames: [Int: CGRect] = [:]
 
@@ -304,7 +307,7 @@ struct WordReader: View {
         HStack(spacing: 6) {
             Image(systemName: "hand.tap.fill").scaledFont(11).foregroundStyle(tint)
                 .accessibilityHidden(true)
-            Text("Tap any word to translate · Drag across words for phrases")
+            Text("Tap any word to translate · Drag across up to \(Tuning.maxCaptureWords) words for a phrase")
                 .scaledFont(12, weight: .medium).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -566,21 +569,58 @@ struct WordReader: View {
             }
     }
 
-    /// Grow the highlighted range to include whichever word the finger is over.
+    /// Grow the highlighted range to include whichever word the finger is over —
+    /// but only as far as a phrase a deck card can be made of: at most
+    /// `Tuning.maxCaptureWords` words, and never past the end of the sentence the
+    /// selection started in. A sweep down the article stops growing instead of
+    /// building a paragraph-long "word".
     private func updateSelection(at point: CGPoint) {
         guard let id = tokenId(at: point) else { return }
         if !selectionMode {
             Haptics.select()
             clearTask?.cancel()
+            let span = selectableSpan(containing: id)
             withAnimation(Theme.motion(.spring(response: 0.25, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                 selectionMode = true
                 anchorId = id
                 focusId = id
+                anchorSpan = span
             }
-        } else if focusId != id {
-            Haptics.tap()
-            withAnimation(Theme.motion(.easeOut(duration: 0.12), reduceMotion: reduceMotion)) { focusId = id }
+        } else if let anchor = anchorId {
+            let clamped = clampedFocus(anchor: anchor, candidate: id)
+            if focusId != clamped {
+                Haptics.tap()
+                withAnimation(Theme.motion(.easeOut(duration: 0.12), reduceMotion: reduceMotion)) { focusId = clamped }
+            }
         }
+    }
+
+    /// How far the highlight may reach from `anchor` toward `candidate`: inside
+    /// the anchor's own sentence and no wider than `Tuning.maxCaptureWords`.
+    private func clampedFocus(anchor: Int, candidate: Int) -> Int {
+        let span = anchorSpan ?? anchor...anchor
+        let inParagraph = min(max(candidate, span.lowerBound), span.upperBound)
+        let reach = max(0, Tuning.maxCaptureWords - 1)
+        return inParagraph > anchor ? min(inParagraph, anchor + reach) : max(inParagraph, anchor - reach)
+    }
+
+    /// The token-id range a selection started at `id` may cover: the SENTENCE it
+    /// sits in, inside its own paragraph. The highlight stops visibly at the full
+    /// stop instead of sweeping into the next sentence and building a term the
+    /// deck would then have to refuse.
+    private func selectableSpan(containing id: Int) -> ClosedRange<Int>? {
+        for block in blocks {
+            guard let first = block.tokens.first?.id, let last = block.tokens.last?.id,
+                  id >= first, id <= last else { continue }
+            var lower = first
+            var upper = last
+            for token in block.tokens {
+                guard CaptureBuilder.endsSentence(token.text) else { continue }
+                if token.id < id { lower = token.id + 1 } else { upper = token.id; break }
+            }
+            return lower...upper
+        }
+        return nil
     }
 
     /// On lift, translate the highlighted phrase (or single word).
@@ -619,8 +659,10 @@ struct WordReader: View {
     private func present(term: String) {
         let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
         // A bare number ("2030") or a stray symbol ("%", "€") has no meaning to
-        // look up and must never become a deck card, so it is not a term at all.
-        guard Self.isLookupable(clean) else { return }
+        // look up and must never become a deck card, so it is not a term at all —
+        // and neither is a run of text longer than a phrase (the drag is clamped,
+        // this is the backstop).
+        guard Self.isLookupable(clean), CaptureBuilder.isAcceptableHeadword(clean) else { return }
         target = GlossTarget(term: clean, context: SentenceExtractor.sentence(containing: clean, in: text))
     }
 
@@ -630,7 +672,7 @@ struct WordReader: View {
             selectionMode = false
             anchorId = nil
             focusId = nil
-            anchorBlock = nil
+            anchorSpan = nil
         }
     }
 

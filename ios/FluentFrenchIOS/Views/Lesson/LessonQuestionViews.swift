@@ -252,52 +252,78 @@ struct LessonMatchArea: View {
     let question: LessonQuestion
     @Environment(AppStore.self) private var store
 
+    /// The left column comes first. Until a French word is picked the meanings are
+    /// dimmed, and tapping one flashes the words rather than doing nothing at all.
+    private var awaitsLeft: Bool { model.matchAwaitsLeft }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 10) {
-                ForEach(question.matchGaps) { gap in
-                    let done = model.isMatched(gap.id)
-                    let selected = model.matchSelectedLeft == gap.id
-                    Button {
-                        model.selectMatchLeft(gap.id)
-                    } label: {
-                        Text(gap.frenchWord).font(.subheadline.weight(.semibold))
-                            .foregroundStyle(done ? .white : Theme.text)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget).padding(.vertical, 6)
-                            .background(done ? Theme.success : (selected ? Theme.primaryLight : Theme.card))
-                            .clipShape(.rect(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Theme.primary : Theme.border, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(done || model.revealed)
-                    .accessibilityLabel(gap.frenchWord)
-                    .accessibilityValue(done ? "matched" : (selected ? "selected" : ""))
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .accessibilityHint("Pick a French word, then its meaning on the right")
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                leftColumn
+                rightColumn
             }
-            VStack(spacing: 10) {
-                ForEach(model.matchRights) { gap in
-                    let done = model.isMatched(gap.id)
-                    let wrong = model.matchWrongRight == gap.id
-                    Button {
-                        model.selectMatchRight(gap.id, store: store)
-                    } label: {
-                        Text(gap.englishTranslation).font(.subheadline.weight(.medium))
-                            .foregroundStyle(done ? .white : Theme.text)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget).padding(.vertical, 6)
-                            .background(done ? Theme.success : (wrong ? Theme.errorLight : Theme.card))
-                            .clipShape(.rect(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(wrong ? Theme.error : Theme.border, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(done || model.revealed)
-                    .accessibilityLabel(gap.englishTranslation)
-                    .accessibilityValue(done ? "matched" : (wrong ? "wrong pair" : ""))
-                    .accessibilityHint("Pairs this meaning with the French word you picked")
+            if model.matchNeedsLeft {
+                Text("Pick a French word on the left first.")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var leftColumn: some View {
+        VStack(spacing: 10) {
+            ForEach(question.matchGaps) { gap in
+                let done = model.isMatched(gap.id)
+                let selected = model.matchSelectedLeft == gap.id
+                // The whole column asks for a pick when a meaning was tapped too early.
+                let asking = model.matchNeedsLeft && !done
+                Button {
+                    model.selectMatchLeft(gap.id)
+                } label: {
+                    Text(gap.frenchWord).font(.subheadline.weight(.semibold))
+                        .foregroundStyle(done ? .white : Theme.text)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget).padding(.vertical, 6)
+                        .background(done ? Theme.success : (selected || asking ? Theme.primaryLight : Theme.card))
+                        .clipShape(.rect(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .stroke(selected || asking ? Theme.primary : Theme.border,
+                                    lineWidth: selected || asking ? 2 : 1.5))
                 }
+                .buttonStyle(.plain)
+                .disabled(done || model.revealed)
+                .accessibilityLabel(gap.frenchWord)
+                .accessibilityValue(done ? "matched" : (selected ? "selected" : ""))
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityHint("Pick a French word, then its meaning on the right")
+            }
+        }
+    }
+
+    private var rightColumn: some View {
+        VStack(spacing: 10) {
+            ForEach(model.matchRights) { gap in
+                let done = model.isMatched(gap.id)
+                let wrong = model.matchWrongRight == gap.id
+                Button {
+                    model.selectMatchRight(gap.id, store: store)
+                } label: {
+                    Text(gap.englishTranslation).font(.subheadline.weight(.medium))
+                        .foregroundStyle(done ? .white : Theme.text)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget).padding(.vertical, 6)
+                        .background(done ? Theme.success : (wrong ? Theme.errorLight : Theme.card))
+                        .clipShape(.rect(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(wrong ? Theme.error : Theme.border, lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                // Dimmed, not disabled: the tap still needs to say why nothing happened.
+                .opacity(done || !awaitsLeft ? 1 : 0.45)
+                .disabled(done || model.revealed)
+                .accessibilityLabel(gap.englishTranslation)
+                .accessibilityValue(done ? "matched" : (wrong ? "wrong pair" : (awaitsLeft ? "pick a French word first" : "")))
+                .accessibilityHint("Pairs this meaning with the French word you picked")
             }
         }
     }

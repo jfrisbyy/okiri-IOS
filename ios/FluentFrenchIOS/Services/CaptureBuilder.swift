@@ -77,6 +77,43 @@ nonisolated enum CaptureBuilder {
         word.trimmingCharacters(in: .whitespacesAndNewlines).contains(where: { $0 == " " })
     }
 
+    // MARK: Headword shape
+
+    /// Marks that end a sentence. A headword that carries one with more text
+    /// after it was swept across a sentence boundary.
+    private static let sentenceEnders: Set<Character> = [".", "!", "?", "…"]
+
+    /// Words in a headword (whitespace-separated).
+    static func wordCount(_ word: String) -> Int {
+        word.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+    }
+
+    /// True when a whitespace-separated token closes a sentence ("Montmartre.",
+    /// "!", "…"). The reader uses this to stop a phrase selection at the end of
+    /// the sentence it started in.
+    static func endsSentence<S: StringProtocol>(_ token: S) -> Bool {
+        token.contains(where: { sentenceEnders.contains($0) })
+    }
+
+    /// True when the headword runs past the end of a sentence ("… à Montmartre.
+    /// Le serveur m'a souri"): a sentence mark sits on any word but the last.
+    static func spansSentences(_ word: String) -> Bool {
+        let tokens = word.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+        guard tokens.count > 1 else { return false }
+        return tokens.dropLast().contains { endsSentence($0) }
+    }
+
+    /// A headword the deck can ask a question about: it has at least one letter
+    /// (never "2030" or "%"), it is at most `Tuning.maxCaptureWords` words long,
+    /// and it stays inside one sentence. A paragraph swept up by a long drag in
+    /// the reader is text, not a card.
+    static func isAcceptableHeadword(_ word: String) -> Bool {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains(where: { $0.isLetter }) else { return false }
+        guard wordCount(trimmed) <= Tuning.maxCaptureWords else { return false }
+        return !spansSentences(trimmed)
+    }
+
     static func rank(_ level: CEFRLevel) -> Int {
         CEFRLevel.allCases.firstIndex(of: level) ?? 0
     }

@@ -153,6 +153,9 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
     /// A concept the source page knows this belongs to (resource pages). Ignored
     /// when the concept does not exist in the learner's taxonomy.
     var conceptId: String? = nil
+    /// Other typed answers that are right for this card ("nous étions" when the
+    /// headword is the bare form "étions"). Copied onto `GapItem.acceptedAnswers`.
+    var acceptedAnswers: [String]? = nil
     /// The learner's own memory hook, appended to the explanation.
     var note: String = ""
     /// False for recognition-only cards (a conjugation paradigm, a rule label):
@@ -165,6 +168,12 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
     var needsTranslation: Bool {
         englishTranslation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    /// Whether the store can turn this draft into a card at all: the headword has
+    /// a letter, is at most `Tuning.maxCaptureWords` words and stays inside one
+    /// sentence. Capture surfaces disable the save button when this is false
+    /// instead of letting it no-op.
+    var isCapturable: Bool { CaptureBuilder.isAcceptableHeadword(frenchWord) }
 
     /// A draft built from a real gloss: every dictionary field carried across, the
     /// sentence the word was met in as context, and the source's level.
@@ -208,7 +217,8 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
          exampleSentence: String = "", exampleTranslation: String = "", pronunciation: String? = nil,
          sourceType: SourceType, sourceTab: String, contextSentence: String = "",
          sourceLevel: CEFRLevel? = nil, category: GapCategory? = nil, difficulty: GapDifficulty? = nil,
-         partOfSpeech: String? = nil, register: String? = nil, conceptId: String? = nil, note: String = "",
+         partOfSpeech: String? = nil, register: String? = nil, conceptId: String? = nil,
+         acceptedAnswers: [String]? = nil, note: String = "",
          isTestable: Bool = true) {
         self.frenchWord = frenchWord
         self.englishTranslation = englishTranslation
@@ -225,6 +235,7 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
         self.partOfSpeech = partOfSpeech
         self.register = register
         self.conceptId = conceptId
+        self.acceptedAnswers = acceptedAnswers
         self.note = note
         self.isTestable = isTestable
     }

@@ -205,4 +205,89 @@ struct LessonQuestionParserTests {
         #expect(batch.gapsShort(of: 2, in: gaps).map { $0.id } == ["y"])
         #expect(batch.covers([gaps[0]], target: 2))
     }
+
+    // MARK: The hint under a typed field (lesson-3-4)
+
+    /// `exampleTranslation` is the English of the CONTENT's example sentence. When
+    /// the model writes its OWN sentence, that translation belongs to a different
+    /// sentence, and printing it under the field captions the prompt with the
+    /// translation of something else. Only the local fallback — where the prompt IS
+    /// the content example — may show it.
+    @Test func anAIWrittenFillBlankCarriesNoHint() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Il y a beaucoup d'_____ ici.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"no blank in this one","answer":"x-fr"}
+        ]}
+        """
+        let g = gap("x")
+        #expect(g.exampleTranslation == "x-en example")
+        let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4, seed: 3)
+        let ai = try #require(batch.questions.first { $0.prompt.contains("beaucoup") })
+        #expect(ai.hint == nil, "the model's sentence is not the content example")
+        let local = try #require(batch.questions.first { $0.prompt == "_____ example" })
+        #expect(local.hint == "x-en example", "here the prompt IS the content example")
+    }
+
+    // MARK: True/false is content-verified too (lesson-3-5)
+
+    /// The model never writes the truth — true/false included. Only a MEANING claim
+    /// the content can settle is accepted, the verdict is computed here, and the
+    /// model's own answer has to agree with it.
+    @Test func trueFalseIsAcceptedOnlyAsAContentVerifiedMeaningClaim() throws {
+        var pain = gap("x")
+        pain.frenchWord = "le pain"
+        pain.englishTranslation = "bread"
+        var eau = gap("y")
+        eau.frenchWord = "l'eau"
+        eau.englishTranslation = "water"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"trueFalse","statement":"“le pain” means “water”.","answer":"False"},
+          {"wordIndex":0,"kind":"trueFalse","statement":"“le pain” means “bread”.","answer":"False"},
+          {"wordIndex":1,"kind":"trueFalse","statement":"“l'eau” is a feminine noun.","answer":"True"},
+          {"wordIndex":1,"kind":"trueFalse","statement":"“le pain” means “bread”.","answer":"True"},
+          {"wordIndex":1,"kind":"trueFalse","statement":"“l'eau” is the opposite of “water”.","answer":"True"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [pain, eau], optionCount: 4, seed: 2)
+        #expect(batch.countsByGap == ["x": 1], "only the verifiable false claim survives")
+        #expect(batch.rejected == 4, "mislabelled, a gender claim, another word's claim, a non-meaning connector")
+
+        let tf = try #require(batch.questions.first)
+        #expect(tf.correctAnswer == "False" && tf.statement == "“le pain” means “water”.")
+        #expect(tf.explanation == "“le pain” means “bread”. It does not mean “water”.",
+                "the feedback answers the statement that was asked")
+    }
+
+    /// A claim that restates the gap's own meaning in other words is not something
+    /// the content can call false: "the bread" against the gloss "bread" is rejected
+    /// rather than taught as wrong.
+    @Test func aRestatedMeaningIsNeverGradedFalse() {
+        var g = gap("m")
+        g.frenchWord = "le pain"
+        g.englishTranslation = "bread"
+        let raw = """
+        {"questions":[{"wordIndex":0,"kind":"trueFalse","statement":"“le pain” means “the bread”.","answer":"False"}]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4)
+        #expect(batch.questions.isEmpty && batch.rejected == 1)
+        #expect(!LessonQuestionParser.isClearlyDifferentMeaning("the bread", from: "bread"))
+        #expect(!LessonQuestionParser.isClearlyDifferentMeaning("bread roll", from: "bread"))
+        #expect(LessonQuestionParser.isClearlyDifferentMeaning("water", from: "bread"))
+    }
+
+    @Test func meaningClaimParsesOnlyMeaningClaims() {
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” means “bread”.")?.french == "le pain")
+        #expect(LessonQuestionParser.meaningClaim(in: "« l'eau » veut dire « water »")?.english == "water")
+        #expect(LessonQuestionParser.meaningClaim(in: "\"le pain\" = \"bread\"")?.english == "bread")
+        #expect(LessonQuestionParser.meaningClaim(in: "l'eau is feminine") == nil,
+                "an elision apostrophe is not a quote")
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” is the opposite of “bread”") == nil)
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” has the opposite meaning of “bread”") == nil,
+                "a connector that merely contains \"mean\" is not a meaning claim")
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” is “masculine”") == nil,
+                "a gender claim is not a meaning claim")
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” means bread") == nil)
+    }
 }

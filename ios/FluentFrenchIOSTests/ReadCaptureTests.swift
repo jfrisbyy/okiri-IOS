@@ -484,28 +484,147 @@ struct ReadCaptureTests {
         #expect(selector.isPracticable(filled, at: now), "practicable once it has a meaning")
     }
 
-    // MARK: - E25 Reference paradigms are recognition-only cards
+    // MARK: - E25 A saved conjugation row is one card per form (read-3-1)
 
-    @Test func paradigmCaptureIsRecognitionOnly() {
+    /// The draft TensesView builds for one row of a conjugation table.
+    private func tenseForm(_ form: String, pronoun: String, phrase: String,
+                           verb: String = "être", meaning: String = "to be",
+                           tense: String = "Imparfait") -> CaptureDraft {
+        CaptureDraft(frenchWord: form,
+                     englishTranslation: "\(meaning) — \(pronoun), \(tense.lowercased())",
+                     explanation: "Imparfait of \(verb) (\(meaning)). Ongoing or habitual past actions.",
+                     exampleSentence: phrase, exampleTranslation: "",
+                     sourceType: .reading, sourceTab: "tenses", sourceLevel: .B1,
+                     category: .grammar, partOfSpeech: "verb", conceptId: nil,
+                     acceptedAnswers: [phrase])
+    }
+
+    @Test func aSavedConjugationFormAsksSomething() {
         let s = quietStore()
-        let paradigm = CaptureDraft(frenchWord: "être — Imparfait", englishTranslation: "to be — imparfait",
-                                    explanation: "j'étais, tu étais, il/elle/on était, nous étions, vous étiez, ils/elles étaient",
-                                    exampleSentence: "j'étais", sourceType: .reading, sourceTab: "tenses",
-                                    sourceLevel: .B1, category: .grammar, partOfSpeech: "verb", isTestable: false)
-        guard case .saved(let gap) = s.capture(paradigm, now: now) else { Issue.record("expected a save"); return }
-        #expect(!gap.isTestable)
-        let scheduler = LessonScheduler()
-        #expect(scheduler.level(for: gap) == .recognition)
-        #expect(scheduler.kinds(for: gap) == [.multipleChoice], "never fill-blank, translation or arrange")
-        #expect(scheduler.allowedAIKinds(for: gap) == [.multipleChoice])
-        #expect(!LessonScheduler.isBlankable(gap))
+        guard case .saved(let gap) = s.capture(tenseForm("étions", pronoun: "nous", phrase: "nous étions"), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        // The prompt is a real French form and the answer is not spelled out in it.
+        #expect(gap.frenchWord == "étions")
+        #expect(!AnswerGrader.fold(gap.englishTranslation).contains(AnswerGrader.fold(gap.frenchWord)),
+                "the question must not contain its own answer")
+        #expect(gap.isTestable, "a real form can be typed, blanked and arranged")
+        #expect(gap.category == .grammar)
 
-        // Ordinary captures keep the default.
+        let scheduler = LessonScheduler()
+        #expect(scheduler.kinds(for: gap) == [.multipleChoice, .multipleChoice], "new gap starts at recognition")
+        #expect(LessonScheduler.isBlankable(gap), "and grows into production: nous _____")
+        #expect(AnswerGrader.blankedPrompt(for: gap) == "nous \(AnswerGrader.blankToken)")
+        #expect(AnswerGrader.blankForm(for: gap) == "étions")
+        #expect(scheduler.kinds(for: gap, at: .recall).contains(.fillBlank))
+
+        // Sibling forms are the distractors that make the recognition question real.
+        guard case .saved(let sibling) = s.capture(tenseForm("étiez", pronoun: "vous", phrase: "vous étiez"), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        var rng = LessonRandom(seed: 4)
+        guard let q = scheduler.question(for: gap, kind: .multipleChoice, pool: [gap, sibling],
+                                         optionCount: 4, rng: &rng) else {
+            Issue.record("no question"); return
+        }
+        #expect(q.correctAnswer == gap.englishTranslation)
+        #expect(q.options.contains(sibling.englishTranslation), "the other person of the same tense is an option")
+        #expect(!q.prompt.contains(gap.englishTranslation))
+
+        // The full phrase is accepted when the card is asked as production.
+        #expect(gap.acceptedAnswers == ["nous étions"])
+        #expect(AnswerGrader.grade(typed: "nous étions", against: gap,
+                                   expected: gap.frenchWord, kind: .translation) == .correct)
+        // Two rows that spell the same form are one card, not two.
+        guard case .saved = s.capture(tenseForm("étais", pronoun: "je", phrase: "j'étais"), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        guard case .duplicate = s.capture(tenseForm("étais", pronoun: "tu", phrase: "tu étais"), now: now) else {
+            Issue.record("the same form saved twice is one card"); return
+        }
+    }
+
+    @Test func ordinaryCapturesAreTestableAndRuleLabelsAreNot() {
+        let s = quietStore()
         guard case .saved(let word) = s.capture(CaptureDraft(frenchWord: "foule", englishTranslation: "crowd", sourceType: .reading, sourceTab: "read"), now: now) else {
             Issue.record("expected a save"); return
         }
         #expect(word.isTestable)
         #expect(CaptureDraft(untranslated: "x", sourceType: .reading, sourceTab: "read").isTestable)
+
+        // A recognition-only card (a rule label) still exists as a shape and is
+        // never asked in a typed format.
+        let label = CaptureDraft(frenchWord: "-tion → féminin", englishTranslation: "words ending in -tion are feminine",
+                                 sourceType: .reading, sourceTab: "tenses", category: .grammar, isTestable: false)
+        guard case .saved(let gap) = s.capture(label, now: now) else { Issue.record("expected a save"); return }
+        #expect(!gap.isTestable)
+        let scheduler = LessonScheduler()
+        #expect(scheduler.kinds(for: gap) == [.multipleChoice])
+        #expect(!LessonScheduler.isBlankable(gap))
+    }
+
+    // MARK: - A capture is a word or a short phrase, never a paragraph (read-3-2)
+
+    @Test func aHeadwordIsAtMostAShortPhraseFromOneSentence() {
+        #expect(CaptureBuilder.isAcceptableHeadword("pain"))
+        #expect(CaptureBuilder.isAcceptableHeadword("du coup"))
+        #expect(CaptureBuilder.wordCount("il y a") == 3)
+        #expect(!CaptureBuilder.isAcceptableHeadword("2030"), "still no letters, still not a word")
+        // Exactly the cap is fine; one word more is not.
+        let cap = (1...Tuning.maxCaptureWords).map { "mot\($0)" }.joined(separator: " ")
+        #expect(CaptureBuilder.isAcceptableHeadword(cap))
+        #expect(!CaptureBuilder.isAcceptableHeadword(cap + " encore"))
+        // A drag that swept past the end of a sentence is not a phrase.
+        #expect(CaptureBuilder.spansSentences("café. Le serveur"))
+        #expect(CaptureBuilder.endsSentence("Montmartre."), "the reader stops a selection here")
+        #expect(CaptureBuilder.endsSentence("!"))
+        #expect(!CaptureBuilder.endsSentence("serveur"))
+        #expect(!CaptureBuilder.spansSentences("le serveur m'a souri."))
+        #expect(!CaptureBuilder.isAcceptableHeadword("café. Le serveur"))
+    }
+
+    @Test func aParagraphSweptUpInTheReaderIsNeverSavedAsACard() {
+        let s = quietStore()
+        let paragraph = "Ce matin, je suis allé dans un petit café à Montmartre. Le serveur m'a souri"
+        let draft = CaptureDraft(frenchWord: paragraph, englishTranslation: "This morning…",
+                                 sourceType: .reading, sourceTab: "read")
+        #expect(!draft.isCapturable, "the save button says so instead of no-oping")
+        #expect(s.capture(draft, now: now) == .rejected)
+        #expect(s.gaps.isEmpty)
+        // A real phrase from one sentence still saves.
+        let phrase = CaptureDraft(frenchWord: "un petit café", englishTranslation: "a small café",
+                                  sourceType: .reading, sourceTab: "read")
+        #expect(phrase.isCapturable)
+        guard case .saved(let gap) = s.capture(phrase, now: now) else { Issue.record("expected a save"); return }
+        #expect(gap.category == .phrasing)
+    }
+
+    // MARK: - Words waiting for a meaning are not counted as due (read-3-3)
+
+    @Test func offlineCapturesAreNotCountedAsDueUntilTheyHaveAMeaning() async {
+        let s = quietStore()
+        guard case .saved(let ready) = s.capture(CaptureDraft(frenchWord: "pain", englishTranslation: "bread", sourceType: .reading, sourceTab: "read"), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        guard case .saved(let pending) = s.capture(CaptureDraft(untranslated: "foule", sourceType: .reading, sourceTab: "read"), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        let later = now.addingTimeInterval(60)
+        #expect(s.dueNow(at: later).map(\.id) == [ready.id], "a word with no meaning cannot be asked, so it is not due")
+        #expect(s.waitingForMeaning.map(\.id) == [pending.id])
+        #expect(!s.upcoming(at: later).contains { $0.id == pending.id })
+        #expect(!s.reviewQueue(at: later).contains { $0.id == pending.id },
+                "the spaced-repetition queue is a lesson scope too")
+        // The number the learner sees matches what a lesson can offer.
+        let ids = s.dueNow(at: later).map(\.id)
+        let offered = ConceptSelector(store: s).select(.scoped(ids, name: "Due now", now: later))
+        #expect(offered.items.count == ids.count, "everything counted as due can actually be practiced")
+
+        _ = await s.resolvePendingTranslations(using: { term, _ in
+            .gloss(WordGloss(term: term, translation: "crowd", explanation: "", example: "", exampleTranslation: ""))
+        })
+        #expect(s.dueNow(at: later).count == 2, "once it has a meaning it is due like any other card")
+        #expect(s.waitingForMeaning.isEmpty)
     }
 
     // MARK: - E2 Learner captures are never prerequisite-blocked
@@ -549,6 +668,36 @@ struct ReadCaptureTests {
         #expect(ReadingShelf.fit(of: .B2, for: .B1) == .atLevel)
         #expect(ReadingShelf.fit(of: .C1, for: .B1) == .stretch)
         #expect(ReadingShelf.fit(of: .A1, for: .B1) == .easy)
+    }
+
+    /// read-3-5: the library builds its filters from the shelf, so no option can
+    /// only ever produce "No short pieces match these filters yet".
+    @Test func filterOptionsComeFromTheShelfNotTheWholeEnum() {
+        let library = ReadingLibrary.pieces
+        let bridge = ReadingShelf.pieces(for: .A1, readiness: .foundation, from: library)
+        let levels = ReadingShelf.availableDifficulties(in: bridge)
+        let categories = ReadingShelf.availableCategories(in: bridge)
+        #expect(!levels.isEmpty)
+        #expect(levels.count < ReadDifficulty.allCases.count, "the bridge shelf is a slice of the library")
+        #expect(!levels.contains(.university))
+        #expect(!categories.contains(.news), "no curated piece is a news item, at any gate")
+        for level in levels {
+            #expect(bridge.contains { $0.difficulty == level }, "\(level) has something to show")
+        }
+        for category in categories {
+            #expect(bridge.contains { $0.category == category })
+        }
+        // Canonical order, and every option matches at least one piece on the
+        // unlocked shelf too.
+        let shelf = ReadingShelf.pieces(for: .B1, readiness: .unlocked, from: library)
+        #expect(ReadingShelf.availableDifficulties(in: shelf) == ReadDifficulty.allCases.filter { d in shelf.contains { $0.difficulty == d } })
+        #expect(!ReadingShelf.availableCategories(in: shelf).contains(.news))
+        // Region pills: "All" always, then only the groups present.
+        let groups = ReadingShelf.availableRegionGroups(in: bridge)
+        #expect(groups.first == .all)
+        #expect(groups.dropFirst().allSatisfy { g in bridge.contains { $0.region.group == g } })
+        #expect(ReadingShelf.availableRegionGroups(in: []) == [.all])
+        #expect(ReadingShelf.availableDifficulties(in: []).isEmpty)
     }
 
     @Test func readabilityEstimateTracksSentenceLength() {

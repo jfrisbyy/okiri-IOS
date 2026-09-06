@@ -8,6 +8,7 @@
 //  one accessible element with a value.
 //
 
+import Foundation
 import SwiftUI
 
 struct GapCardView: View {
@@ -136,13 +137,30 @@ struct GapCardView: View {
                     }
                     memoryCard
                     if let ctx = gap.originalContext {
-                        infoBox(label: "Seen in the wild", text: "“\(ctx.sentence)”", tint: Theme.accentLight)
+                        if ctx.isLearnerAuthored {
+                            // The learner's own line. Never presented as French
+                            // encountered in the wild — it is the thing the
+                            // headword corrects, so it is shown as the contrast.
+                            infoBox(label: "You said", text: learnerContextText(ctx), tint: Theme.background)
+                        } else {
+                            infoBox(label: "Seen in the wild", text: "“\(ctx.sentence)”", tint: Theme.accentLight)
+                        }
                     }
                 }
                 .padding(.top, 10)
             }
         }
         .cardStyle(padding: 14)
+    }
+
+    /// The learner's own line next to the version that replaced it, so the card
+    /// never quotes the slip on its own.
+    private func learnerContextText(_ ctx: OriginalContext) -> String {
+        let said = ctx.sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fixed = gap.frenchWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.isEmpty else { return "“\(fixed)”" }
+        guard said.caseInsensitiveCompare(fixed) != .orderedSame else { return "“\(said)”" }
+        return "“\(said)” → “\(fixed)”"
     }
 
     private func infoBox(label: String, text: String, tint: Color = Theme.background) -> some View {

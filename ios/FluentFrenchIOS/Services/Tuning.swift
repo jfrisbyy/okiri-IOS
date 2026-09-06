@@ -415,14 +415,20 @@ nonisolated extension Tuning {
     static let foundationSeedBatch: Int = 20
     /// Days-per-week goals the preferences screen offers (D11).
     static let weeklyGoalChoices: [Int] = [3, 4, 5, 6, 7]
-    /// Gap cards the deck previews inline before it offers "See all N" (the full
-    /// list is pushed and built lazily, so a Foundation deck of several hundred
-    /// cards never renders behind the sections below it).
+    /// Gap cards the deck previews inline before it offers "See all N" (the rest
+    /// expand in place and lazily, so a Foundation deck of several hundred cards
+    /// never renders behind the sections below it).
     static let deckPreviewCount: Int = 12
     /// Consecutive lowest-band misses in ONE category (vocabulary or grammar) before the
     /// placement stops asking that category; the learner is a true beginner only when
     /// every category has bottomed out — a weak grammar never hides a strong vocabulary (D6/B9).
     static let placementBottomOutMisses: Int = 2
+    /// Items a band the BANK CANNOT PROBE IN FULL still needs before an all-correct
+    /// run clears it (D6/round 3). The top band holds only a couple of hand-written
+    /// items — fewer than `placementProbesPerConcept` — so without this no answer,
+    /// however strong, could ever place a learner above the highest band the content
+    /// covers. Two clean answers on the only items that exist is the bar.
+    static let placementThinBandMinItems: Int = 2
 }
 
 nonisolated extension Tuning {
@@ -445,6 +451,9 @@ nonisolated extension Tuning {
     static let tagLevelWeight: Double = 0.1
     /// Normalised-name token overlap (Jaccard) at or above which two concept names are near-duplicates — E3.
     static let tagNearDuplicateSimilarity: Double = 0.6
+    /// Most words a captured headword may contain: a phrase a lesson can ask about
+    /// is a few words, not the paragraph a finger swept across in the reader.
+    static let maxCaptureWords: Int = 8
     /// Highest curated level Reading shows while the gate is in its bridge state (E20 / D5).
     static let readingBridgeMaxLevel: CEFRLevel = .A2
     /// Bands away from the learner's level a piece may sit and still be "at your level" in the library.

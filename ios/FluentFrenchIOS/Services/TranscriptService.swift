@@ -78,11 +78,11 @@ nonisolated enum TranscriptService {
 
         // 1) Native French captions.
         let native = await nativeFrench(videoId: videoId, tracker: &tracker)
-        if !native.isEmpty { return .segments(native, language: .french) }
+        if !native.isEmpty { return .segments(native, language: .french, origin: .nativeFrench) }
 
         // 2) Provider auto-translated French captions.
         let translated = await autoTranslatedFrench(videoId: videoId, tracker: &tracker)
-        if !translated.isEmpty { return .segments(translated, language: .french) }
+        if !translated.isEmpty { return .segments(translated, language: .french, origin: .providerTranslated) }
 
         // 3) English captions, returned as they are: translation runs after the
         //    fetch under its own budget (`translateToFrench`), never inside it.
@@ -91,7 +91,7 @@ nonisolated enum TranscriptService {
             let tagged = english.map {
                 TranscriptSegment(id: $0.id, text: $0.text, start: $0.start, duration: $0.duration, language: .english)
             }
-            return .segments(tagged, language: .english)
+            return .segments(tagged, language: .english, origin: .translatedFromEnglish)
         }
 
         if tracker.answered { return .noCaptions }

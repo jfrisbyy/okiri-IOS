@@ -146,6 +146,43 @@ struct PlacementFlowTests {
         #expect(!a1Result.masteredConceptIds.isEmpty && !a1Result.inferredConceptIds.isEmpty)
     }
 
+    /// Round 3: a learner who answers everything correctly has to be able to reach
+    /// the top band. Band 4 has no taxonomy concept, so the bank holds only a couple
+    /// of hand items there — fewer than `placementProbesPerConcept` — and without the
+    /// thin-band rule the test could only ever report B1, however well it was answered.
+    @Test func aPerfectRunReachesTheTopBandInsteadOfCappingAtB1() throws {
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the top-band check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let s = EngineFixtures.store()
+        let bank = AssessmentService.placementBank(concepts: s.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+        let top = bank.filter { $0.band == 4 }
+        #expect(!top.isEmpty && top.count < Tuning.placementProbesPerConcept * GapCategory.allCases.count,
+                "the top band is thin by construction — that is the whole point of the rule")
+        for seed in UInt64(1)...8 {
+            var engine = PlacementEngine(bank: bank, seed: seed)
+            _ = run(&engine) { _ in true }
+            let r = engine.result()
+            #expect(max(r.vocabBand, r.grammarBand) == 4,
+                    "seed \(seed): cleared \(r.vocabBand)/\(r.grammarBand) on a perfect run")
+            #expect(r.estimatedLevel == .B2, "seed \(seed) placed at \(r.estimatedLevel.rawValue)")
+        }
+    }
+
+    /// The thin-band rule is not a free pass: one lucky answer at a band the bank
+    /// cannot probe in full still does not clear it.
+    @Test func oneLuckyAnswerAtAThinBandStillDoesNotClearIt() {
+        var bank = smallBank()
+        bank.append(question(4, .grammar, "subjunctive-intro", 0))   // the only item up there
+        var engine = PlacementEngine(bank: bank, seed: 11)
+        let asked = run(&engine) { _ in true }
+        #expect(asked.contains { $0.band == 4 }, "the staircase does reach for it")
+        let r = engine.result()
+        #expect(r.grammarBand < 4 && r.estimatedLevel != .B2)
+    }
+
     @Test func placementBankFallsBackToHandItemsWhenContentIsMissing() {
         let s = EngineFixtures.store()
         let empty = AssessmentService.placementBank(concepts: s.concepts, probes: { _ in [] })
@@ -449,6 +486,30 @@ struct PlacementFlowTests {
         #expect(Set(s.candidateGapIds(for: .dueInCategory(.grammar), now: now)) == due)
         #expect(s.candidateGapIds(for: .dueInCategory(.grammar), now: now).contains("mastered-due"))
         #expect(s.candidateGapIds(for: .dueInCategory(.vocabulary), now: now).isEmpty)
+    }
+
+    /// Gap Map (round 3): a category whose only due items are mastery checks shows
+    /// "N due now" while its `active` count is 0. The tap must start those checks,
+    /// not tell the learner the category is empty.
+    @Test func aCategoryWhoseOnlyDueItemsAreMasteryChecksIsStillStartable() {
+        let s = EngineFixtures.store()
+        // The concept behind them is mastered too — a learner only gets here by
+        // having answered it, so it is never a never-observed (blocked) concept.
+        let idx = s.concepts.firstIndex { $0.id == "negation" }!
+        s.concepts[idx] = EngineFixtures.mastered("negation", category: s.concepts[idx].category,
+                                                  level: s.concepts[idx].cefrLevel,
+                                                  prerequisites: s.concepts[idx].prerequisites)
+        var masteredDue = EngineFixtures.gap("mastered-due", concept: "negation", due: now.addingTimeInterval(-day),
+                                             consecutiveCorrect: 5, reviewCount: 5, mastered: now.addingTimeInterval(-10 * day))
+        masteredDue.fsrs = EngineFixtures.freshFsrs(at: now.addingTimeInterval(-day))
+        s.gaps = [masteredDue]
+        #expect(s.gaps(in: .grammar).isEmpty, "the card's 'active' count is 0")
+        #expect(s.dueNow(at: now).count == 1, "and it still says 1 due now")
+        #expect(s.candidateGapIds(for: .category(.grammar), now: now).isEmpty,
+                "the plain category scope has nothing — this is why the tap used to dead-end")
+        #expect(s.candidateGapIds(for: .dueInCategory(.grammar), now: now) == ["mastered-due"])
+        #expect(LessonPipeline(store: s).outcome(for: .dueInCategory(.grammar), now: now).lesson != nil,
+                "the badge's own pool starts a lesson")
     }
 
     // MARK: B4 — the New retention scope

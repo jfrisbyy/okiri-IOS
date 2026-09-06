@@ -82,6 +82,33 @@ nonisolated struct OriginalContext: Codable, Hashable {
     var sourceTab: String
     var capturedAt: Date
     var reExposureCount: Int
+    /// True when `sentence` is the learner's OWN French (their slip in Converse,
+    /// their transcribed speaking attempt) rather than French they encountered.
+    /// A learner-authored line is never shown as "Seen in the wild" and is never
+    /// handed to the concept tagger as an example of real French.
+    var isLearnerAuthored: Bool = false
+
+    init(sentence: String, translation: String? = nil, sourceTab: String,
+         capturedAt: Date, reExposureCount: Int, isLearnerAuthored: Bool = false) {
+        self.sentence = sentence
+        self.translation = translation
+        self.sourceTab = sourceTab
+        self.capturedAt = capturedAt
+        self.reExposureCount = reExposureCount
+        self.isLearnerAuthored = isLearnerAuthored
+    }
+
+    // Hand-written so contexts persisted before the flag existed still decode
+    // (they are all quoted source French, so `false` is the right default).
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sentence = try c.decodeIfPresent(String.self, forKey: .sentence) ?? ""
+        translation = try c.decodeIfPresent(String.self, forKey: .translation)
+        sourceTab = try c.decodeIfPresent(String.self, forKey: .sourceTab) ?? ""
+        capturedAt = try c.decodeIfPresent(Date.self, forKey: .capturedAt) ?? Date()
+        reExposureCount = try c.decodeIfPresent(Int.self, forKey: .reExposureCount) ?? 0
+        isLearnerAuthored = try c.decodeIfPresent(Bool.self, forKey: .isLearnerAuthored) ?? false
+    }
 }
 
 // MARK: - Confusion link
@@ -181,6 +208,17 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// Never answered: no recall evidence yet. Retention analytics list it as "new"
     /// rather than guessing a bucket for it.
     var isNew: Bool { reviewCount == 0 }
+
+    /// The sentence that shows this headword in real use, for the concept tagger.
+    /// A learner-authored context is the learner's own (wrong) line, so it is
+    /// never handed over as an example of how the phrase is used.
+    var contextForTagging: String {
+        if let ctx = originalContext, !ctx.isLearnerAuthored,
+           !ctx.sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ctx.sentence
+        }
+        return exampleSentence
+    }
 
     /// Probability the learner can recall this right now (FSRS retrievability).
     var retrievability: Double { retrievability(at: Date()) }

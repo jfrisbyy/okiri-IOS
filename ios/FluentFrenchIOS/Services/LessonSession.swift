@@ -82,6 +82,12 @@ nonisolated struct LessonEvidence {
     /// answers and for reveals (C12).
     let loggedAnswer: String?
     let correctAnswer: String
+    /// The OTHER lesson gap the learner actually picked when the miss was a mix-up:
+    /// the meaning tapped in a match round, or a wrong multiple-choice option that is
+    /// another item in this lesson. `AppStore.recordConfusion` turns it into a
+    /// confusion link, which is what the selector ranks on and what puts the pair
+    /// side by side in a later lesson. Nil when the miss names no partner.
+    var confusedWithGapId: String? = nil
 
     var gapId: String { gap.id }
 }
@@ -339,10 +345,13 @@ nonisolated struct LessonSession {
         let counts = matched || wrongLefts.insert(leftId).inserted
         var outcome = LessonAnswerOutcome(correct: matched, firstTry: firstTry, roundComplete: false)
         if counts {
+            // A wrong pair names both halves of the mix-up: the gap asked and the gap
+            // whose meaning was tapped. That pair is the confusion signal.
             outcome.evidence = [evidence(for: leftGap, role: role(for: leftGap, in: q), correct: matched,
                                          format: .match, firstTry: firstTry, grade: nil,
                                          loggedAnswer: matched ? nil : rightGap.englishTranslation,
-                                         correctAnswer: leftGap.englishTranslation)]
+                                         correctAnswer: leftGap.englishTranslation,
+                                         confusedWith: matched ? nil : rightGap.id)]
         }
         if matched {
             matchedIds.insert(leftId)
@@ -433,10 +442,16 @@ nonisolated struct LessonSession {
         // A probe miss is a diagnosis of material never taught, not a mistake to
         // log: it is already out of `scored`, out of `missed` and free of hearts.
         let logsError = !correct && !revealed && !q.isProbe
+        // Picking another lesson item's option is a mix-up, not a blank: name the
+        // partner so the store can link the pair (the selector ranks on it and the
+        // assembler puts the two side by side).
+        let confusedWith = (logsError && q.kind == .multipleChoice)
+            ? confusedGapId(for: given, excluding: q.gap.id) : nil
         outcome.evidence = [evidence(for: q.gap, role: role(for: q.gap, in: q), correct: correct,
                                      format: q.answerFormat, firstTry: firstTry, grade: grade,
                                      loggedAnswer: logsError ? given : nil,
-                                     correctAnswer: q.correctAnswer)]
+                                     correctAnswer: q.correctAnswer,
+                                     confusedWith: confusedWith)]
         if isCapstone {
             if correct { held.append(q.gap) } else { slipped.append(q.gap) }
         }
@@ -500,8 +515,16 @@ nonisolated struct LessonSession {
 
     /// Queue a stepped-down remedial for a missed question (C6). False for capstones,
     /// probes, interstitials, and once the gap has had `maxRemedialsPerGap`.
+    ///
+    /// Never for a CHECK-IN either: the stepped-down remedial shows the answer before
+    /// the pick, and it keeps the gap's selected role, so a missed check-in would bank
+    /// a second, passing check-in on the same concept — the interval would grow instead
+    /// of halving, the governor's window would take a spurious pass, and a provisional
+    /// placement seed could be "verified" by answers it was just handed. One check-in
+    /// asked is one check-in outcome; the miss halves the interval and the selector
+    /// brings the concept back.
     private mutating func queueRemedial(for q: LessonQuestion) -> Bool {
-        guard !isCapstone, !q.isProbe, !q.isCapstone else { return false }
+        guard !isCapstone, !q.isProbe, !q.isCapstone, role(for: q.gap, in: q) != .checkIn else { return false }
         let attempt = (remedialsByGap[q.gap.id] ?? 0) + 1
         guard let remedial = config.scheduler.remedial(for: q, attempt: attempt, pool: lesson.gaps) else { return false }
         remedialsByGap[q.gap.id] = attempt
@@ -533,10 +556,27 @@ nonisolated struct LessonSession {
     }
 
     private func evidence(for gap: GapItem, role: SelectedItemRole, correct: Bool, format: AnswerFormat,
-                          firstTry: Bool, grade: ReviewGrade?, loggedAnswer: String?, correctAnswer: String) -> LessonEvidence {
+                          firstTry: Bool, grade: ReviewGrade?, loggedAnswer: String?, correctAnswer: String,
+                          confusedWith: String? = nil) -> LessonEvidence {
         LessonEvidence(gap: gap, correct: correct, format: format, firstTry: firstTry,
                        isCheckIn: role == .checkIn, conceptWeight: conceptWeight, grade: grade,
-                       loggedAnswer: loggedAnswer, correctAnswer: correctAnswer)
+                       loggedAnswer: loggedAnswer, correctAnswer: correctAnswer,
+                       confusedWithGapId: confusedWith)
+    }
+
+    /// The lesson item the learner actually picked, when a wrong answer IS another
+    /// item on the table: the meaning or the French form of a different gap in this
+    /// lesson (an "a / b" gloss matches on either side). Nil when the answer names no
+    /// other item — a typed answer, a distractor built from outside the lesson, or a
+    /// second reading of the same gap.
+    func confusedGapId(for given: String, excluding gapId: String) -> String? {
+        let sides = LessonScheduler.distractorSides(of: given)
+        guard !sides.isEmpty else { return nil }
+        return lesson.gaps.first { other in
+            other.id != gapId && !other.isProbe
+                && (!sides.isDisjoint(with: LessonScheduler.distractorSides(of: other.englishTranslation))
+                    || !sides.isDisjoint(with: LessonScheduler.distractorSides(of: other.frenchWord)))
+        }?.id
     }
 
     // MARK: Feedback (C10)

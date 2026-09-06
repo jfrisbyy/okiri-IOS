@@ -622,26 +622,39 @@ struct SaveToDeckButton: View {
         }
     }
 
+    /// A draft the store would refuse (no letters, longer than
+    /// `Tuning.maxCaptureWords` words, or running across a sentence): the button
+    /// says so and stays disabled rather than silently doing nothing.
+    private var isTooLong: Bool {
+        guard let draft, !isDone else { return false }
+        return !draft.isCapturable
+    }
+
     private var title: String {
         if case .duplicate? = outcome { return "Already in your deck" }
         if isDone { return "Saved to deck" }
         if isBusy || draft == nil { return "Save to my deck" }
+        if isTooLong { return "Too long to save as a card" }
         if draft?.needsTranslation == true { return "Save now, translate later" }
         return "Save to my deck"
     }
 
     private var symbol: String {
         if isDone { return "checkmark.circle.fill" }
+        if isTooLong { return "exclamationmark.circle.fill" }
         if draft?.needsTranslation == true { return "clock.badge.checkmark" }
         return "plus.circle.fill"
     }
 
-    private var isDisabled: Bool { isDone || isBusy || draft == nil }
+    private var isDisabled: Bool { isDone || isBusy || draft == nil || isTooLong }
 
     /// Says what the button will do — or why it cannot yet be used.
     private var hint: String {
         if isDone { return "This word is already in your deck" }
         if isBusy || draft == nil { return "Available once the lookup finishes" }
+        if isTooLong {
+            return "A card holds a word or a short phrase — up to \(Tuning.maxCaptureWords) words from one sentence"
+        }
         if draft?.needsTranslation == true {
             return "Saves the word without a meaning; it is translated once translation is available"
         }

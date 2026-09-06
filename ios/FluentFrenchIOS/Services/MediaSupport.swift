@@ -198,6 +198,20 @@ nonisolated enum TranscriptCopy {
         }
     }
 
+    /// Persistent note saying where the French came from, shown for as long as
+    /// the transcript is on screen. nil for the video's own French captions —
+    /// only those are the words actually spoken (talkmedia-3-2).
+    static func originFootnote(_ origin: TranscriptOrigin) -> String? {
+        switch origin {
+        case .nativeFrench:
+            return nil
+        case .providerTranslated:
+            return "Auto-translated French subtitles — not the French spoken in this video."
+        case .translatedFromEnglish:
+            return "French translated from this video's English captions — not the French spoken in it."
+        }
+    }
+
     /// Header pill when every line can be looked up.
     static let tapHint = "Tap a word to save"
     /// Header pill while some lines are English: lookup is French-only.
@@ -223,9 +237,26 @@ nonisolated enum TranscriptLanguage: Equatable, Sendable {
 /// translating (see `TranscriptTranslation`), which happens OUTSIDE the fetch
 /// budget so a long English transcript never turns into a false failure.
 nonisolated enum TranscriptResult: Equatable, Sendable {
-    case segments([TranscriptSegment], language: TranscriptLanguage)
+    case segments([TranscriptSegment], language: TranscriptLanguage, origin: TranscriptOrigin)
     case noCaptions
     case unavailable(MediaServiceFailure)
+}
+
+/// Where the French on screen came from. Only `.nativeFrench` is the French the
+/// video actually contains; the other two are a machine translation of speech
+/// that was not French, and the panel says so for as long as they are on screen
+/// (talkmedia-3-2). Provenance is a property of the fetch, not of the lines, so
+/// it survives the English → French pass that retags every line `.french`.
+nonisolated enum TranscriptOrigin: Equatable, Sendable {
+    /// The video's own French captions.
+    case nativeFrench
+    /// French captions the video platform produced by machine-translating another language.
+    case providerTranslated
+    /// English captions this app translated into French.
+    case translatedFromEnglish
+
+    /// True only for the video's own French words.
+    var isNativeFrench: Bool { self == .nativeFrench }
 }
 
 /// One time-coded transcript line.

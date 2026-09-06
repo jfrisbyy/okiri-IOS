@@ -91,6 +91,26 @@ struct SnapshotReconcilerTests {
         #expect(Local(updatedAt: Self.at(2), lastSyncedUpdatedAt: Self.at(1)).isDirty)
     }
 
+    // MARK: Sign-out safety (store-3-2)
+
+    @Test func fullyBackedUpOnlyWhenNothingPendingAndNothingMovedSinceTheLastSync() {
+        let synced = Local(updatedAt: Self.at(10), lastSyncedUpdatedAt: Self.at(10), lastSyncedServerUpdatedAt: Self.at(20))
+        #expect(SnapshotReconciler.isFullyBackedUp(hasPendingChange: false, local: synced),
+                "a device whose record has not moved since its last upload signs out cleanly offline")
+        #expect(!SnapshotReconciler.isFullyBackedUp(hasPendingChange: true, local: synced),
+                "a debounced upload still waiting means progress would be lost")
+
+        let answeredSince = Local(updatedAt: Self.at(30), lastSyncedUpdatedAt: Self.at(10), lastSyncedServerUpdatedAt: Self.at(20))
+        #expect(!SnapshotReconciler.isFullyBackedUp(hasPendingChange: false, local: answeredSince),
+                "local activity after the last sync is unsynced progress even if nothing flagged it")
+
+        // Markers from another account are dropped by CloudSync.localState, so any
+        // local activity reads as dirty and the upload must be attempted.
+        #expect(!SnapshotReconciler.isFullyBackedUp(hasPendingChange: false, local: Local(updatedAt: Self.at(1))))
+        #expect(SnapshotReconciler.isFullyBackedUp(hasPendingChange: false, local: Local()),
+                "a device with no activity at all has nothing to back up")
+    }
+
     // MARK: Postgres timestamps
 
     @Test func parsesPostgrestTimestampVariants() throws {

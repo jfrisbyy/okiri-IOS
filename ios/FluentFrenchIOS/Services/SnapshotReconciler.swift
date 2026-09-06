@@ -89,6 +89,17 @@ nonisolated enum SnapshotReconciler {
         return byClientClock(local: local, remote: remote)
     }
 
+    /// True when this device's record is already the one in the cloud row: no
+    /// upload is pending and nothing has been mutated since the last successful
+    /// sync with that account. Sign-out uses it so a fully backed-up device is
+    /// not refused (and the learner warned that unsynced progress will be lost)
+    /// merely because it happens to be offline (store-3-2). Note that `local`
+    /// carries no sync markers when they belong to a different account, which
+    /// makes any local activity dirty — the safe answer.
+    static func isFullyBackedUp(hasPendingChange: Bool, local: LocalState) -> Bool {
+        !hasPendingChange && !local.isDirty
+    }
+
     /// Client-clock fallback: newest activity wins, cloud wins ties, and a device
     /// with no local activity always takes the cloud row.
     static func byClientClock(local: LocalState, remote: RemoteState) -> Decision {

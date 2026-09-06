@@ -167,6 +167,8 @@ struct LessonSchedulerTests {
         let match = try #require(matches.first)
         #expect(match.matchGaps.count == Tuning.matchGroupSize)
         #expect(match.matchGaps.allSatisfy { !$0.isProbe })
+        #expect(match.matchGaps.allSatisfy { roles[$0.id] != .checkIn && roles[$0.id] != .probe },
+                "a check-in is asked once, never also paired with its meaning")
         #expect(Set(match.matchGaps.map { $0.englishTranslation }).count == match.matchGaps.count, "distinct English")
         let firstRoundCount = lesson.gaps.filter { !$0.isProbe }.count
         #expect(schedule.firstIndex { $0.isInterstitial } == firstRoundCount, "between the first and second round")
@@ -201,6 +203,30 @@ struct LessonSchedulerTests {
         let ok = scheduler.build(for: lesson([gap("a"), gap("b"), gap("c")]), abilityOptionCount: 4)
         #expect(ok.filter { $0.isInterstitial }.count == 1)
         #expect(ok.first { $0.isInterstitial }?.matchGaps.count == 3)
+    }
+
+    /// A match round pairs a word with its meaning, so a CHECK-IN gap stays out of it
+    /// alongside the probes: inside the round it either hands the answer to the
+    /// check-in that follows or, after it, banks a SECOND check-in outcome on the same
+    /// concept — growing the interval a miss just halved and feeding the governor a
+    /// pass nobody earned.
+    @Test func matchInterstitialLeavesOutCheckInsAndProbes() throws {
+        var probe = gap("p", concept: "P")
+        probe.isProbe = true
+        probe.probeOptions = ["d1", "d2", "d3"]
+        let checkIn = gap("k", concept: "M", reviewCount: 4, consecutiveCorrect: 2)
+        let l = lesson([gap("a"), gap("b"), gap("c"), checkIn, probe], roles: ["k": .checkIn, "p": .probe])
+        let schedule = scheduler.build(for: l, abilityOptionCount: 4)
+
+        let match = try #require(schedule.first { $0.isInterstitial })
+        #expect(Set(match.matchGaps.map { $0.id }) == ["a", "b", "c"], "only the ordinary gaps are paired")
+        #expect(questions(for: "k", in: schedule).count == 1, "the check-in is still asked, exactly once")
+
+        // Hold one of the three qualifying gaps back as a check-in and the round
+        // no longer has enough pairs to exist at all.
+        let thin = scheduler.build(for: lesson([gap("a"), gap("b"), gap("c")], roles: ["c": .checkIn]),
+                                   abilityOptionCount: 4)
+        #expect(!thin.contains { $0.isInterstitial }, "two ordinary gaps cannot make a round")
     }
 
     @Test func nonTestableGapsOnlyGetMultipleChoice() {
@@ -401,7 +427,11 @@ struct LessonSchedulerTests {
         #expect(schedule.last?.id != q.id, "it is not appended behind the trailing probes")
         #expect(!schedule.contains { $0.isProbe }, "no blind-spot probe in this lesson")
 
-        // A miss on it is remediated with the same French options.
+        // The scheduler is a pure builder: asked for a stepped-down retry of this
+        // question it keeps the probe's own French options rather than offering
+        // English meanings against a French answer. The SESSION never asks for one —
+        // a check-in is scored once (see LessonSessionTests
+        // `aCheckInRidingAProbeItemIsScoredLikeAnyCheckIn`).
         let remedial = try #require(scheduler.remedial(for: q, attempt: 1, pool: l.gaps))
         #expect(!remedial.isProbe && remedial.isRemedial && remedial.role == .checkIn)
         #expect(Set(remedial.options) == ["d1", "d2", "d3", "p-en"])

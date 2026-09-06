@@ -145,6 +145,35 @@ nonisolated enum TranscriptionOutcome: Equatable {
     }
 }
 
+/// What a finished dictation should do to the reply box. Speaking must never
+/// destroy words the learner already typed (talkmedia-3-3): an empty box takes
+/// the transcription and sends it, a box with a reply in it gets the
+/// transcription appended and waits for the learner to press send.
+nonisolated enum DictationMerge: Equatable {
+    /// The box was empty: this text is the reply, send it.
+    case send(String)
+    /// The box already had a reply: this is the merged text, left on screen.
+    case appended(String)
+    /// Nothing usable was heard — the box is untouched.
+    case nothing
+
+    /// Learner-facing note for the merged case (nil for the others).
+    var notice: String? {
+        if case .appended = self {
+            return "Added what you said to the end of your reply. Check it, then send."
+        }
+        return nil
+    }
+
+    static func apply(heard: String, toDraft draft: String) -> DictationMerge {
+        let spoken = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !spoken.isEmpty else { return .nothing }
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else { return .send(spoken) }
+        return .appended(typed + " " + spoken)
+    }
+}
+
 /// Pulls the first JSON object out of a model reply that may be wrapped in prose
 /// or a markdown fence.
 nonisolated enum ModelJSON {

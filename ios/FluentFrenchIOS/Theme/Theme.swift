@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 enum Theme {
     // Backgrounds
@@ -90,13 +91,176 @@ enum Radius {
     static let hero: CGFloat = 24
 }
 
+// MARK: - Accessibility tokens
+
+extension Theme {
+    /// Apple's minimum comfortable touch target, in points.
+    static let minimumHitTarget: CGFloat = 44
+
+    /// The Dynamic Type text style a fixed point size is scaled against
+    /// (Package G band mapping). Large sizes scale with the large title curve,
+    /// small labels with the caption curve, so every piece of text grows in
+    /// step with the learner's system text size.
+    nonisolated static func textStyle(forSize size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case 28...: return .largeTitle
+        case 22..<28: return .title2
+        case 19..<22: return .title3
+        case 17..<19: return .body
+        case 15..<17: return .subheadline
+        case 13..<15: return .footnote
+        default: return .caption
+        }
+    }
+
+    /// A scaled `Font` VALUE for call sites that need a `Font`, not a modifier
+    /// (`.font(x ? a : b)`, `Text` concatenation, a font stored in a struct).
+    /// Pass `@Environment(\.sizeCategory)` so the value re-computes when the
+    /// learner changes their text size. Prefer `.scaledFont(...)` elsewhere.
+    static func scaledFontValue(
+        _ size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        for sizeCategory: ContentSizeCategory,
+        relativeTo style: Font.TextStyle? = nil
+    ) -> Font {
+        let metrics = UIFontMetrics(forTextStyle: uiTextStyle(style ?? textStyle(forSize: size)))
+        let traits = UITraitCollection(preferredContentSizeCategory: uiContentSizeCategory(sizeCategory))
+        let scaled = metrics.scaledValue(for: size, compatibleWith: traits)
+        return .system(size: scaled, weight: weight, design: design)
+    }
+
+    /// The animation to use given the learner's Reduce Motion setting: the
+    /// original when motion is allowed, otherwise a short plain cross-fade
+    /// (or nil when there was no animation to begin with) so state changes
+    /// still settle without springing, bouncing or pulsing.
+    nonisolated static func motion(_ animation: Animation?, reduceMotion: Bool) -> Animation? {
+        guard reduceMotion else { return animation }
+        return animation == nil ? nil : .easeInOut(duration: 0.15)
+    }
+
+    nonisolated private static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
+        switch style {
+        case .largeTitle: return .largeTitle
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .body: return .body
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption1
+        case .caption2: return .caption2
+        default: return .body
+        }
+    }
+
+    nonisolated private static func uiContentSizeCategory(_ category: ContentSizeCategory) -> UIContentSizeCategory {
+        switch category {
+        case .extraSmall: return .extraSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .extraLarge: return .extraLarge
+        case .extraExtraLarge: return .extraExtraLarge
+        case .extraExtraExtraLarge: return .extraExtraExtraLarge
+        case .accessibilityMedium: return .accessibilityMedium
+        case .accessibilityLarge: return .accessibilityLarge
+        case .accessibilityExtraLarge: return .accessibilityExtraLarge
+        case .accessibilityExtraExtraLarge: return .accessibilityExtraExtraLarge
+        case .accessibilityExtraExtraExtraLarge: return .accessibilityExtraExtraExtraLarge
+        @unknown default: return .large
+        }
+    }
+}
+
 // MARK: - Editorial typography
 
 extension Font {
     /// Elegant editorial serif (New York) for big moments — greetings,
     /// screen titles, and hero section headers.
+    ///
+    /// DEPRECATED (Package G): this is a fixed point size that ignores Dynamic
+    /// Type. Use `.scaledSerifDisplay(_:weight:)` on the view instead; kept only
+    /// until every call site has migrated.
     static func serifDisplay(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
         .system(size: size, weight: weight, design: .serif)
+    }
+}
+
+// MARK: - Dynamic Type
+
+/// Applies a system font whose point size follows the learner's text size.
+/// SwiftUI has no `Font.system(size:relativeTo:)`, so the size is scaled with
+/// `@ScaledMetric` against the text style the design size belongs to.
+struct ScaledSystemFont: ViewModifier {
+    @ScaledMetric private var size: CGFloat
+    private let weight: Font.Weight
+    private let design: Font.Design
+
+    init(size: CGFloat, weight: Font.Weight, design: Font.Design, relativeTo style: Font.TextStyle) {
+        _size = ScaledMetric(wrappedValue: size, relativeTo: style)
+        self.weight = weight
+        self.design = design
+    }
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size, weight: weight, design: design))
+    }
+}
+
+extension View {
+    /// The Dynamic-Type-aware replacement for `.font(.system(size:weight:design:))`.
+    /// `size` is the design size at the default (Large) text setting; it scales
+    /// up and down with the system text size. When `relativeTo` is nil the text
+    /// style is chosen from the size band (`Theme.textStyle(forSize:)`).
+    func scaledFont(
+        _ size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        relativeTo style: Font.TextStyle? = nil
+    ) -> some View {
+        modifier(ScaledSystemFont(size: size, weight: weight, design: design,
+                                  relativeTo: style ?? Theme.textStyle(forSize: size)))
+    }
+
+    /// The Dynamic-Type-aware replacement for `.font(.serifDisplay(_:weight:))`.
+    func scaledSerifDisplay(_ size: CGFloat, weight: Font.Weight = .bold) -> some View {
+        scaledFont(size, weight: weight, design: .serif)
+    }
+}
+
+// MARK: - Reduce Motion
+
+/// `.animation(_:value:)` that honours the system Reduce Motion setting via
+/// `Theme.motion(_:reduceMotion:)`.
+struct ReducedMotionAnimation<V: Equatable>: ViewModifier {
+    let animation: Animation?
+    let value: V
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.animation(Theme.motion(animation, reduceMotion: reduceMotion), value: value)
+    }
+}
+
+extension View {
+    /// Animate `value` changes with `animation`, falling back to a short plain
+    /// cross-fade (or no animation) when the learner has Reduce Motion on.
+    func reducedMotionAnimation<V: Equatable>(_ animation: Animation?, value: V) -> some View {
+        modifier(ReducedMotionAnimation(animation: animation, value: value))
+    }
+}
+
+// MARK: - Hit targets
+
+extension View {
+    /// Guarantees at least a 44×44 pt tappable area (small icon buttons, chips)
+    /// without changing how the control is drawn.
+    func minimumHitTarget() -> some View {
+        frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
+            .contentShape(Rectangle())
     }
 }
 

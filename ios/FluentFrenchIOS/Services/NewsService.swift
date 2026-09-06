@@ -16,7 +16,10 @@ nonisolated struct NewsArticle: Identifiable, Hashable {
     let title: String
     let summary: String
     let source: String
-    let category: NewsCategory
+    /// The theme the story was fetched under. Nil when the query was "All": the
+    /// news service does not say what a story is about, so the card shows no
+    /// theme badge rather than filing a football report under Society (read-5-2).
+    let category: NewsCategory?
     /// Where the story comes from, when the outlet says so (`ReadRegionGroup
     /// .forSource`). Nil for a live article whose source names no region — the
     /// card shows no region badge and the region filter leaves it under "All"
@@ -278,7 +281,7 @@ nonisolated struct NewsAPIArticle: Decodable {
             title: title,
             summary: summary,
             source: source?.name ?? "Actualités",
-            category: category == .all ? .society : category,
+            category: category == .all ? nil : category,
             region: ReadRegionGroup.forSource(name: source?.name, url: url),
             imageUrl: urlToImage,
             publishedAt: date,

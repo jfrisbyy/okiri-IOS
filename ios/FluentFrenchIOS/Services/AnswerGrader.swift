@@ -84,6 +84,11 @@ nonisolated enum AnswerGrader {
         for form in raw where form.contains("/") {
             raw.append(contentsOf: form.split(separator: "/").map { String($0) })
         }
+        // Dictionary ellipsis notation ("ne... pas", "..., quoi") — the dots stand for
+        // the verb the learner is not typing, and no screen asks for them.
+        for form in raw {
+            raw.append(contentsOf: ellipsisForms(of: form))
+        }
         let expectedNorm = normalize(expected)
         var out: [(display: String, normalized: String)] = []
         var seen = Set<String>()
@@ -97,6 +102,29 @@ nonisolated enum AnswerGrader {
             out.append((display: display.isEmpty ? form : display, normalized: norm))
         }
         return out
+    }
+
+    /// Ellipsis in a headword ("ne... pas", "n'... pas", "..., quoi") is dictionary
+    /// notation for a frame that wraps around a word, not a spelling: the dots are
+    /// never shown as required anywhere, and a learner asked to translate "not" types
+    /// "ne pas". This returns the spellings that are the SAME answer with the dots
+    /// gone — the collapsed frame, trimmed of the punctuation the dots left behind
+    /// ("..., quoi" → "quoi"). Empty for a form with no ellipsis.
+    static func ellipsisForms(of form: String) -> [String] {
+        guard form.range(of: ellipsisPattern, options: .regularExpression) != nil else { return [] }
+        let collapsed = trimmingEdgePunctuation(
+            form.replacingOccurrences(of: ellipsisPattern, with: " ", options: .regularExpression))
+        guard !collapsed.isEmpty, normalize(collapsed) != normalize(form) else { return [] }
+        return [collapsed]
+    }
+
+    /// An ellipsis (".." or more, or "…") with the spaces around it.
+    private static let ellipsisPattern = #"\s*(?:\.{2,}|…)\s*"#
+
+    /// Drop the whitespace and the sentence punctuation an ellipsis leaves at either
+    /// end of a form (", quoi" → "quoi").
+    private static func trimmingEdgePunctuation(_ s: String) -> String {
+        s.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:.…\u{00A0}\u{202F}\u{2009}\n\t"))
     }
 
     /// Whether a content alternative can stand in a fill-blank's blank.

@@ -251,13 +251,13 @@ struct ConceptSelector {
     /// they are not "ready" for. A gap captured WITHOUT a meaning yet
     /// (`needsTranslation`, E4) waits until `resolvePendingTranslations` fills it
     /// in — it keeps its schedule, but a blank meaning can never become a lesson
-    /// option or a match pair.
+    /// option or a match pair. The blocked rule itself lives on the store
+    /// (`AppStore.isPrerequisiteBlocked(_:)`) so the "due now" counts the learner
+    /// sees and the gaps the selector will actually offer can never disagree.
     func isPracticable(_ gap: GapItem, at now: Date = Date()) -> Bool {
         guard gap.isPracticable(at: now) else { return false }
         if gap.needsTranslation { return false }
-        if gap.sourceType != .foundation { return true }
-        guard let cid = gap.conceptId, let concept = store.concept(cid) else { return true }
-        return !isPrerequisiteBlocked(concept)
+        return !store.isPrerequisiteBlocked(gap)
     }
 
     // MARK: Scoring

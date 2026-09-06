@@ -148,7 +148,7 @@ struct LessonIntroStage: View {
                 .accessibilityHidden(true)
             Text(model.isCapstone
                  ? "No hearts and no retries: a capstone is a check, not a drill."
-                 : "\(Tuning.lessonHearts) hearts — a miss costs one. At zero the lesson stops and shows what slipped.")
+                 : "\(Tuning.lessonHearts) hearts — a miss costs one, and the second look at something you missed is free. At zero the lesson stops and shows what slipped.")
                 .font(.footnote).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)

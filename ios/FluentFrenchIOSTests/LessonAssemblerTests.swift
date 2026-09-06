@@ -135,6 +135,35 @@ struct LessonAssemblerTests {
         #expect(lesson.conceptBlocks.first?.example?.conceptId == g.root)
     }
 
+    /// lesson-5-3: a card's worked example prints the item's sentence with its blank
+    /// form highlighted and its English underneath. Taking it from an item the same
+    /// lesson goes on to fill-blank hands the answer over and grows an FSRS interval
+    /// on the screen before — the rule `LessonSession.mayTeach` already enforces for
+    /// word cards. The example is a NEW item of the concept, one the lesson does not
+    /// ask at all, or none.
+    @Test func aWorkedExampleIsNeverAnItemTheLessonIsAboutToTest() throws {
+        let now = EngineFixtures.now
+        let concept = EngineFixtures.learning("k", mastery: 0.5)
+        let reviewed = EngineFixtures.gap("k-old", concept: "k", consecutiveCorrect: 2, reviewCount: 3,
+                                          lastReviewed: now.addingTimeInterval(-EngineFixtures.day))
+        let fresh = EngineFixtures.gap("k-new", concept: "k")
+        let store = EngineFixtures.store(concepts: [concept], gaps: [reviewed, fresh])
+        let output = ConceptSelector(store: store).select(.scoped(["k-old", "k-new"], name: "K", now: now))
+        let lesson = try #require(LessonAssembler(store: store).assemble(output))
+        #expect(Set(lesson.gaps.map { $0.id }) == ["k-old", "k-new"])
+        let block = try #require(lesson.conceptBlocks.first { $0.concept.id == "k" })
+        #expect(block.example?.id == "k-new", "the reviewed item is here to be tested, not taught")
+
+        // Only reviewed items in the lesson and nothing else for the concept: the card
+        // teaches the rule with no worked example rather than leaking one.
+        let reviewedOnly = EngineFixtures.store(concepts: [concept], gaps: [reviewed])
+        let scoped = ConceptSelector(store: reviewedOnly).select(.scoped(["k-old"], name: "K", now: now))
+        let lesson2 = try #require(LessonAssembler(store: reviewedOnly).assemble(scoped))
+        let block2 = try #require(lesson2.conceptBlocks.first { $0.concept.id == "k" })
+        #expect(block2.example == nil)
+        #expect(block2.reason != nil, "the card still says why the skill is here")
+    }
+
     /// A blind-spot probe is a diagnosis, not teaching material: the skill it
     /// probes gets no card, and no card takes its worked example from a probe.
     /// Teaching a skill — with the probe's own sentence and its translation —

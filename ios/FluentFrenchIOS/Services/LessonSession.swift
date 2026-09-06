@@ -11,6 +11,8 @@
 //  Rules (all knobs from `Tuning` through `LessonSessionConfig`):
 //    • Hearts are real (C5): an ordinary lesson starts with `hearts`; a miss costs
 //      one; at zero the lesson ends (`end == .outOfHearts`). Capstones run without.
+//      A missed REMEDIAL is free: the miss it came from already cost the heart, and
+//      charging the retry too ends the lesson on the second look it exists to give.
 //    • A "Show me" reveal (C12) is a miss recorded with `firstTry: false`, never
 //      logged as an error, and — an admitted "I don't know" — costs no heart.
 //    • A missed blind-spot probe is a diagnosis: evidence, no heart, not "missed".
@@ -42,6 +44,8 @@ nonisolated struct LessonSessionConfig {
     var revealCostsHeart: Bool = Tuning.revealCostsHeart
     /// A missed probe is a diagnosis, not a slip.
     var probeMissCostsHeart: Bool = Tuning.probeMissCostsHeart
+    /// A missed remedial is the second look at a miss already paid for (C5/C6): free.
+    var remedialCostsHeart: Bool = Tuning.remedialMissCostsHeart
     /// Questions between a miss and its stepped-down remedial (C6).
     var remedialSpacing: Int = Tuning.remedialSpacing
     /// Correct answers a gap needs in one lesson to flash "mastered" (a session badge only).
@@ -146,6 +150,12 @@ nonisolated struct LessonSummary: Equatable {
     /// First-attempt, non-probe questions (the honest accuracy base).
     var scored: Int
     var scoredCorrect: Int
+    /// Questions the lesson planned (the live schedule minus the remedials a miss
+    /// added; a released concept's dropped questions leave it too).
+    var planned: Int = 0
+    /// How many of those planned questions were answered — the share of the lesson
+    /// actually worked through, which is what a hearts-out recap is judged on.
+    var plannedAnswered: Int = 0
     var accuracy: Double
     var accuracyPercent: Int
     var xp: Int
@@ -159,14 +169,21 @@ nonisolated struct LessonSummary: Equatable {
 
     var missedGapIds: [String] { missed.map { $0.gap.id } }
 
-    /// Whether the store books this as a completed lesson (day count + finishing
-    /// XP): only a lesson played to the end, unless `Tuning.outOfHeartsCountsAsComplete`
-    /// lets a hearts-out recap count too. Quits and hearts-out are otherwise
-    /// `abandoned` — evidence and minutes are still recorded.
+    /// Whether the store books this as a completed lesson (day count + finishing XP).
+    ///
+    /// A lesson played to the end always counts. A hearts-out lesson counts when the
+    /// learner worked through at least `Tuning.heartsOutCompletionFraction` of its
+    /// schedule: the day's lesson count is what Home, the daily plan and the weekly
+    /// goal read, and a lesson answered almost to the end is not "nothing done today".
+    /// One abandoned early — and every quit — stays `abandoned`; the evidence, the
+    /// per-answer XP and the minutes are recorded either way.
     var isCompleted: Bool {
         switch end {
         case .finished: return true
-        case .outOfHearts: return Tuning.outOfHeartsCountsAsComplete
+        case .outOfHearts:
+            if Tuning.outOfHeartsCountsAsComplete { return true }
+            guard planned > 0 else { return false }
+            return Double(plannedAnswered) / Double(planned) >= Tuning.heartsOutCompletionFraction
         case .quit: return false
         }
     }
@@ -192,6 +209,9 @@ nonisolated struct LessonSession {
     private(set) var combo = 0
     private(set) var bestCombo = 0
     private(set) var answered = 0
+    /// Answers to questions the lesson planned (remedials excluded): the numerator of
+    /// "how much of this lesson did the learner actually work through".
+    private(set) var plannedAnswered = 0
     private(set) var scored = 0
     private(set) var scoredCorrect = 0
     private(set) var revealsUsed = 0
@@ -314,9 +334,16 @@ nonisolated struct LessonSession {
     /// The lesson's items the learner may be shown the meaning of, in lesson order.
     var teachableGaps: [GapItem] { lesson.gaps.filter(mayTeach) }
 
+    /// The questions the lesson planned: the live schedule without the remedials a
+    /// miss inserted (never below what has already been answered).
+    var plannedCount: Int {
+        max(schedule.filter { !$0.isRemedial }.count, plannedAnswered)
+    }
+
     var summary: LessonSummary {
         let accuracy = scored > 0 ? Double(scoredCorrect) / Double(scored) : 0
         return LessonSummary(end: end ?? .quit, answered: answered, scored: scored, scoredCorrect: scoredCorrect,
+                             planned: plannedCount, plannedAnswered: plannedAnswered,
                              accuracy: accuracy, accuracyPercent: Int((accuracy * 100).rounded()),
                              xp: xp, bestCombo: bestCombo, masteredCount: masteredGapIds.count,
                              missed: missed, held: held, slipped: slipped, releasedConceptIds: releasedConceptIds)
@@ -385,6 +412,7 @@ nonisolated struct LessonSession {
                 outcome.correct = roundCorrect
                 currentAnswered = true
                 answered += 1
+                plannedAnswered += 1
                 scored += 1
                 if roundCorrect {
                     scoredCorrect += 1
@@ -455,6 +483,7 @@ nonisolated struct LessonSession {
         let firstTry = revealed ? false : firstTry(for: q)
         currentAnswered = true
         answered += 1
+        if !q.isRemedial { plannedAnswered += 1 }
         if !q.isProbe && !q.isRemedial {
             scored += 1
             if correct { scoredCorrect += 1 }
@@ -493,7 +522,16 @@ nonisolated struct LessonSession {
             combo = 0
             missCountByGap[q.gap.id, default: 0] += 1
             if !q.isProbe { noteMissed(q.gap, answer: Self.recapAnswer(for: q), kind: q.kind) }
-            let costsHeart = revealed ? config.revealCostsHeart : (q.isProbe ? config.probeMissCostsHeart : true)
+            let costsHeart: Bool
+            if revealed {
+                costsHeart = config.revealCostsHeart
+            } else if q.isProbe {
+                costsHeart = config.probeMissCostsHeart
+            } else if q.isRemedial {
+                costsHeart = config.remedialCostsHeart
+            } else {
+                costsHeart = true
+            }
             if costsHeart {
                 outcome.heartLost = loseHeart()
                 outcome.endedByHearts = end == .outOfHearts
@@ -732,9 +770,16 @@ nonisolated enum LessonSpeech {
     }
 
     /// After the answer: the completed sentence, the French form, or the arranged sentence.
+    ///
+    /// A fill-blank speaks the sentence that is ON SCREEN with its blank filled — for
+    /// an AI-written item that is the model's own sentence, not the content example,
+    /// and reading the content example would play French the learner never saw.
     static func spokenAnswer(for q: LessonQuestion) -> String? {
         switch q.kind {
         case .fillBlank:
+            let filled = q.prompt.replacingOccurrences(of: AnswerGrader.blankToken, with: q.correctAnswer)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !filled.isEmpty, !AnswerGrader.isCloze(filled) { return filled }
             return q.gap.exampleSentence.isEmpty ? q.correctAnswer : q.gap.exampleSentence
         case .translation, .arrange:
             return q.correctAnswer

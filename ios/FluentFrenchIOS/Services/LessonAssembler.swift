@@ -137,6 +137,14 @@ struct LessonAssembler {
     /// worked example from one. Teaching a skill — with the item's own sentence and
     /// its translation — right before testing it turns the diagnosis into a memory
     /// test of the last screen.
+    ///
+    /// The same rule for a REVIEWED item, and for the same reason (`LessonSession.mayTeach`):
+    /// a card's worked example prints the sentence with its blank form highlighted and
+    /// its English underneath, so taking it from an item this lesson goes on to
+    /// fill-blank hands the answer over and grows an FSRS interval on a screen the
+    /// learner just read. The example comes from a NEW item of the concept, or from one
+    /// this lesson does not ask at all; otherwise the card carries no worked example and
+    /// teaches from the content's own skill card.
     private func buildConceptBlocks(for gaps: [GapItem], target: Concept?, reasons: [String: String],
                                     stalled: Set<String> = [], probeGapIds: Set<String> = [],
                                     checkInGapIds: Set<String> = []) -> [ConceptBlock] {
@@ -144,14 +152,20 @@ struct LessonAssembler {
         var seen = Set<String>()
         let untaughtable = probeGapIds.union(checkInGapIds)
         let taught = gaps.filter { !$0.isProbe && !untaughtable.contains($0.id) }
+        // Items this lesson asks: one of them may only be shown when it is new.
+        let askedIds = Set(gaps.map { $0.id })
+        let teachable = taught.filter { $0.isNew }
 
         func makeBlock(_ concept: Concept) -> ConceptBlock {
-            let example = taught.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
-                ?? taught.first { $0.conceptId == concept.id }
+            let example = teachable.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
+                ?? teachable.first { $0.conceptId == concept.id }
                 ?? store.gaps(forConcept: concept.id).first {
-                    !$0.isProbe && !untaughtable.contains($0.id) && !$0.exampleSentence.isEmpty
+                    !$0.isProbe && !askedIds.contains($0.id) && !$0.exampleSentence.isEmpty
                 }
+            // The "why you're seeing this" line belongs to the concept, not to the
+            // example: a card that shows no worked example still says why it is here.
             let reason = example.flatMap { reasons[$0.id] }
+                ?? taught.first { $0.conceptId == concept.id }.flatMap { reasons[$0.id] }
             return ConceptBlock(concept: concept, explanation: concept.description,
                                 example: example, reason: reason,
                                 teaching: FoundationContentLoader.teaching(for: concept.id),

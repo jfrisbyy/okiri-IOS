@@ -278,10 +278,18 @@ struct LessonSchedulerTests {
             let qs = questions(for: g.id, in: schedule)
             #expect(qs.count == 1)
             let q = qs[0]
-            #expect(q.isCapstone && q.hint == nil)
+            #expect(q.isCapstone)
             #expect(g.isTestable ? q.level == .recall : q.kind == .multipleChoice)
             #expect(scheduler.remedial(for: q, attempt: 1) == nil, "capstones never remediate")
+            // C-R5: a capstone fill-blank keeps the example's English. It is the only
+            // thing that says which word the frame wants, and the content ships frames
+            // that are identical across two items — without it a correct French answer
+            // is tallied as "slipped" and lapsed at capstone weight.
+            if q.kind == .fillBlank {
+                #expect(q.hint == g.exampleTranslation)
+            }
         }
+        #expect(schedule.contains { $0.kind == .fillBlank && $0.hint != nil })
         // Capstone ignores AI questions entirely.
         let ai = [LessonQuestion(gap: gaps[0], kind: .multipleChoice, prompt: "?", correctAnswer: "k0-en", options: ["k0-en", "b", "c"]),
                   LessonQuestion(gap: gaps[0], kind: .multipleChoice, prompt: "?", correctAnswer: "k0-en", options: ["k0-en", "b", "c"])]

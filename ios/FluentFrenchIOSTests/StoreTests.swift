@@ -539,16 +539,43 @@ struct StoreTests {
         #expect(s.lessonsSinceCapstone == 0)
         #expect(s.lessonsCompleted(on: now) == 2)
 
-        // Abandoned with answers: bookkeeping, no completion XP, not a lesson done.
+        // Abandoned with answers: bookkeeping, no completion XP, not a lesson done —
+        // and it does not advance the capstone cadence (firstrun-5-1): quitting or
+        // running out of hearts must never bring the capstone forward.
         s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 2, now: now)
         #expect(s.sessionIndex == 3)
-        #expect(s.lessonsSinceCapstone == 1)
+        #expect(s.lessonsSinceCapstone == 0)
         #expect(s.lessonsCompleted(on: now) == 2)
         #expect(s.xp == 2 * Tuning.xpPerLessonComplete + Tuning.xpCapstoneBonus)
 
         // Abandoned with nothing answered: a no-op.
         s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 0, now: now)
         #expect(s.sessionIndex == 3)
+    }
+
+    /// firstrun-5-1: the capstone is a delayed mixed test of what stuck, so only a
+    /// lesson played to the end may walk the cadence toward it. Four hearts-out or
+    /// quit lessons used to make Home offer a capstone to a learner who had
+    /// completed nothing and retained least.
+    @Test func abandonedLessonsNeverWalkTheCapstoneCadence() {
+        let s = EngineFixtures.store()
+        for _ in 0..<Tuning.capstoneEveryNLessons {
+            s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 3, now: now)
+        }
+        #expect(s.sessionIndex == Tuning.capstoneEveryNLessons, "the sessions still happened")
+        #expect(s.lessonsCompleted(on: now) == 0)
+        #expect(s.lessonsSinceCapstone == 0, "no capstone is offered on abandoned lessons alone")
+        #expect(s.lessonsSinceCapstone < Tuning.capstoneEveryNLessons)
+
+        // Lessons played to the end do walk it, and reaching the cadence is what
+        // Home reads to offer the capstone.
+        for _ in 0..<Tuning.capstoneEveryNLessons {
+            s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        }
+        #expect(s.lessonsSinceCapstone == Tuning.capstoneEveryNLessons)
+        // A capstone resets the cadence whether or not it was finished.
+        s.completeLesson(targetConceptId: nil, isCapstone: true, abandoned: true, answered: 2, now: now)
+        #expect(s.lessonsSinceCapstone == 0)
     }
 
     @Test func lessonMinutesAndActivityHistoryArePrunedButTotalsSurvive() {

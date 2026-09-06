@@ -171,7 +171,12 @@ nonisolated struct LessonScheduler {
                 let kind = kinds(for: gap, at: min(.recall, maxLevel(for: gap)))[0]
                 if var q = question(for: gap, kind: kind, role: role, pool: pool, optionCount: optionCount, rng: &rng) {
                     q.isCapstone = true
-                    q.hint = nil
+                    // The hint STAYS. A fill-blank's hint is the example's English —
+                    // the only thing that says which word the frame wants, and the
+                    // content ships frames that are word-for-word identical across two
+                    // items ("Il est ___ heures." for both trois and cinq). Without it
+                    // a correct French answer is graded "slipped" and the capstone
+                    // records a lapse at capstone weight on an item the learner knows.
                     rounds[0].append(q)
                 }
                 continue

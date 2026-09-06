@@ -76,7 +76,6 @@ nonisolated enum IdiomData {
         .init(id: "a5", french: "Être comme un poisson dans l'eau", literal: "To be like a fish in water", meaning: "To feel completely at ease", example: "Sur scène, elle est comme un poisson dans l'eau.", exampleTranslation: "On stage, she's in her element.", category: .animals),
         .init(id: "a6", french: "Avoir d'autres chats à fouetter", literal: "To have other cats to whip", meaning: "To have other fish to fry", example: "Je n'ai pas le temps, j'ai d'autres chats à fouetter.", exampleTranslation: "I don't have time, I have bigger fish to fry.", category: .animals),
         .init(id: "a7", french: "Donner sa langue au chat", literal: "To give your tongue to the cat", meaning: "To give up guessing", example: "Je ne sais pas, je donne ma langue au chat.", exampleTranslation: "I don't know, I give up.", category: .animals),
-        .init(id: "a8", french: "Il pleut des cordes", literal: "It's raining ropes", meaning: "It's raining cats and dogs", example: "Prends ton parapluie, il pleut des cordes.", exampleTranslation: "Take your umbrella, it's pouring.", category: .animals),
         .init(id: "a9", french: "Être une poule mouillée", literal: "To be a wet hen", meaning: "To be a coward", example: "Ne sois pas une poule mouillée, saute !", exampleTranslation: "Don't be a chicken, jump!", category: .animals),
         .init(id: "a10", french: "Avoir une mémoire d'éléphant", literal: "To have an elephant's memory", meaning: "To have an excellent memory", example: "Ma grand-mère a une mémoire d'éléphant.", exampleTranslation: "My grandmother has an excellent memory.", category: .animals),
         .init(id: "a11", french: "Être têtu comme une mule", literal: "To be stubborn like a mule", meaning: "To be very stubborn", example: "Il est têtu comme une mule.", exampleTranslation: "He's as stubborn as a mule.", category: .animals),
@@ -88,7 +87,6 @@ nonisolated enum IdiomData {
         .init(id: "a17", french: "Sauter du coq à l'âne", literal: "To jump from the rooster to the donkey", meaning: "To jump from one topic to another", example: "Elle saute toujours du coq à l'âne.", exampleTranslation: "She always jumps from one topic to another.", category: .animals),
         .init(id: "a18", french: "Avoir un chat dans la gorge", literal: "To have a cat in the throat", meaning: "To have a frog in your throat", example: "Excuse-moi, j'ai un chat dans la gorge.", exampleTranslation: "Excuse me, I have a frog in my throat.", category: .animals),
         .init(id: "a19", french: "Prendre le taureau par les cornes", literal: "To take the bull by the horns", meaning: "To tackle a problem head-on", example: "Il faut prendre le taureau par les cornes.", exampleTranslation: "We need to take the bull by the horns.", category: .animals),
-        .init(id: "a20", french: "Avoir le cœur sur la main", literal: "To have the heart on the hand", meaning: "To be very generous", example: "Elle a le cœur sur la main, elle aide tout le monde.", exampleTranslation: "She's very generous, she helps everyone.", category: .animals),
     ]
 
     static let food: [FrenchIdiom] = [
@@ -107,7 +105,6 @@ nonisolated enum IdiomData {
         .init(id: "f13", french: "Rouler quelqu'un dans la farine", literal: "To roll someone in flour", meaning: "To trick or deceive someone", example: "Ce vendeur nous a roulés dans la farine.", exampleTranslation: "That seller tricked us.", category: .food),
         .init(id: "f14", french: "Avoir un cœur d'artichaut", literal: "To have an artichoke heart", meaning: "To fall in love easily", example: "Elle a un cœur d'artichaut.", exampleTranslation: "She falls in love at the drop of a hat.", category: .food),
         .init(id: "f15", french: "Mettre de l'eau dans son vin", literal: "To put water in your wine", meaning: "To compromise / moderate", example: "Il devra mettre de l'eau dans son vin.", exampleTranslation: "He'll have to compromise.", category: .food),
-        .init(id: "f16", french: "Se mettre en quatre", literal: "To put oneself in four", meaning: "To bend over backwards", example: "Elle se met en quatre pour ses invités.", exampleTranslation: "She bends over backwards for her guests.", category: .food),
     ]
 
     static let body: [FrenchIdiom] = [
@@ -127,6 +124,7 @@ nonisolated enum IdiomData {
         .init(id: "b14", french: "Avoir le cœur gros", literal: "To have a big heart", meaning: "To be sad / heavy-hearted", example: "J'ai le cœur gros de partir.", exampleTranslation: "I'm sad to leave.", category: .body),
         .init(id: "b15", french: "Faire les gros yeux", literal: "To make big eyes", meaning: "To give a stern look", example: "La mère a fait les gros yeux à son fils.", exampleTranslation: "The mother gave her son a stern look.", category: .body),
         .init(id: "b16", french: "Avoir les yeux plus gros que le ventre", literal: "To have eyes bigger than the belly", meaning: "To bite off more than you can chew", example: "J'ai eu les yeux plus gros que le ventre.", exampleTranslation: "I bit off more than I could chew.", category: .body),
+        .init(id: "a20", french: "Avoir le cœur sur la main", literal: "To have the heart on the hand", meaning: "To be very generous", example: "Elle a le cœur sur la main, elle aide tout le monde.", exampleTranslation: "She's very generous, she helps everyone.", category: .body),
     ]
 
     static let weather: [FrenchIdiom] = [
@@ -142,6 +140,7 @@ nonisolated enum IdiomData {
         .init(id: "w10", french: "Tomber des nues", literal: "To fall from the clouds", meaning: "To be completely surprised", example: "Je suis tombé des nues.", exampleTranslation: "I was floored.", category: .weather),
         .init(id: "w11", french: "Être dans la lune", literal: "To be in the moon", meaning: "To be daydreaming", example: "Réveille-toi, tu es dans la lune !", exampleTranslation: "Wake up, you're daydreaming!", category: .weather),
         .init(id: "w12", french: "Promettre la lune", literal: "To promise the moon", meaning: "To promise the impossible", example: "Les politiciens promettent toujours la lune.", exampleTranslation: "Politicians always promise the moon.", category: .weather),
+        .init(id: "a8", french: "Il pleut des cordes", literal: "It's raining ropes", meaning: "It's raining cats and dogs", example: "Prends ton parapluie, il pleut des cordes.", exampleTranslation: "Take your umbrella, it's pouring.", category: .weather),
     ]
 
     static let emotions: [FrenchIdiom] = [
@@ -166,7 +165,6 @@ nonisolated enum IdiomData {
         .init(id: "m4", french: "Jeter l'argent par les fenêtres", literal: "To throw money out the windows", meaning: "To waste money", example: "Arrête de jeter l'argent par les fenêtres !", exampleTranslation: "Stop throwing your money away!", category: .money),
         .init(id: "m5", french: "Payer les pots cassés", literal: "To pay the broken pots", meaning: "To take the blame", example: "C'est toujours moi qui paie les pots cassés.", exampleTranslation: "I'm always left to pick up the pieces.", category: .money),
         .init(id: "m6", french: "Tirer le diable par la queue", literal: "To pull the devil by the tail", meaning: "To struggle to make ends meet", example: "Ils tirent le diable par la queue.", exampleTranslation: "They struggle to make ends meet.", category: .money),
-        .init(id: "m7", french: "Mettre la main à la pâte", literal: "To put the hand in the dough", meaning: "To pitch in", example: "Tout le monde doit mettre la main à la pâte.", exampleTranslation: "Everyone needs to pitch in.", category: .money),
         .init(id: "m8", french: "Avoir carte blanche", literal: "To have a white card", meaning: "To have free rein", example: "Il lui a donné carte blanche.", exampleTranslation: "He gave her free rein.", category: .money),
         .init(id: "m9", french: "Être dans le rouge", literal: "To be in the red", meaning: "To be in debt", example: "Mon compte est dans le rouge.", exampleTranslation: "My account is in the red.", category: .money),
         .init(id: "m10", french: "Serrer la ceinture", literal: "To tighten the belt", meaning: "To cut expenses", example: "Ce mois-ci, il faut serrer la ceinture.", exampleTranslation: "This month, we need to tighten our belts.", category: .money),
@@ -197,7 +195,6 @@ nonisolated enum IdiomData {
         .init(id: "r7", french: "Connaître quelqu'un comme sa poche", literal: "To know someone like your pocket", meaning: "To know someone inside out", example: "Je le connais comme ma poche.", exampleTranslation: "I know him inside out.", category: .relationships),
         .init(id: "r8", french: "Tourner autour du pot", literal: "To turn around the pot", meaning: "To beat around the bush", example: "Arrête de tourner autour du pot.", exampleTranslation: "Stop beating around the bush.", category: .relationships),
         .init(id: "r9", french: "Prendre quelqu'un sous son aile", literal: "To take someone under one's wing", meaning: "To take someone under your wing", example: "Le mentor l'a pris sous son aile.", exampleTranslation: "The mentor took him under his wing.", category: .relationships),
-        .init(id: "r10", french: "Tomber dans les bras de Morphée", literal: "To fall into the arms of Morpheus", meaning: "To fall asleep", example: "Je suis tombé dans les bras de Morphée.", exampleTranslation: "I fell fast asleep.", category: .relationships),
     ]
 
     static let work: [FrenchIdiom] = [
@@ -212,6 +209,8 @@ nonisolated enum IdiomData {
         .init(id: "wo9", french: "Jeter l'éponge", literal: "To throw the sponge", meaning: "To throw in the towel", example: "Il a jeté l'éponge.", exampleTranslation: "He threw in the towel.", category: .work),
         .init(id: "wo10", french: "Faire ses preuves", literal: "To make one's proofs", meaning: "To prove oneself", example: "Elle a fait ses preuves rapidement.", exampleTranslation: "She proved herself quickly.", category: .work),
         .init(id: "wo11", french: "Être au four et au moulin", literal: "To be at the oven and at the mill", meaning: "To juggle many tasks at once", example: "Je ne peux pas être au four et au moulin !", exampleTranslation: "I can't be in two places at once!", category: .work),
+        .init(id: "f16", french: "Se mettre en quatre", literal: "To put oneself in four", meaning: "To bend over backwards", example: "Elle se met en quatre pour ses invités.", exampleTranslation: "She bends over backwards for her guests.", category: .work),
+        .init(id: "m7", french: "Mettre la main à la pâte", literal: "To put the hand in the dough", meaning: "To pitch in", example: "Tout le monde doit mettre la main à la pâte.", exampleTranslation: "Everyone needs to pitch in.", category: .work),
     ]
 
     static let everyday: [FrenchIdiom] = [
@@ -227,6 +226,7 @@ nonisolated enum IdiomData {
         .init(id: "ev10", french: "Tomber à pic", literal: "To fall at peak", meaning: "To come at the right time", example: "Tu tombes à pic !", exampleTranslation: "You came at just the right time!", category: .everyday),
         .init(id: "ev11", french: "Mettre la charrue avant les bœufs", literal: "To put the cart before the oxen", meaning: "To put the cart before the horse", example: "Ne mets pas la charrue avant les bœufs.", exampleTranslation: "Don't put the cart before the horse.", category: .everyday),
         .init(id: "ev12", french: "Marcher sur des œufs", literal: "To walk on eggs", meaning: "To walk on eggshells", example: "Il faut toujours marcher sur des œufs.", exampleTranslation: "You always have to walk on eggshells.", category: .everyday),
+        .init(id: "r10", french: "Tomber dans les bras de Morphée", literal: "To fall into the arms of Morpheus", meaning: "To fall asleep", example: "Je suis tombé dans les bras de Morphée.", exampleTranslation: "I fell fast asleep.", category: .everyday),
     ]
 }
 

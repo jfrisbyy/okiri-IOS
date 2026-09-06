@@ -115,11 +115,18 @@ struct LessonSessionTests {
         var s = session(for: lesson(gaps))
         #expect(s.hasHearts && s.hearts == Tuning.lessonHearts)
         var lost = 0
+        var answers = 0
         var lastOutcome: LessonAnswerOutcome? = nil
-        while s.end == nil, s.current != nil {
+        while s.end == nil, let q = s.current {
+            let wasRemedial = q.isRemedial
             let out = try answerWrongly(&s)
-            #expect(out.heartLost && !out.correct)
-            lost += 1
+            // C-R5: a scheduled miss costs a heart; a remedial retry — the second look
+            // at a miss already paid for — does not.
+            #expect(out.heartLost == !wasRemedial && !out.correct)
+            if out.heartLost { lost += 1 }
+            // A match round only counts as answered once every pair is placed; the
+            // wrong pair that ends it here never completes the round.
+            if out.roundComplete { answers += 1 }
             lastOutcome = out
             if s.end == nil {
                 let advanced = s.advance()
@@ -127,6 +134,7 @@ struct LessonSessionTests {
             }
         }
         #expect(lost == Tuning.lessonHearts)
+        #expect(answers > lost, "remedials were answered wrongly without ending the lesson")
         #expect(s.end == .outOfHearts && s.hearts == 0)
         #expect(lastOutcome?.endedByHearts == true)
         #expect(lastOutcome?.remedialQueued == false, "no remedial once the lesson is over")
@@ -136,18 +144,18 @@ struct LessonSessionTests {
         #expect(lateSubmit == nil && lateReveal == nil && !lateAdvance)
         let summary = s.summary
         #expect(summary.end == .outOfHearts)
-        #expect(!summary.missed.isEmpty && summary.missed.count <= lost)
-        #expect(summary.answered == lost)
+        #expect(!summary.missed.isEmpty && summary.missed.count <= answers)
+        #expect(summary.answered == answers)
         #expect(summary.missedGapIds.contains("g1"))
     }
 
-    /// Hearts-out is a recap, not a finished lesson (C-R2): the store keeps the
+    /// Hearts-out EARLY is a recap, not a finished lesson (C-R2): the store keeps the
     /// evidence and the per-answer XP but neither counts the day nor pays the
     /// finishing bonus; a lesson played to the end does both.
-    @Test func outOfHeartsIsNotBookedAsACompletedLesson() throws {
-        let gaps = (1...4).map { gap("g\($0)") }
+    @Test func outOfHeartsEarlyIsNotBookedAsACompletedLesson() throws {
+        let gaps = (1...6).map { gap("g\($0)") }
         let store = EngineFixtures.store(concepts: [], gaps: gaps)
-        var s = session(for: lesson(gaps))
+        var s = session(for: lesson(gaps), config: config(hearts: 1))
         var answerXP = 0
         let first = try answerCorrectly(&s)
         answerXP += first.xp
@@ -160,14 +168,16 @@ struct LessonSessionTests {
         }
         let summary = s.summary
         #expect(summary.end == .outOfHearts && !summary.isCompleted)
-        #expect(summary.answered == 1 + Tuning.lessonHearts)
+        #expect(summary.answered == 2)
+        #expect(Double(summary.plannedAnswered) / Double(summary.planned) < Tuning.heartsOutCompletionFraction)
         let xpBefore = store.xp
         let unlocked = store.completeLesson(targetConceptId: nil, isCapstone: false,
                                             abandoned: !summary.isCompleted, answered: summary.answered, now: now)
         #expect(unlocked.isEmpty)
         #expect(store.lessonsCompleted(on: now) == 0, "hearts-out never counts toward the day's lessons")
         #expect(store.xp == xpBefore && store.xp == answerXP, "only the per-answer XP, no finishing bonus")
-        #expect(store.sessionIndex == 1 && store.lessonsSinceCapstone == 1, "…but the session itself is still recorded")
+        #expect(store.sessionIndex == 1, "…but the session itself is still recorded")
+        #expect(store.lessonsSinceCapstone == 0, "a hearts-out lesson never advances the capstone cadence")
 
         // The same bookkeeping for a quit; a finished lesson counts and pays the bonus.
         var quit = session(for: lesson(gaps))
@@ -181,6 +191,58 @@ struct LessonSessionTests {
                                  abandoned: !finished.isCompleted, answered: finished.answered, now: now)
         #expect(store.lessonsCompleted(on: now) == 1)
         #expect(store.xp == answerXP + Tuning.xpPerLessonComplete)
+    }
+
+    /// C-R5: a lesson the learner worked through to the end and then lost the last
+    /// heart on is not "nothing done today" — it counts toward the day's lesson
+    /// count (Home, the daily plan and the weekly goal all read that count).
+    @Test func heartsOutAfterMostOfTheScheduleStillCountsTowardTheDay() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps), config: config(hearts: 1))
+        while s.end == nil {
+            if s.isLast {
+                _ = try answerWrongly(&s)
+            } else {
+                _ = try answerCorrectly(&s)
+                _ = s.advance()
+            }
+        }
+        let summary = s.summary
+        #expect(summary.end == .outOfHearts)
+        #expect(summary.planned > 0 && summary.plannedAnswered == summary.planned)
+        #expect(summary.isCompleted, "the whole schedule was answered — the last heart went on the last question")
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
+        #expect(store.xp == Tuning.xpPerLessonComplete, "and it pays the finishing XP")
+    }
+
+    /// C-R5: the share is measured on the questions the lesson PLANNED — the
+    /// remedials a miss inserts neither pad it nor make it harder to reach.
+    @Test func remedialsAreOutsideThePlannedShare() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps))
+        let scheduled = s.plannedCount
+        let miss = try answerWrongly(&s)
+        #expect(miss.remedialQueued)
+        #expect(s.plannedCount == scheduled, "a remedial is not a planned question")
+        #expect(s.plannedAnswered == 1)
+        var remedialsAnswered = 0
+        while s.advance() {
+            guard let q = s.current else { break }
+            if q.isRemedial {
+                _ = try answerCorrectly(&s)
+                remedialsAnswered += 1
+            } else {
+                _ = try answerCorrectly(&s)
+            }
+        }
+        #expect(remedialsAnswered > 0)
+        let summary = s.summary
+        #expect(summary.planned == scheduled)
+        #expect(summary.plannedAnswered == scheduled)
+        #expect(summary.answered == scheduled + remedialsAnswered)
     }
 
     @Test func quitEndsTheSession() throws {
@@ -877,6 +939,23 @@ struct LessonSessionTests {
         #expect(arrange.kind == .arrange && LessonSpeech.spokenPrompt(for: arrange) == nil)
         #expect(LessonSpeech.spokenAnswer(for: arrange) == "g1-fr a b c d")
         #expect(LessonSpeech.spokenPrompt(for: scheduler.matchQuestion(for: pool)) == nil)
+    }
+
+    /// lesson-5-5: an AI-written fill-blank's sentence is the model's own, and the
+    /// listen button after the answer reads THAT sentence completed — not the
+    /// content example, which is different French the learner never saw.
+    @Test func speechReadsTheSentenceOnScreenForAnAIFillBlank() throws {
+        let g = gap("g1", reviewCount: 3, consecutiveCorrect: 1)
+        var q = LessonQuestion(gap: g, kind: .fillBlank,
+                               prompt: "\(AnswerGrader.blankToken) synthetic frame",
+                               correctAnswer: "g1-fr")
+        q.source = .ai
+        #expect(q.prompt != g.exampleSentence)
+        #expect(LessonSpeech.spokenAnswer(for: q) == "g1-fr synthetic frame")
+
+        // A question with no usable prompt still falls back to the content example.
+        let bare = LessonQuestion(gap: g, kind: .fillBlank, prompt: "", correctAnswer: "g1-fr")
+        #expect(LessonSpeech.spokenAnswer(for: bare) == g.exampleSentence)
     }
 
     // MARK: C10 — feedback

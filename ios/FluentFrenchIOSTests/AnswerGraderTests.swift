@@ -100,6 +100,32 @@ struct AnswerGraderTests {
         }
     }
 
+    /// lesson-5-4: a headword written with the dictionary's ellipsis ("ne... pas")
+    /// is a frame, not a spelling. Nothing on screen asks for the dots, so the
+    /// spelling a learner actually types grades correct.
+    @Test func ellipsisHeadwordsAcceptTheSpellingWithoutTheDots() {
+        let not = gap("ne... pas", en: "not", category: .grammar)
+        #expect(AnswerGrader.grade(typed: "ne pas", against: not, expected: "ne... pas", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "ne... pas", against: not, expected: "ne... pas", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "NE PAS", against: not, expected: "ne... pas", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "pas", against: not, expected: "ne... pas", kind: .translation) == .incorrect,
+                "half the frame is still half the frame")
+
+        let never = gap("ne... jamais", en: "never", category: .grammar)
+        #expect(AnswerGrader.grade(typed: "ne jamais", against: never, expected: "ne... jamais", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "ne parle pas", against: never, expected: "ne... jamais", kind: .translation) == .incorrect)
+
+        // A leading ellipsis leaves punctuation behind; the remainder is the answer.
+        let tag = gap("..., quoi", en: "you know", category: .phrasing)
+        #expect(AnswerGrader.grade(typed: "quoi", against: tag, expected: "..., quoi", kind: .translation) == .correct)
+
+        // The collapsed spelling is offered as an accepted alternative, once.
+        let forms = AnswerGrader.acceptedForms(for: not, expected: "ne... pas", kind: .translation)
+        #expect(forms.contains { $0.normalized == "ne pas" })
+        #expect(forms.filter { $0.normalized == "ne pas" }.count == 1)
+        #expect(AnswerGrader.ellipsisForms(of: "le pain").isEmpty, "no ellipsis, nothing added")
+    }
+
     /// The headword is accepted for a blank only when it IS the answer (article
     /// leniency). When the item's blank is an inflected form — the conjugation or
     /// agreement the item exists to teach — the dictionary form is wrong.

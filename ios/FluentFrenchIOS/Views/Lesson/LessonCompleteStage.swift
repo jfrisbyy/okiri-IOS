@@ -41,10 +41,20 @@ struct LessonCompleteStage: View {
                         .font(LessonFont.hero).foregroundStyle(Theme.text)
                         .multilineTextAlignment(.center)
                     if outOfHearts {
-                        Text("The lesson stopped at zero hearts. Here's what slipped — and a quick way to go over it.")
-                            .font(.subheadline).foregroundStyle(Theme.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(spacing: 8) {
+                            Text("The lesson stopped at zero hearts. Here's what slipped — and a quick way to go over it.")
+                                .font(.subheadline).foregroundStyle(Theme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                            // Never leave the learner to work out why Home still says
+                            // zero lessons today: say which way it went (C5).
+                            Text(summary.isCompleted
+                                 ? "You answered most of it, so it still counts toward today. Your answers are saved."
+                                 : "It stopped too early to count toward today's lessons — but every answer you gave was saved.")
+                                .font(.footnote).foregroundStyle(Theme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     if model.isCapstone {
                         capstoneTally(summary)

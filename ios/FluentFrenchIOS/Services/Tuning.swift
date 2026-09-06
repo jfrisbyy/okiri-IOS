@@ -95,7 +95,14 @@ nonisolated enum Tuning {
 
     // MARK: Hearts (Package A16 / C5 — hearts are real)
     /// Hearts a lesson starts with; the lesson ends with a recap when they reach zero.
-    static let lessonHearts: Int = 3
+    /// A scheduled lesson runs ~14 questions, so this has to survive a normal
+    /// beginner's miss rate — at three, a lesson at 80 % first-try accuracy ended
+    /// early more often than it finished, and an ended lesson counts for nothing.
+    static let lessonHearts: Int = 5
+    /// Whether the stepped-down remedial retry costs a heart too (it does not: the
+    /// miss it comes from already cost one, and charging twice ends the lesson on
+    /// the very item the learner is being given a second look at).
+    static let remedialMissCostsHeart: Bool = false
     /// The capstone quiz is a delayed mixed test, not a drill: it never ends early on hearts.
     static let capstoneHasHearts: Bool = false
 
@@ -378,8 +385,10 @@ nonisolated extension Tuning {
     static let lessonPraiseAccuracy: Int = 80
     /// First-attempt accuracy (percent) from which the completion screen calls it solid work (below: "keep going").
     static let lessonEncourageAccuracy: Int = 50
-    /// A lesson that ended at zero hearts counts toward the day's lesson count and earns the finishing XP (it does not: only a lesson played to the end completes).
+    /// Every lesson that ended at zero hearts counts toward the day's lesson count and earns the finishing XP (it does not — see `heartsOutCompletionFraction` for the one that does).
     static let outOfHeartsCountsAsComplete: Bool = false
+    /// Share of a lesson's scheduled questions a hearts-out recap must have answered to still count toward the day (a lesson worked almost to the end is not "nothing done today"; one abandoned early is).
+    static let heartsOutCompletionFraction: Double = 0.75
     /// Most foreground minutes one lesson can credit (lesson time follows the activity rule: nothing under `minActivitySeconds`, rounded, capped) — C14 / D9.
     static let lessonCreditCapMinutes: Int = 30
 }

@@ -753,6 +753,50 @@ struct ReadCaptureTests {
         #expect(!KeyVocabulary.words(in: carthage).contains("Méditerranée"))
     }
 
+    // MARK: - read-5-1 A tapped word and its chip become the SAME deck card
+
+    @Test func aTappedWordTakesTheSameHeadwordAsItsChip() {
+        // The reader's body spellings, as they reach `KeyVocabulary.headword`.
+        #expect(KeyVocabulary.headword(for: "l'énergie") == "énergie")
+        #expect(KeyVocabulary.headword(for: "d'experts.") == "experts")
+        #expect(KeyVocabulary.headword(for: "«mensuel»") == "mensuel")
+        #expect(KeyVocabulary.headword(for: "m'a") == "a", "the elided pronoun is not part of the word")
+        #expect(KeyVocabulary.headword(for: "J'ai", opensSentence: true) == "ai")
+        #expect(KeyVocabulary.headword(for: "Fondée", opensSentence: true) == "fondée",
+                "a sentence opener is saved in its dictionary spelling")
+        #expect(KeyVocabulary.headword(for: "L'Europe", opensSentence: true) == "Europe",
+                "a capital that survives the elision is a name, not a sentence opener")
+        #expect(KeyVocabulary.headword(for: "Montmartre") == "Montmartre",
+                "a capital inside a sentence is a name and keeps it")
+        #expect(KeyVocabulary.headword(for: "aujourd'hui") == "aujourd'hui",
+                "an apostrophe inside a word is not an elision")
+        #expect(KeyVocabulary.headword(for: "rendez-vous") == "rendez-vous")
+        #expect(KeyVocabulary.headword(for: "") == "")
+        #expect(!CaptureBuilder.isAcceptableHeadword(KeyVocabulary.headword(for: "2030")),
+                "a number is still no card, whatever the tap does with it")
+    }
+
+    @Test func everyWordOfAShippedPieceTapsToTheHeadwordItsChipWouldSave() {
+        for piece in ReadingLibrary.pieces {
+            let chips = KeyVocabulary.words(in: piece.body)
+            let chipByKey = Dictionary(chips.map { (SentenceExtractor.fold($0), $0) },
+                                       uniquingKeysWith: { first, _ in first })
+            for sentence in SentenceExtractor.sentences(in: piece.body) {
+                for (position, token) in sentence.split(whereSeparator: { $0.isWhitespace }).enumerated() {
+                    let head = KeyVocabulary.headword(for: String(token), opensSentence: position == 0)
+                    guard head.contains(where: { $0.isLetter }) else { continue }
+                    #expect(!head.hasPrefix("l'") && !head.hasPrefix("d'") && !head.hasPrefix("j'")
+                            && !head.hasPrefix("m'") && !head.hasPrefix("qu'"),
+                            "tapping \(token) would save the elided chunk \(head)")
+                    #expect(CaptureBuilder.isAcceptableHeadword(head), "tapping \(token) gives \(head), which the deck refuses")
+                    if let chip = chipByKey[SentenceExtractor.fold(head)] {
+                        #expect(head == chip, "tapping \(token) saves \(head) but its chip saves \(chip) — two cards for one word")
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - read-4-2 A form two tenses spell alike names both tenses
 
     private func conjugationDraft(_ form: String, pronouns: [String], verb: FrenchVerb,
@@ -849,6 +893,35 @@ struct ReadCaptureTests {
         }
         #expect(gap.frenchWord == longest.french)
         #expect(gap.category == .phrasing)
+    }
+
+    // MARK: - read-5-3 An idiom sits under the theme the filter promises
+
+    @Test func everyIdiomShelfHoldsOnlyItsOwnTheme() {
+        let shelves: [(IdiomCategory, [FrenchIdiom])] = [
+            (.animals, IdiomData.animals), (.food, IdiomData.food), (.body, IdiomData.body),
+            (.weather, IdiomData.weather), (.emotions, IdiomData.emotions), (.money, IdiomData.money),
+            (.time, IdiomData.time), (.relationships, IdiomData.relationships),
+            (.work, IdiomData.work), (.everyday, IdiomData.everyday),
+        ]
+        for (theme, shelf) in shelves {
+            for idiom in shelf {
+                #expect(idiom.category == theme,
+                        "\(idiom.french) sits on the \(theme.label) shelf but is filed under \(idiom.category.label)")
+            }
+        }
+        #expect(shelves.reduce(0) { $0 + $1.1.count } == IdiomData.all.count, "every shelf reaches the list")
+        #expect(Set(IdiomData.all.map(\.id)).count == IdiomData.all.count, "ids stay unique after refiling")
+        // The entries the audit named, now under the theme they mean.
+        let byId = Dictionary(IdiomData.all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        #expect(byId["a8"]?.category == .weather, "Il pleut des cordes is weather, not animals")
+        #expect(byId["a20"]?.category == .body, "Avoir le cœur sur la main is a body idiom")
+        #expect(byId["f16"]?.category == .work, "Se mettre en quatre is effort, not food")
+        #expect(byId["m7"]?.category == .work, "Mettre la main à la pâte is effort, not money")
+        #expect(byId["r10"]?.category == .everyday, "Tomber dans les bras de Morphée is sleep, not relationships")
+        // What the chip filter shows is what the shelf holds (IdiomsView filters on `all`).
+        #expect(IdiomData.all.filter { $0.category == .weather }.contains { $0.french == "Il pleut des cordes" },
+                "a learner tapping Weather & Nature finds the idiom that means it's pouring")
     }
 
     // MARK: - read-4-5 An accent card carries a pronunciation a beginner can read

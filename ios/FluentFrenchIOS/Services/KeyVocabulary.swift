@@ -72,6 +72,22 @@ nonisolated enum KeyVocabulary {
         return result
     }
 
+    /// The headword form of ONE word as the reader met it, so tapping
+    /// "l'énergie" in the body and tapping the "énergie" chip save the SAME deck
+    /// card (read-5-1): edge punctuation and a leading elision come off
+    /// ("d'experts" → "experts", "J'ai" → "ai"), and a capital that merely opens
+    /// a sentence is un-capitalised ("Fondée" → "fondée"). A capital that
+    /// survives an elision ("L'Europe" → "Europe") or sits inside a sentence is
+    /// a name and is kept. Phrases are not headwords — pass a single word.
+    static func headword(for word: String, opensSentence: Bool = false) -> String {
+        let normalised = word
+            .replacingOccurrences(of: "’", with: "'")
+            .trimmingCharacters(in: edgePunctuation)
+        let stripped = stripElision(normalised)
+        guard opensSentence, !stripped.isEmpty, stripped.count == normalised.count else { return stripped }
+        return lowercasingFirst(stripped)
+    }
+
     /// The words of a sentence as the learner reads them: original spelling and
     /// accents kept (a chip becomes a headword, so "découvert" must not fold to
     /// "decouvert"), edge punctuation dropped, elided articles split off.

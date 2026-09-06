@@ -37,8 +37,8 @@ struct ArticleReaderView: View {
             subtitle: "\(article.source) · \(article.timeAgo)",
             level: article.level,
             levelLabel: article.levelLabel,
-            tint: Color(hex: article.category.hex),
-            categoryLabel: article.category.label,
+            tint: article.category.map { Color(hex: $0.hex) } ?? Theme.primary,
+            categoryLabel: article.category?.label,
             regionLabel: article.region?.label,
             regionEmoji: article.region?.emoji,
             imageUrl: article.imageUrl,
@@ -59,6 +59,9 @@ private enum BlockKind { case heading, paragraph, bullet, numbered }
 private struct Token: Identifiable, Hashable {
     let id: Int
     let text: String
+    /// True when this word starts a sentence, so its capital is punctuation
+    /// rather than a name and the headword rule may un-capitalise it (read-5-1).
+    let opensSentence: Bool
 }
 
 private struct ContentBlock: Identifiable {
@@ -428,12 +431,15 @@ struct WordReader: View {
 
     @ViewBuilder
     private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
-        let cleaned = Self.clean(token.text)
+        // The word as the deck would keep it, so the underline below marks a
+        // saved word wherever it is met: "l'énergie" in the body and the
+        // "énergie" chip are the same card (read-5-1).
+        let headword = KeyVocabulary.headword(for: token.text, opensSentence: token.opensSentence)
         // "2030" or "%" is text, not a word: it gets no tap, no button trait and
         // no "opens the translation" promise the reader cannot keep.
-        let lookupable = Self.isLookupable(cleaned)
+        let lookupable = Self.isLookupable(headword)
         let highlighted = isHighlighted(token.id)
-        let saved = lookupable && savedTerms.contains(cleaned.lowercased())
+        let saved = lookupable && savedTerms.contains(headword.lowercased())
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
         let wordView = Text(token.text)
             .font(Theme.scaledFontValue(size, weight: weight, for: sizeCategory))
@@ -549,7 +555,7 @@ struct WordReader: View {
     // MARK: Gesture handlers
 
     private func handleTap(token: Token, blockId: Int) {
-        present(term: Self.clean(token.text))
+        present(term: token.text, opensSentence: token.opensSentence)
     }
 
     /// Long-press-then-drag: hold briefly, then sweep your finger across the
@@ -632,9 +638,14 @@ struct WordReader: View {
             endSelection(); return
         }
         let lo = min(a, f), hi = max(a, f)
-        let term = lo == hi ? tokenText(lo) : Self.phrase(in: blocks, from: lo, to: hi)
         endSelection()
-        present(term: term)
+        // A one-word selection is a tap by another name and takes the same
+        // headword rule; a phrase is kept exactly as it was swept.
+        if lo == hi, let hit = token(withId: lo) {
+            present(term: hit.text, opensSentence: hit.opensSentence)
+        } else if lo != hi {
+            present(term: Self.phrase(in: blocks, from: lo, to: hi))
+        }
     }
 
     /// Find the token under a point, falling back to the nearest word on the
@@ -650,17 +661,23 @@ struct WordReader: View {
         return best
     }
 
-    private func tokenText(_ id: Int) -> String {
+    private func token(withId id: Int) -> Token? {
         for block in blocks {
-            for t in block.tokens where t.id == id { return Self.clean(t.text) }
+            for t in block.tokens where t.id == id { return t }
         }
-        return ""
+        return nil
     }
 
     /// Open the gloss for a term with the sentence it was met in as context
     /// (E5) — never the whole article.
-    private func present(term: String) {
-        let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func present(term: String, opensSentence: Bool = false) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One word goes through the SAME headword rule as a Key Vocabulary chip,
+        // so a body tap on "d'experts" and the "experts" chip save one card
+        // rather than two (read-5-1). A swept phrase is left as selected.
+        let clean = trimmed.contains(where: { $0.isWhitespace })
+            ? trimmed
+            : KeyVocabulary.headword(for: trimmed, opensSentence: opensSentence)
         // A bare number ("2030") or a stray symbol ("%", "€") has no meaning to
         // look up and must never become a deck card, so it is not a term at all —
         // and neither is a run of text longer than a phrase (the drag is clamped,
@@ -718,8 +735,14 @@ struct WordReader: View {
 
             let words = content.split(separator: " ").map(String.init)
             guard !words.isEmpty else { continue }
-            let tokens = words.map { w -> Token in
-                let t = Token(id: tokenId, text: w); tokenId += 1; return t
+            // The first word of a line opens a sentence; after that, whichever
+            // word follows a full stop does.
+            var opensSentence = true
+            var tokens: [Token] = []
+            for word in words {
+                tokens.append(Token(id: tokenId, text: word, opensSentence: opensSentence))
+                tokenId += 1
+                opensSentence = CaptureBuilder.endsSentence(word)
             }
             blocks.append(ContentBlock(id: blockId, kind: kind, number: number, tokens: tokens))
             blockId += 1
@@ -737,10 +760,6 @@ struct WordReader: View {
         }
         let joined = parts.joined(separator: " ")
         return joined.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:«»\"'()—–…"))
-    }
-
-    static func clean(_ s: String) -> String {
-        s.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:«»\"'()—–…0123456789\n\t"))
     }
 
     /// True when a token is something the dictionary could answer for: it has at

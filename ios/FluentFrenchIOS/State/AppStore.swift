@@ -458,9 +458,10 @@ final class AppStore {
     /// the headless driver runs the same loop the app does.
     ///
     /// `abandoned` with `answered > 0` runs the same bookkeeping (evidence was
-    /// gathered) but awards no completion XP and does not count as a lesson done
-    /// today; abandoned with nothing answered is a no-op. The lesson trigger
-    /// (`markLessonOffered`) is reset here, and the write is flushed immediately.
+    /// gathered) but awards no completion XP, does not count as a lesson done
+    /// today and does not advance the capstone cadence; abandoned with nothing
+    /// answered is a no-op. The lesson trigger (`markLessonOffered`) is reset here,
+    /// and the write is flushed immediately.
     @discardableResult
     func completeLesson(targetConceptId: String?, isCapstone: Bool, abandoned: Bool = false,
                         answered: Int = 0, now: Date = Date()) -> [String] {
@@ -480,13 +481,14 @@ final class AppStore {
             }
             concepts[idx].lastTaughtState = stateNow
         }
-        // Capstone resets the cadence counter; normal lessons advance it.
-        if isCapstone {
-            lessonsSinceCapstone = 0
-        } else {
-            lessonsSinceCapstone += 1
-        }
+        // Capstone resets the cadence counter unconditionally; only a lesson played
+        // to the end advances it (firstrun-5-1). The capstone is a delayed mixed test
+        // of what stuck, so quitting or running out of hearts must not bring it
+        // forward — four hearts-out lessons used to offer a capstone to a learner who
+        // had completed nothing that day.
+        if isCapstone { lessonsSinceCapstone = 0 }
         if !abandoned {
+            if !isCapstone { lessonsSinceCapstone += 1 }
             let key = dayKey(now)
             lessonsCompletedByDay[key] = (lessonsCompletedByDay[key] ?? 0) + 1
             xp += Tuning.xpPerLessonComplete + (isCapstone ? Tuning.xpCapstoneBonus : 0)
@@ -2071,6 +2073,37 @@ final class AppStore {
                 !existingIds.contains($0.id) && !existing.contains(FoundationSeeder.headwordKey($0.frenchWord))
             }
             gaps.insert(contentsOf: fresh, at: 0)
+            // firstrun-5-2: "anything you miss becomes something to teach" has to be
+            // true even when the missed item is already in the record — and for a
+            // seeded base concept it always is, so the insert above is a no-op there.
+            // A miss is real evidence: it lands on the concept (weighted as a
+            // check-in miss when the engine currently believes the concept is
+            // mastered — the strongest ghost signal placement can give), a concept
+            // that survives the miss gets its verification brought forward to now,
+            // and its material is brought forward so the next lesson can teach it.
+            // Nothing is lowered by hand: the level and ability above still only
+            // rise (D8).
+            for cid in result.missedConceptIds {
+                guard let idx = concepts.firstIndex(where: { $0.id == cid }) else { continue }
+                let wasMastered = concepts[idx].state == .mastered
+                recordConceptAnswer(conceptId: cid, correct: false, isCheckIn: wasMastered, now: now)
+                if wasMastered && concepts[idx].state == .mastered { concepts[idx].nextCheckInAt = now }
+                // Bring its material forward — the same dose a first placement seeds
+                // for a missed probe (`Tuning.placementMissSeedItems`), earliest
+                // first, so a retake teaches what was missed without dumping the
+                // concept's whole staggered curriculum onto one day.
+                let ownIndices = gaps.indices.filter { gaps[$0].conceptId == cid && !gaps[$0].isProbe }
+                let alreadyDue = ownIndices.filter { gaps[$0].nextReviewAt <= now }.count
+                let wanted = Tuning.placementMissSeedItems - alreadyDue
+                if wanted > 0 {
+                    for gi in ownIndices.filter({ gaps[$0].nextReviewAt > now })
+                        .sorted(by: { gaps[$0].nextReviewAt < gaps[$1].nextReviewAt })
+                        .prefix(wanted) {
+                        gaps[gi].nextReviewAt = now
+                        gaps[gi].fsrs?.dueAt = now
+                    }
+                }
+            }
             if journeyStartedAt == nil { journeyStartedAt = now }
         }
         hasCompletedAssessment = true
@@ -2359,13 +2392,16 @@ extension AppStore {
 
     /// "Due now": every learner-visible gap whose schedule wants it at `now` — unmastered
     /// gaps at or past `nextReviewAt`, plus mastered gaps due for a check
-    /// (`dueMasteredGaps`). Probes never count, and neither do gaps still waiting
-    /// for a meaning (`needsTranslation`, E4): the selector cannot offer them
-    /// (`ConceptSelector.isPracticable`), so counting them would promise a lesson
-    /// that opens on "Nothing is ready to practice". They are surfaced separately
-    /// as `waitingForMeaning`.
+    /// (`dueMasteredGaps`). Probes never count, and neither do gaps a lesson cannot
+    /// ask yet: ones still waiting for a meaning (`needsTranslation`, E4) and
+    /// Foundation items of a prerequisite-blocked concept (firstrun-5-3). The
+    /// selector rejects both (`ConceptSelector.isPracticable`), so counting them
+    /// would promise a lesson that opens on "Nothing is ready to practice" — and a
+    /// blocked Foundation item can sit there for weeks. They are surfaced separately
+    /// as `waitingForMeaning` and `blockedByPrerequisite`.
     func dueNow(at now: Date) -> [GapItem] {
-        visibleGaps.filter { $0.nextReviewAt <= now && !$0.needsTranslation } + dueMasteredGaps(at: now)
+        visibleGaps.filter { $0.nextReviewAt <= now && !$0.needsTranslation && !isPrerequisiteBlocked($0) }
+            + dueMasteredGaps(at: now).filter { !isPrerequisiteBlocked($0) }
     }
 
     /// Words saved without a meaning (offline, no key, service down) that a lesson
@@ -2375,6 +2411,24 @@ extension AppStore {
         visibleGaps.filter { $0.needsTranslation }
     }
 
+    /// Curriculum items whose concept the learner is not ready for yet: the second
+    /// honest home for what `dueNow` leaves out. A Foundation gap is only
+    /// practicable once its concept's prerequisites are mastered — the same rule
+    /// `ConceptSelector.isPracticable` applies, kept here so the "due" numbers and
+    /// the selector never disagree. A gap the learner captured themselves is never
+    /// blocked (E2), and an untagged gap carries no prerequisite chain.
+    func isPrerequisiteBlocked(_ gap: GapItem) -> Bool {
+        guard gap.sourceType == .foundation, let cid = gap.conceptId,
+              let concept = concept(cid) else { return false }
+        return concept.state == .neverObserved && !arePrerequisitesMet(concept)
+    }
+
+    /// Gaps `dueNow` and `upcoming` leave out because their concept is still
+    /// prerequisite-blocked (`isPrerequisiteBlocked`).
+    func blockedByPrerequisite(at now: Date) -> [GapItem] {
+        visibleGaps.filter { $0.nextReviewAt <= now && !$0.needsTranslation && isPrerequisiteBlocked($0) }
+    }
+
     var dueNow: [GapItem] { dueNow(at: Date()) }
 
     /// "Coming up": gaps due within `Tuning.upcomingWindowDays` that are not due now —
@@ -2382,9 +2436,12 @@ extension AppStore {
     /// check falls inside it. Disjoint from `dueNow`.
     func upcoming(at now: Date) -> [GapItem] {
         let horizon = now.addingTimeInterval(Tuning.upcomingWindowDays * 86_400)
-        let unmastered = visibleGaps.filter { $0.nextReviewAt > now && $0.nextReviewAt <= horizon && !$0.needsTranslation }
+        let unmastered = visibleGaps.filter {
+            $0.nextReviewAt > now && $0.nextReviewAt <= horizon && !$0.needsTranslation && !isPrerequisiteBlocked($0)
+        }
         let mastered = masteredGaps.filter {
             !$0.isDueForMasteryCheck(at: now) && $0.nextReviewAt > now && $0.nextReviewAt <= horizon
+                && !isPrerequisiteBlocked($0)
         }
         return unmastered + mastered
     }

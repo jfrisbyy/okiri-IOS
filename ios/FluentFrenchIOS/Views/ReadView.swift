@@ -490,8 +490,16 @@ struct ReadView: View {
         .scrollIndicators(.hidden)
     }
 
+    /// The colour a story's card is drawn in: its theme's when the feed asked for
+    /// one, the app's own accent when it did not — never a theme colour that
+    /// stands for a category nobody assigned (read-5-2).
+    private func cardTint(_ article: NewsArticle) -> Color {
+        article.category.map { Color(hex: $0.hex) } ?? Theme.primary
+    }
+
     private func feedCard(_ article: NewsArticle, hero: Bool) -> some View {
         let height: CGFloat = (hero ? 230 : 150) * cardScale
+        let tint = cardTint(article)
         return Theme.backgroundTertiary
             .frame(height: height)
             .overlay {
@@ -499,11 +507,11 @@ struct ReadView: View {
                     AsyncImage(url: url) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
-                        LinearGradient(colors: [Color(hex: article.category.hex).opacity(0.7), Color(hex: article.category.hex)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        LinearGradient(colors: [tint.opacity(0.7), tint], startPoint: .topLeading, endPoint: .bottomTrailing)
                     }
                     .allowsHitTesting(false)
                 } else {
-                    LinearGradient(colors: [Color(hex: article.category.hex).opacity(0.85), Color(hex: article.category.hex)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    LinearGradient(colors: [tint.opacity(0.85), tint], startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
             }
             .overlay {
@@ -513,10 +521,14 @@ struct ReadView: View {
             }
             .overlay(alignment: .top) {
                 HStack {
-                    Text(article.category.label.uppercased())
-                        .scaledFont(10, weight: .bold).foregroundStyle(.white)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Color(hex: article.category.hex)).clipShape(.capsule)
+                    // Only when the feed actually asked for a theme; a story
+                    // fetched under "All" carries none, so it claims none.
+                    if let category = article.category {
+                        Text(category.label.uppercased())
+                            .scaledFont(10, weight: .bold).foregroundStyle(.white)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color(hex: category.hex)).clipShape(.capsule)
+                    }
                     Text(article.levelLabel)
                         .scaledFont(10, weight: .bold).foregroundStyle(.white)
                         .padding(.horizontal, 8).padding(.vertical, 4)

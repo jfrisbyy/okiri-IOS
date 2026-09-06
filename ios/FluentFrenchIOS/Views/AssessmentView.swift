@@ -93,7 +93,7 @@ struct AssessmentView: View {
                 if isFirstRun {
                     infoRow("signpost.right.fill", "Routes you to the right starting point")
                 } else {
-                    infoRow("arrow.triangle.merge", "Blends with your evidence: skills you've mastered stay mastered")
+                    infoRow("arrow.triangle.merge", "Blends with your evidence: practice you've put in outweighs one bad answer")
                     infoRow("plus.circle", "Anything you miss becomes something to teach — nothing is wiped")
                 }
             }

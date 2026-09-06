@@ -474,25 +474,126 @@ struct PlacementFlowTests {
         #expect(s.assessedLevel == .A1 && s.abilityTheta < 0)
     }
 
+    // MARK: firstrun-5-2 — a retake's misses are acted on, not just its wins
+
+    /// The retake promises "anything you miss becomes something to teach". For a
+    /// concept the record already holds — which is every base concept after the
+    /// first run — the missed gap it builds carries an id the record already has,
+    /// so inserting it is a no-op. The miss has to land as EVIDENCE instead: on the
+    /// concept, and on the schedule of the material that teaches it.
+    @Test func aRetakeMissRecordsEvidenceAndBringsTheConceptsMaterialForward() {
+        let s = EngineFixtures.store()
+        s.hasCompletedAssessment = true
+        let i = s.concepts.firstIndex { $0.id == "definite-articles" }!
+        s.concepts[i] = EngineFixtures.mastered("definite-articles")
+        s.concepts[i].isProvisional = true
+        s.concepts[i].nextCheckInAt = now.addingTimeInterval(20 * day)
+        let betaBefore = s.concepts[i].beta
+        let alphaBefore = s.concepts[i].alpha
+        // Its Foundation items are already in the record, scheduled weeks out by the
+        // first run's stagger.
+        s.gaps = (0..<4).map {
+            EngineFixtures.gap("foundation-definite-articles-\($0)", concept: "definite-articles",
+                               due: now.addingTimeInterval(Double(30 + $0) * day))
+        }
+
+        // The retake asks it and the learner misses: the gap the assessment builds
+        // is the same item, so the additive insert cannot be what saves this.
+        let missed = EngineFixtures.gap("foundation-definite-articles-0", concept: "definite-articles", due: now)
+        let result = PlacementResult(vocabBand: 2, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [missed], askedCount: 8, correctCount: 5,
+                                     missedConceptIds: ["definite-articles"])
+        s.applyPlacement(result, isFirstRun: false, now: now)
+
+        #expect(s.gaps.count == 4, "nothing is duplicated")
+        #expect(s.gaps[0].nextReviewAt == now, "the material that teaches it is due now")
+        #expect(s.gaps.filter { $0.nextReviewAt <= now }.count == Tuning.placementMissSeedItems,
+                "the same dose a first placement seeds for a miss — not the whole concept dumped on one day")
+        #expect(s.gaps[0].fsrs?.dueAt == nil || s.gaps[0].fsrs?.dueAt == now, "FSRS and nextReviewAt agree")
+        let after = s.concepts.first { $0.id == "definite-articles" }!
+        #expect(after.beta > betaBefore, "the miss landed as evidence")
+        #expect(after.alpha < alphaBefore, "and the old evidence decayed toward the prior")
+        #expect(after.state != .mastered, "a miss on a provisional seed is not still 'mastered'")
+        #expect(after.nextCheckInAt == nil, "it is not on the check-in ladder any more — it is teachable")
+        #expect(s.dueNow(at: now).map(\.id) == ["foundation-definite-articles-0"])
+        // D8 still holds: nothing the learner earned was lowered.
+        #expect(s.assessedLevel == .A2 && s.hasCompletedAssessment)
+    }
+
+    /// A concept with real, heavy evidence survives one retake miss — but the
+    /// verification is pulled forward to now instead of staying weeks out.
+    @Test func aRetakeMissOnHeavilyEvidencedMasteryBringsItsCheckInForward() {
+        let s = EngineFixtures.store()
+        s.hasCompletedAssessment = true
+        let i = s.concepts.firstIndex { $0.id == "definite-articles" }!
+        s.concepts[i] = EngineFixtures.concept("definite-articles", alpha: 30, beta: 1)
+        s.concepts[i].nextCheckInAt = now.addingTimeInterval(30 * day)
+        s.concepts[i].checkInIntervalDays = 30
+        let result = PlacementResult(vocabBand: 2, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [], askedCount: 8, correctCount: 7,
+                                     missedConceptIds: ["definite-articles"])
+        s.applyPlacement(result, isFirstRun: false, now: now)
+        let after = s.concepts.first { $0.id == "definite-articles" }!
+        #expect(after.state == .mastered, "one miss does not undo a mountain of evidence")
+        #expect(after.nextCheckInAt == now, "but it is verified now, not in a month")
+    }
+
+    // MARK: firstrun-5-3 — "Due now" never counts what no lesson can offer
+
+    /// A Foundation item of a concept whose prerequisite is not mastered can never
+    /// be selected (`ConceptSelector.isPracticable`), so counting it as due promised
+    /// a lesson that would open on "Nothing is ready to practice" — for weeks, since
+    /// nothing about the item changes until the prerequisite is mastered.
+    @Test func dueNowExcludesPrerequisiteBlockedFoundationItems() {
+        let s = EngineFixtures.store()
+        // `plurals` needs `noun-gender`; neither has been observed.
+        let blocked = EngineFixtures.gap("blocked", concept: "plurals", due: now)
+        let blockedSoon = EngineFixtures.gap("blocked-soon", concept: "plurals", due: now.addingTimeInterval(day))
+        let open = EngineFixtures.gap("open", concept: "noun-gender", due: now)
+        let captured = EngineFixtures.gap("captured", concept: "plurals", due: now, sourceType: .reading)
+        s.gaps = [blocked, blockedSoon, open, captured]
+
+        let selector = ConceptSelector(store: s)
+        #expect(!selector.isPracticable(blocked, at: now), "the selector will not offer it")
+        #expect(selector.isPracticable(captured, at: now), "a word the learner met is theirs to practice (E2)")
+
+        #expect(Set(s.dueNow(at: now).map(\.id)) == ["open", "captured"])
+        #expect(s.upcoming(at: now).isEmpty, "and it is not 'coming up' either")
+        #expect(s.blockedByPrerequisite(at: now).map(\.id) == ["blocked"], "it is surfaced honestly instead")
+        #expect(s.isPrerequisiteBlocked(blocked) && !s.isPrerequisiteBlocked(captured))
+        #expect(!s.isPrerequisiteBlocked(open))
+
+        // Once the prerequisite is mastered the item is practicable — and counted.
+        let i = s.concepts.firstIndex { $0.id == "noun-gender" }!
+        s.concepts[i] = EngineFixtures.mastered("noun-gender")
+        #expect(selector.isPracticable(blocked, at: now))
+        #expect(Set(s.dueNow(at: now).map(\.id)) == ["open", "captured", "blocked"])
+        #expect(s.upcoming(at: now).map(\.id) == ["blocked-soon"])
+        #expect(s.blockedByPrerequisite(at: now).isEmpty)
+    }
+
     // MARK: D13 — due now / coming up
 
+    /// The concept behind these items is `definite-articles`: it has no
+    /// prerequisites, so nothing here is prerequisite-blocked and every item's
+    /// schedule is the only thing being tested (firstrun-5-3 covers the blocked case).
     @Test func dueNowAndUpcomingAreDisjointAndExcludeProbes() {
         let s = EngineFixtures.store()
-        var probe = EngineFixtures.gap("probe", concept: "negation", due: now.addingTimeInterval(-day))
+        var probe = EngineFixtures.gap("probe", concept: "definite-articles", due: now.addingTimeInterval(-day))
         probe.isProbe = true
-        var masteredDue = EngineFixtures.gap("mastered-due", concept: "negation", due: now.addingTimeInterval(-day),
+        var masteredDue = EngineFixtures.gap("mastered-due", concept: "definite-articles", due: now.addingTimeInterval(-day),
                                              consecutiveCorrect: 5, reviewCount: 5, mastered: now.addingTimeInterval(-10 * day))
         masteredDue.fsrs = EngineFixtures.freshFsrs(at: now.addingTimeInterval(-day))
-        var masteredSoon = EngineFixtures.gap("mastered-soon", concept: "negation", due: now.addingTimeInterval(2 * day),
+        var masteredSoon = EngineFixtures.gap("mastered-soon", concept: "definite-articles", due: now.addingTimeInterval(2 * day),
                                               consecutiveCorrect: 5, reviewCount: 5, mastered: now.addingTimeInterval(-10 * day))
         masteredSoon.fsrs = EngineFixtures.freshFsrs(at: now.addingTimeInterval(2 * day))
         masteredSoon.fsrs?.stability = 365   // recall stays high: not due for a check yet
         s.gaps = [
-            EngineFixtures.gap("overdue", concept: "negation", due: now.addingTimeInterval(-3 * day)),
-            EngineFixtures.gap("today", concept: "negation", due: now),
-            EngineFixtures.gap("soon", concept: "negation", due: now.addingTimeInterval(2 * day)),
-            EngineFixtures.gap("edge", concept: "negation", due: now.addingTimeInterval(Tuning.upcomingWindowDays * day)),
-            EngineFixtures.gap("later", concept: "negation", due: now.addingTimeInterval(5 * day)),
+            EngineFixtures.gap("overdue", concept: "definite-articles", due: now.addingTimeInterval(-3 * day)),
+            EngineFixtures.gap("today", concept: "definite-articles", due: now),
+            EngineFixtures.gap("soon", concept: "definite-articles", due: now.addingTimeInterval(2 * day)),
+            EngineFixtures.gap("edge", concept: "definite-articles", due: now.addingTimeInterval(Tuning.upcomingWindowDays * day)),
+            EngineFixtures.gap("later", concept: "definite-articles", due: now.addingTimeInterval(5 * day)),
             probe, masteredDue, masteredSoon,
         ]
         let due = Set(s.dueNow(at: now).map { $0.id })

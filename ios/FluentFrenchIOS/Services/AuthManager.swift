@@ -16,6 +16,7 @@ import Foundation
 import SwiftUI
 import AuthenticationServices
 import Supabase
+import Observation
 
 /// Sign-out was refused because the final progress upload did not succeed.
 nonisolated struct SignOutBlocked: Error, Sendable {}

@@ -14,6 +14,7 @@
 import AVFoundation
 import Foundation
 import SwiftUI
+import Observation
 
 @MainActor
 @Observable

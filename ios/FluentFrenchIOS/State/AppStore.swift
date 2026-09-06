@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Observation
 
 /// Why a persisted blob could not be read at launch. The raw blob is always kept
 /// under "<key>.corrupt" so nothing is lost. A BLOCKING error (learner progress:

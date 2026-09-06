@@ -15,6 +15,7 @@
 import SwiftUI
 import UIKit
 import WebKit
+import Observation
 
 @MainActor
 @Observable

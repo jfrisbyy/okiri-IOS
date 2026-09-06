@@ -509,7 +509,7 @@ struct AssessmentView: View {
         let correct = selected == q.correctAnswer
         engine.record(q, correct: correct)
         if correct { Haptics.success() }
-        else { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+        else { Haptics.error() }
         withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.8), reduceMotion: reduceMotion)) { revealed = true }
     }
 

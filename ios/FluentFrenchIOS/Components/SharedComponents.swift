@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Gradient header
 
@@ -902,5 +903,11 @@ enum Haptics {
     static func success() {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+    }
+
+    /// Error notification for a wrong answer / failed action.
+    static func error() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.error)
     }
 }

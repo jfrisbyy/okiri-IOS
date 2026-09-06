@@ -452,6 +452,19 @@ struct HeadlessDriverTests {
         #expect(reviewConcepts.count >= 20,
                 "review spread across \(reviewConcepts.count) concepts, not a handful")
 
+        // engine-4-1: no item may be stranded. A concept is judged mastered on a
+        // handful of observations while it still owns items the learner has never
+        // been asked; those used to be dropped by every review path and could only
+        // come back as the concept's check-in vehicle, which prefers a practised gap.
+        // Sixty days of the real loop must leave none of them due and unasked.
+        let store60 = run.driver.store
+        let selector60 = ConceptSelector(store: store60)
+        let stranded = store60.gaps.filter {
+            !$0.isProbe && $0.isNew && selector60.belongsToMasteredConcept($0)
+                && selector60.isPracticable($0, at: run.driver.now) && $0.nextReviewAt <= run.driver.now
+        }
+        #expect(stranded.isEmpty, "never-asked items stranded on mastered concepts: \(stranded.map { $0.id })")
+
         let unlock = run.unlockDay ?? Int.max
         #expect(unlock <= 42, "reading unlocked on day \(run.unlockDay.map(String.init) ?? "never"); the target is 4–6 weeks (≤ 42)")
         #expect(run.readingToggles <= 1, "the gate never flip-flops")

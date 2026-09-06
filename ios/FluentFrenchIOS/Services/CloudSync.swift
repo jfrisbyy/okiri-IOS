@@ -158,8 +158,9 @@ final class CloudSync {
     /// Set when the learner left the local-data recovery screen without a restore
     /// (the account was unreachable). The device record is knowingly incomplete,
     /// so every later pass runs as a recovery pass — the account copy wins — until
-    /// one actually reads the row (store-1-6).
-    @ObservationIgnored private var pendingRemoteRestore = false
+    /// one actually reads the row (store-1-6). Persisted next to the sync markers,
+    /// because the incomplete record outlives the process too (store-4-1).
+    private let deferredRestore: DeferredRestoreMarker
 
     // Sync markers: what this device last agreed with the cloud row on. They
     // are what makes the server-timestamp rule in SnapshotReconciler possible.
@@ -175,6 +176,7 @@ final class CloudSync {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.deferredRestore = DeferredRestoreMarker(defaults: defaults)
     }
 
     // MARK: - User lifecycle
@@ -205,7 +207,7 @@ final class CloudSync {
             // The record the markers (and a deferred restore) describe survives
             // only when the local record does.
             if !keepMarkers {
-                pendingRemoteRestore = false
+                deferredRestore.clear()
                 clearMarkers()
             }
             syncState = .localOnly
@@ -280,7 +282,11 @@ final class CloudSync {
     /// succeeds, and that pass is a recovery pass — the account copy replaces this
     /// device's, so the incomplete record can never be pushed over it (store-1-6).
     func continueWithLocalCopy(store: AppStore, userId uid: String) async {
-        pendingRemoteRestore = true
+        // Written to disk BEFORE anything else: the next save rewrites the
+        // unreadable blob with what is in memory, so from here on nothing but
+        // this marker can tell a relaunch that the device copy is incomplete
+        // (store-4-1).
+        deferredRestore.set(userId: uid)
         store.acknowledgeLoadError(discard: false)
         await run(
             store: store,
@@ -313,7 +319,8 @@ final class CloudSync {
         // A deferred restore (store-1-6) turns every ordinary pass into a recovery
         // pass until the account row has actually been read.
         var mode = requestedMode
-        if pendingRemoteRestore, case .compare = mode {
+        let restoreIsOwed = deferredRestore.isPending(for: uid)
+        if restoreIsOwed, case .compare = mode {
             mode = .takeRemote(discardUnreadableCopy: false, requireRemoteRow: false)
         }
         defer {
@@ -388,10 +395,10 @@ final class CloudSync {
                 // nothing safe to show either.
                 // ...unless the learner explicitly chose to carry on locally
                 // from the recovery screen: re-blocking them there is exactly
-                // what that choice opts out of. `pendingRemoteRestore` keeps the
-                // deferred recovery pending, so uploads stay disabled and the
-                // next successful pass still applies the account copy.
-                needsAccountBeforeContinuing = !pendingRemoteRestore && (store.localUpdatedAt == nil)
+                // what that choice opts out of. The deferred-restore marker keeps
+                // the recovery pending, so uploads stay disabled and the next
+                // successful pass still applies the account copy.
+                needsAccountBeforeContinuing = !restoreIsOwed && (store.localUpdatedAt == nil)
                 reconciledUserId = uid
             }
             lastReconcileAt = Date()
@@ -415,7 +422,7 @@ final class CloudSync {
             guard stillCurrent() else { return }
             lastReconcileAt = Date()
             // The account is empty, so later uploads cannot clobber anything.
-            pendingRemoteRestore = false
+            deferredRestore.clear()
             markReconciled(userId: uid, pushSucceeded: ok)
 
         case .snapshot(let remote, let serverUpdatedAt):
@@ -436,7 +443,9 @@ final class CloudSync {
             }
             switch decision {
             case .applyRemote:
-                pendingRemoteRestore = false
+                // The row was read and is about to replace the device copy: the
+                // debt the marker records is settled.
+                deferredRestore.clear()
                 store.apply(snapshot: remote)
                 saveMarkers(userId: uid, localUpdatedAt: store.localUpdatedAt, serverUpdatedAt: serverUpdatedAt)
                 hasPendingChange = changeDuringReconcile

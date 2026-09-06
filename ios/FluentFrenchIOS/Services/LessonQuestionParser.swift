@@ -114,11 +114,21 @@ nonisolated enum LessonQuestionParser {
     /// Whether an AI-written French answer is a form the content already carries:
     /// the headword, the blank form, or a content `acceptedAnswers` alternative.
     /// The model may write a new sentence, never a new answer.
+    ///
+    /// A FILL-BLANK is stricter: the answer has to be able to stand in a blank, so
+    /// only the content's `blankForm` (and alternatives that fit it) count. The
+    /// prompt the model is given carries the dictionary headword — "ne... pas",
+    /// "je suis" — and answering with it would build a question whose stated answer
+    /// cannot go in its own sentence ("Je _____ anglais." → "Je ne... pas anglais.").
+    /// `acceptedForms` still admits the headword when the blank IS the headword
+    /// modulo its article ("le pain" / "pain"), which is the only case it fits.
     static func isContentForm(_ answer: String, of gap: GapItem, kind: QuestionKind) -> Bool {
         let target = AnswerGrader.normalize(answer)
         guard !target.isEmpty else { return false }
-        let forms = AnswerGrader.acceptedForms(for: gap, expected: gap.frenchWord, kind: kind)
-            + AnswerGrader.acceptedForms(for: gap, expected: AnswerGrader.blankForm(for: gap), kind: kind)
+        let blankForms = AnswerGrader.acceptedForms(for: gap, expected: AnswerGrader.blankForm(for: gap), kind: kind)
+        let forms = kind == .fillBlank
+            ? blankForms
+            : AnswerGrader.acceptedForms(for: gap, expected: gap.frenchWord, kind: kind) + blankForms
         return forms.contains { $0.normalized == target }
     }
 

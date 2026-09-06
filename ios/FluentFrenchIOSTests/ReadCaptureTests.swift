@@ -708,6 +708,162 @@ struct ReadCaptureTests {
         #expect(ReadingLevelEstimator.estimate("") == .B1, "no text → the honest default, labelled as an estimate by the caller")
     }
 
+    // MARK: - read-4-1 Key vocabulary is words the learner can look up and keep
+
+    @Test func keyVocabularySplitsElisionsAndDropsNames() {
+        let text = "Dakar accueille cette semaine un sommet majeur sur l'avenir de l'éducation en Afrique francophone. Les participants discutent des moyens d'améliorer l'accès à l'école."
+        let words = KeyVocabulary.words(in: text)
+        #expect(words.contains("avenir"), "l'avenir offers the word, not the article")
+        #expect(words.contains("éducation"))
+        #expect(words.contains("améliorer"), "d'améliorer is not a headword; améliorer is")
+        #expect(!words.contains { $0.hasPrefix("d'") || $0.hasPrefix("l'") || $0.hasPrefix("j'") })
+        #expect(!words.contains("Afrique"), "a name inside a sentence is not vocabulary")
+        #expect(words.allSatisfy { $0.first?.isUppercase != true })
+    }
+
+    @Test func keyVocabularyKeepsWholeWordsAndSentenceOpeners() {
+        let words = KeyVocabulary.words(in: "Fondée en 1889, la maison ouvre aujourd'hui un rendez-vous mensuel.")
+        #expect(words.contains("aujourd'hui"), "an apostrophe inside a word is not an elision")
+        #expect(words.contains("rendez-vous"))
+        #expect(words.contains("fondée"), "a sentence opener is offered in its dictionary spelling")
+        #expect(!words.contains("1889"), "a number is not a word to learn")
+        #expect(KeyVocabulary.words(in: "").isEmpty)
+    }
+
+    @Test func everyKeyVocabularyChipCouldBecomeACard() {
+        for piece in ReadingLibrary.pieces {
+            let words = KeyVocabulary.words(in: piece.body)
+            #expect(words.count <= Tuning.keyVocabularyCount)
+            for word in words {
+                #expect(CaptureBuilder.isAcceptableHeadword(word), "\(word) is offered but could not be saved")
+                #expect(word.count >= Tuning.keyVocabularyMinLength)
+                #expect(word.first?.isUppercase != true, "\(word) reads as a name, not vocabulary")
+                #expect(KeyVocabulary.words(in: word) == [word], "\(word) is already a clean headword")
+            }
+            #expect(Set(words).count == words.count, "each word is offered once")
+        }
+        // The pieces the audit named, in the words it named.
+        let paris = ReadingLibrary.pieces.first { $0.id == "r1" }?.body ?? ""
+        #expect(KeyVocabulary.words(in: paris).contains("découvert"))
+        #expect(!KeyVocabulary.words(in: paris).contains("j'adore"))
+        #expect(!KeyVocabulary.words(in: paris).contains("Montmartre"))
+        let carthage = ReadingLibrary.pieces.first { $0.id == "r8" }?.body ?? ""
+        #expect(KeyVocabulary.words(in: carthage).contains("puissances"))
+        #expect(!KeyVocabulary.words(in: carthage).contains("Carthage"))
+        #expect(!KeyVocabulary.words(in: carthage).contains("Méditerranée"))
+    }
+
+    // MARK: - read-4-2 A form two tenses spell alike names both tenses
+
+    private func conjugationDraft(_ form: String, pronouns: [String], verb: FrenchVerb,
+                                  tense: FrenchTense) -> CaptureDraft {
+        CaptureDraft(frenchWord: form,
+                     englishTranslation: ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
+                                                                 tense: tense.name),
+                     explanation: "\(tense.frenchName) of \(verb.infinitive) (\(verb.meaning)). \(tense.detail).",
+                     exampleSentence: "\(pronouns[0]) \(form)",
+                     sourceType: .reading, sourceTab: "tenses", sourceLevel: .B1,
+                     category: .grammar, partOfSpeech: "verb",
+                     acceptedAnswers: ["\(pronouns[0]) \(form)"],
+                     mergeIntoExisting: true)
+    }
+
+    @Test func aFormSharedByTwoTensesNamesBothTenses() throws {
+        let s = quietStore()
+        let parler = try #require(TensesData.verbs.first { $0.infinitive == "parler" })
+        let imparfait = try #require(TensesData.tenses.first { $0.name == "Imparfait" })
+        let subjonctif = try #require(TensesData.tenses.first { $0.name == "Subjonctif" })
+        // The paradigms really do overlap — this is why the check cannot be the
+        // bare spelling.
+        let imparfaitForms = Set((parler.tenses["Imparfait"]?.forms() ?? []).map(\.form))
+        let subjonctifForms = Set((parler.tenses["Subjonctif"]?.forms() ?? []).map(\.form))
+        #expect(imparfaitForms.contains("parlions") && subjonctifForms.contains("parlions"))
+
+        guard case .saved(let saved) = s.capture(conjugationDraft("parlions", pronouns: ["nous"], verb: parler,
+                                                                  tense: imparfait), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        #expect(ConjugationCard.covers(tense: "Imparfait", meaning: saved.englishTranslation))
+        #expect(!ConjugationCard.covers(tense: "Subjonctif", meaning: saved.englishTranslation),
+                "a card saved from one tense must not claim the other")
+
+        guard case .saved(let merged) = s.capture(conjugationDraft("parlions", pronouns: ["nous"], verb: parler,
+                                                                   tense: subjonctif), now: now) else {
+            Issue.record("the subjonctif reading is added to the card that holds the form"); return
+        }
+        #expect(merged.id == saved.id, "one headword is still one card")
+        #expect(s.gaps.filter { $0.frenchWord == "parlions" }.count == 1)
+        #expect(ConjugationCard.covers(tense: "Imparfait", meaning: merged.englishTranslation))
+        #expect(ConjugationCard.covers(tense: "Subjonctif", meaning: merged.englishTranslation))
+        #expect(merged.englishTranslation == "to speak — nous, imparfait / nous, subjonctif")
+        #expect(merged.explanation.contains(imparfait.frenchName))
+        #expect(merged.explanation.contains(subjonctif.frenchName),
+                "the card explains both tenses it stands for")
+        // Saying the same thing twice changes nothing.
+        guard case .duplicate = s.capture(conjugationDraft("parlions", pronouns: ["nous"], verb: parler,
+                                                           tense: subjonctif), now: now) else {
+            Issue.record("the same reading saved twice is one card"); return
+        }
+        // A form only ONE of the two tenses has is untouched by the other.
+        guard case .saved(let only) = s.capture(conjugationDraft("parlais", pronouns: ["je", "tu"], verb: parler,
+                                                                 tense: imparfait), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        #expect(!ConjugationCard.covers(tense: "Subjonctif", meaning: only.englishTranslation))
+    }
+
+    @Test func joiningReadingsNeverRepeatsWhatTheCardAlreadySays() {
+        let base = ConjugationCard.meaning(verbMeaning: "to go", pronouns: ["nous"], tense: "Imparfait")
+        #expect(base == "to go — nous, imparfait")
+        let addition = ConjugationCard.meaning(verbMeaning: "to go", pronouns: ["nous"], tense: "Subjonctif")
+        #expect(ConjugationCard.joinedMeaning(base, adding: base) == nil)
+        #expect(ConjugationCard.joinedMeaning(base, adding: addition) == "to go — nous, imparfait / nous, subjonctif")
+        #expect(ConjugationCard.joinedMeaning("", adding: addition) == addition)
+        #expect(ConjugationCard.joinedMeaning(base, adding: "  ") == nil)
+        // A card from somewhere else keeps its own meaning and gains this one.
+        #expect(ConjugationCard.joinedMeaning("we were going", adding: addition) == "we were going / to go — nous, subjonctif")
+        #expect(ConjugationCard.joinedExplanation("Imparfait of aller.", adding: "Imparfait of aller.") == nil)
+        #expect(ConjugationCard.joinedExplanation("", adding: "Subjonctif of aller.") == "Subjonctif of aller.")
+        #expect(!ConjugationCard.covers(tense: "Present", meaning: "to go — nous, conditionnel"),
+                "tense names match as words, never as fragments")
+    }
+
+    // MARK: - read-4-3 Bundled content a page offers to save can be saved
+
+    @Test func everyBundledIdiomCanBecomeACard() throws {
+        for idiom in IdiomData.all {
+            #expect(CaptureBuilder.isAcceptableHeadword(idiom.french),
+                    "\(idiom.french) is offered with a Save button but the deck would refuse it")
+        }
+        let longest = try #require(IdiomData.all.max { CaptureBuilder.wordCount($0.french) < CaptureBuilder.wordCount($1.french) })
+        #expect(CaptureBuilder.wordCount(longest.french) <= Tuning.maxCaptureWords)
+        let s = quietStore()
+        guard case .saved(let gap) = s.capture(CaptureDraft(frenchWord: longest.french, englishTranslation: longest.meaning,
+                                                            explanation: "Literally: \(longest.literal)",
+                                                            exampleSentence: longest.example,
+                                                            exampleTranslation: longest.exampleTranslation,
+                                                            sourceType: .reading, sourceTab: "idioms", sourceLevel: .B1,
+                                                            category: .phrasing, partOfSpeech: "idiom",
+                                                            conceptId: "idioms"), now: now) else {
+            Issue.record("the longest bundled idiom must be savable"); return
+        }
+        #expect(gap.frenchWord == longest.french)
+        #expect(gap.category == .phrasing)
+    }
+
+    // MARK: - read-4-5 An accent card carries a pronunciation a beginner can read
+
+    @Test func everyPracticeWordHasAPlainEnglishSoundHint() {
+        for category in PronunciationData.categories {
+            for word in category.words {
+                #expect(!word.audioHint.trimmingCharacters(in: .whitespaces).isEmpty,
+                        "\(word.word) has no readable pronunciation to put on a card")
+                #expect(!word.audioHint.contains("/"), "\(word.word)'s hint must not be IPA")
+                #expect(word.ipa.hasPrefix("/"), "the IPA stays in its own field, labelled by the card")
+            }
+        }
+    }
+
     // MARK: - E22 A live article's region comes from its source
 
     @Test func liveRegionIsDerivedFromTheSourceAndNeverGuessedAsEurope() {

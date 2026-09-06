@@ -111,6 +111,19 @@ nonisolated enum HomeCopy {
                             : "\(done) of \(target) skills — reading opens now"
     }
 
+    /// The weekly-goal row's title. The goal counts DAYS WITH A COMPLETED LESSON,
+    /// which is not what the seven-day streak grid next to it counts (any day with a
+    /// correct answer), so the row states its own rule instead of leaving the two
+    /// numbers to contradict each other.
+    static func weeklyGoalTitle(met: Bool) -> String {
+        met ? "Weekly goal met · days with a lesson" : "Weekly goal · days with a lesson"
+    }
+
+    /// "3 of 5 days this week" — the goal's progress, days with a completed lesson.
+    static func weeklyGoalValue(done: Int, goal: Int) -> String {
+        "\(done) of \(max(0, goal)) days this week"
+    }
+
     /// "3 gaps to review" / "1 gap to review".
     static func gapsToReview(_ count: Int) -> String {
         "\(count) gap\(count == 1 ? "" : "s") to review"

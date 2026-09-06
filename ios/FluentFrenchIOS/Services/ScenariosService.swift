@@ -11,42 +11,8 @@ import Foundation
 
 // MARK: - Models
 
-nonisolated struct ScenarioPhrase: Codable, Hashable, Identifiable {
-    var id = UUID()
-    var french: String
-    var english: String
-    var context: String
-
-    private enum CodingKeys: String, CodingKey { case id, french, english, context }
-}
-
-nonisolated struct ScenarioQA: Codable, Hashable, Identifiable {
-    var id = UUID()
-    var question: String
-    var questionEnglish: String
-    var answer: String
-    var answerEnglish: String
-
-    private enum CodingKeys: String, CodingKey { case id, question, questionEnglish, answer, answerEnglish }
-}
-
-nonisolated struct ScenarioTip: Codable, Hashable, Identifiable {
-    var id = UUID()
-    var tip: String
-    var category: String   // "native" | "cultural" | "practical"
-
-    private enum CodingKeys: String, CodingKey { case id, tip, category }
-}
-
-nonisolated struct ScenarioGuide: Codable, Hashable {
-    var title: String
-    var titleFrench: String
-    var summary: String
-    var keyPhrases: [ScenarioPhrase]
-    var questionsAndAnswers: [ScenarioQA]
-    var tips: [ScenarioTip]
-    var nativeExpressions: [ScenarioPhrase]
-}
+// The guide shape itself (and its tolerant decoding) lives in
+// `Models/ScenarioGuide.swift` so the harness can compile and test the parse.
 
 nonisolated struct SavedScenario: Codable, Hashable, Identifiable {
     var id: String
@@ -90,16 +56,9 @@ nonisolated enum ScenariosService {
         case .failure(let failure):
             return .failure(failure)
         case .success(let content):
-            guard let guide = parseGuide(content) else { return .failure(.badResponse) }
+            guard let guide = ScenarioGuide.parse(content) else { return .failure(.badResponse) }
             return .success(guide)
         }
-    }
-
-    static func parseGuide(_ raw: String) -> ScenarioGuide? {
-        guard let data = ModelJSON.objectData(in: raw),
-              let guide = try? JSONDecoder().decode(ScenarioGuide.self, from: data),
-              !guide.keyPhrases.isEmpty else { return nil }
-        return guide
     }
 }
 

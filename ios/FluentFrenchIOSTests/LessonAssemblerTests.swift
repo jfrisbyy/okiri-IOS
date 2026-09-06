@@ -62,6 +62,38 @@ struct LessonAssemblerTests {
         #expect(g.store.gaps.filter { $0.id == probeId }.count == 1)
     }
 
+    /// The blind-spot probe deliberately picks a frontier concept with NO gaps, and
+    /// above the seeded bands that is the only kind of concept left: its curriculum
+    /// sits in the content file and no seeding path reaches it. Probing and stopping
+    /// there diagnosed a skill the app could never teach — the answer moved the
+    /// concept to `.learning` with an empty spine, so it could never be a target.
+    /// Assembling the probe seeds that concept's own items too (engine-4-4).
+    @Test func probingASkillWithNoContentSeedsItSoItCanBeTaught() throws {
+        let now = EngineFixtures.now
+        let g = EngineFixtures.smallGraph()
+        let store = g.store
+        store.foundationContent = { when in
+            (0..<4).map { EngineFixtures.gap("\(g.probeMe)-item-\($0)", concept: g.probeMe, due: when) }
+        }
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        let probeItem = try #require(output.probeItem)
+        #expect(probeItem.conceptId == g.probeMe)
+        #expect(store.gaps(forConcept: g.probeMe).isEmpty, "nothing behind the probed skill yet")
+
+        _ = try #require(LessonAssembler(store: store).assemble(output))
+        #expect(store.gaps(forConcept: g.probeMe).filter { !$0.isProbe }.count == 4,
+                "the probed skill now has its curriculum")
+        let concept = try #require(store.concept(g.probeMe))
+        #expect(ConceptSelector(store: store).hasPracticableGap(concept, now: now),
+                "so it can be TAUGHT, not only diagnosed")
+
+        // Assembling again seeds nothing more, and a concept that already has items
+        // is left alone.
+        _ = LessonAssembler(store: store).assemble(output)
+        #expect(store.gaps(forConcept: g.probeMe).filter { !$0.isProbe }.count == 4)
+        #expect(store.seedConceptContentIfNeeded(g.root, now: now) == 0)
+    }
+
     @Test func probeWithNoContentIsDroppedNotSubstituted() throws {
         let g = EngineFixtures.smallGraph()
         let output = ConceptSelector(store: g.store).select(.smart(now: EngineFixtures.now))

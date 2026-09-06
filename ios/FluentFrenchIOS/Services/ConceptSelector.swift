@@ -211,6 +211,27 @@ struct ConceptSelector {
         return concept.state == .mastered
     }
 
+    /// Whether the interleaved-review pool (and the step-4 filler) may take this gap.
+    /// Mastery is judged per CONCEPT from a handful of observations, but a concept owns
+    /// many ITEMS: words the learner captured while reading, and curriculum items no
+    /// lesson has reached yet. Holding every gap of a mastered concept back left those
+    /// unreachable — a captured word tagged to a known skill was counted as "due now"
+    /// and never asked, because the check-in vehicle always prefers an already-reviewed
+    /// gap (engine-4-1). So a NEVER-ANSWERED gap of a mastered concept is review-eligible:
+    /// it carries no recall evidence to protect and it is new material to teach.
+    /// Practised gaps still return only as check-ins.
+    ///
+    /// The one exception is a provisional placement seed's own Foundation items: those
+    /// exist to VERIFY a claim the learner made ("I know this"), and teaching them would
+    /// re-teach exactly what placement said they know. They open up the moment the seed
+    /// fails its check-ins and the concept drops out of mastery (B7/B9).
+    func isReviewEligible(_ gap: GapItem) -> Bool {
+        guard belongsToMasteredConcept(gap) else { return true }
+        guard gap.isNew else { return false }
+        if gap.sourceType == .foundation, store.concept(gap.conceptId)?.isProvisional == true { return false }
+        return true
+    }
+
     /// Never observed AND its prerequisites are not all mastered: material the
     /// learner is not ready for. Nothing may pull it into a lesson.
     func isPrerequisiteBlocked(_ concept: Concept) -> Bool {
@@ -419,11 +440,25 @@ struct ConceptSelector {
 
         // 2. Check-ins (Pass 3 F4/F6): up to `Tuning.checkInsPerLesson` MASTERED
         //    concepts the schedule wants re-tested, most overdue first — one item
-        //    each. Mastered material comes back through here and only here; a miss
-        //    weighs double and feeds the retention governor. With nothing left to
-        //    teach (no target) the lesson is a consolidation session and check-ins
-        //    fill it to the requested size instead.
-        let checkInBudget = target == nil ? size : Tuning.checkInsPerLesson
+        //    each. PRACTISED mastered material comes back through here and only here;
+        //    a miss weighs double and feeds the retention governor. With nothing left
+        //    to teach (no target) the lesson is a consolidation session and check-ins
+        //    may fill it — but never past the slots step 3 reserves for review while
+        //    anything is actually due, or the whole session is material the engine
+        //    already believes the learner knows while overdue items rot (engine-4-2).
+        let dueBy = now.addingTimeInterval(config.dueWindowDays * 86_400)
+        func isReviewCandidate(_ gap: GapItem) -> Bool {
+            !gap.isProbe && !chosen.contains(gap.id) && !isTargetGap(gap) && isReviewEligible(gap)
+                && isPracticable(gap, at: now) && gap.nextReviewAt <= dueBy
+        }
+        let checkInBudget: Int
+        if target != nil {
+            checkInBudget = Tuning.checkInsPerLesson
+        } else if store.schedulableGaps(at: now).contains(where: isReviewCandidate) {
+            checkInBudget = max(1, size - config.reviewSlots)
+        } else {
+            checkInBudget = size
+        }
         var checkIns = 0
         for candidate in checkInCandidates(now: now) {
             if checkIns >= checkInBudget { break }
@@ -434,26 +469,25 @@ struct ConceptSelector {
                                       reason: checkInReason(for: candidate.concept)))
         }
 
-        // 3. Interleaved review — most-overdue PRACTICABLE gaps of other UNMASTERED
-        //    concepts, due within the window. Eligibility applies here too:
-        //    prerequisite-blocked material never rides in through the review pool
-        //    (audit §5.7), and mastered concepts only return as check-ins.
-        let dueBy = now.addingTimeInterval(config.dueWindowDays * 86_400)
+        // 3. Interleaved review — most-overdue PRACTICABLE gaps of other concepts,
+        //    due within the window, that `isReviewEligible` allows (practised material
+        //    of a mastered concept returns only as a check-in; its never-answered
+        //    items are still teachable). Eligibility applies here too: prerequisite-
+        //    blocked material never rides in through the review pool (audit §5.7).
         let review = store.schedulableGaps(at: now)
-            .filter { !$0.isProbe && !chosen.contains($0.id) && !isTargetGap($0) && !belongsToMasteredConcept($0) }
-            .filter { isPracticable($0, at: now) && $0.nextReviewAt <= dueBy }
+            .filter(isReviewCandidate)
             .sorted(by: Self.mostOverdueFirst(now: now))
         for gap in review {
             if items.count >= size { break }
             take(gap, role: .review)
         }
 
-        // 4. Top up if short: the rest of the spine, then other practicable gaps of
-        //    unmastered concepts, weakest first. Never anything prerequisite-blocked.
+        // 4. Top up if short: the rest of the spine, then other review-eligible
+        //    practicable gaps, weakest first. Never anything prerequisite-blocked.
         if items.count < size {
             let rest = spine.filter { !chosen.contains($0.id) }
             let others = store.schedulableGaps(at: now)
-                .filter { !$0.isProbe && !chosen.contains($0.id) && !isTargetGap($0) && !belongsToMasteredConcept($0) && isPracticable($0, at: now) }
+                .filter { !$0.isProbe && !chosen.contains($0.id) && !isTargetGap($0) && isReviewEligible($0) && isPracticable($0, at: now) }
                 .sorted(by: Self.weakestFirst(now: now))
             for gap in rest + others {
                 if items.count >= size { break }
@@ -464,18 +498,26 @@ struct ConceptSelector {
         // 5. Blind-spot probe (rare): ONE never-observed frontier concept the
         //    learner has no gap for yet, carried by a real content probe (B13).
         //    Materialised by the assembler.
-        if let probe = probeConcept() {
+        let probe = probeConcept()
+        if let probe {
             items.append(SelectedItem(gapId: Self.probeGapId(for: probe, session: store.sessionIndex),
                                       conceptId: probe.id, role: .probe,
                                       reason: "Quick check on a skill you haven't met yet: \(probe.name)."))
         }
 
+        // The headline describes the LESSON, so it counts the lesson's own items: the
+        // probe is a one-item diagnostic appended after the fact, and letting it into
+        // the count turned every third consolidation session into "Today: review" and
+        // described a never-met skill as review (engine-4-6).
+        let coreCount = items.count - (probe == nil ? 0 : 1)
         let headline: String
         if let target {
             headline = smartHeadline(for: target, now: now)
         } else if items.isEmpty {
             headline = "Nothing to practice right now."
-        } else if checkIns > 0 && items.count == checkIns {
+        } else if coreCount == 0, let probe {
+            headline = "Today: a quick check on \(probe.name) — a skill you haven't met yet."
+        } else if checkIns > 0 && coreCount == checkIns {
             headline = "Today: check-ins — making sure what you've learned still holds."
         } else {
             headline = "Today: review — keeping what you've learned fresh."

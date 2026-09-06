@@ -412,6 +412,28 @@ struct PlacementFlowTests {
         #expect(!s.candidateGapIds(for: .mixed, now: now).isEmpty, "Deck entry points have candidates")
     }
 
+    /// firstrun-4-1 — a retake that bottoms out reports `isTrueBeginner`, but the
+    /// retake branch of `applyPlacement` never re-locks reading, resets coverage or
+    /// reseeds Foundation. So the results screen must not promise a Foundation
+    /// restart: the prediction reads the unlock record first.
+    @Test func aBottomedOutRetakeNeverPredictsAFoundationRestart() {
+        let s = EngineFixtures.store()
+        s.hasCompletedAssessment = true
+        s.assessedLevel = .B1
+        s.unlockedModalities.insert(LearningModality.reading.rawValue)
+        let bottomedOut = PlacementResult(vocabBand: 0, grammarBand: 0, estimatedLevel: .A1, isTrueBeginner: true,
+                                          masteredConceptIds: [], missedGaps: [], askedCount: 6, correctCount: 0)
+        #expect(!s.willEnterFoundation(after: bottomedOut),
+                "an open learner stays open — the retake cannot close reading")
+        s.applyPlacement(bottomedOut, isFirstRun: false, now: now)
+        #expect(s.assessedLevel == .B1, "and nothing earned was lowered")
+        #expect(s.unlockedModalities.contains(LearningModality.reading.rawValue))
+
+        // A learner who has NOT opened reading is still routed to Foundation.
+        let fresh = EngineFixtures.store()
+        #expect(fresh.willEnterFoundation(after: bottomedOut))
+    }
+
     /// D8 — the assessment screens promise a retake "never lowers what you've
     /// earned": ability and the displayed level are only ever raised by one.
     @Test func retakeOnlyEverRaisesAbilityAndLevel() {
@@ -618,6 +640,26 @@ struct PlacementFlowTests {
         let progress = s.weeklyGoalProgress(now: now)!
         #expect(progress.done == 2 && progress.goal == 5, "two days this week; two lessons on one day are one day; last week does not count")
         #expect(Tuning.weeklyGoalChoices.contains(5))
+
+        // firstrun-4-5 — the goal counts days with a LESSON while the streak grid
+        // beside it counts days practised, so the row states its own rule.
+        #expect(HomeCopy.weeklyGoalTitle(met: false) == "Weekly goal · days with a lesson")
+        #expect(HomeCopy.weeklyGoalTitle(met: true) == "Weekly goal met · days with a lesson")
+        #expect(HomeCopy.weeklyGoalValue(done: progress.done, goal: progress.goal) == "2 of 5 days this week")
+    }
+
+    /// A learner who answers correctly but abandons every lesson practises on days
+    /// the goal does not count — the two numbers really can disagree, which is why
+    /// the goal row has to name its rule.
+    @Test func practisedDaysAndGoalDaysAreDifferentCounts() {
+        let s = EngineFixtures.store()
+        s.setPreferences(UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: 5))
+        let week = s.calendar.dateInterval(of: .weekOfYear, for: now)!
+        let day1 = week.start.addingTimeInterval(6 * 3600)
+        s.masteryDays.insert(s.dayKey(day1))
+        s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 3, now: day1)
+        #expect(s.practisedOn(day1), "a correct answer marks the day practised")
+        #expect(s.weeklyGoalProgress(now: now)!.done == 0, "an abandoned lesson is not a goal day")
     }
 
     // MARK: D10 — Foundation progress counts seeded concepts

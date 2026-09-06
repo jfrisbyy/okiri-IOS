@@ -82,11 +82,27 @@ nonisolated struct SpeakGapSpec: Hashable {
 }
 
 nonisolated enum SpeakGapPlan {
+    /// What one round of feedback should leave in the deck, and what the learner
+    /// has to be told about it.
+    struct Plan: Equatable {
+        var specs: [SpeakGapSpec] = []
+        /// True when the corrected line was too long to be a card and only the
+        /// part it changed was kept — those cards carry no meaning of their own
+        /// (the model's English described the whole line), so they wait for a lookup.
+        var shortened = false
+        /// True when there WAS a correction but nothing in it was card-sized:
+        /// the feedback is still on screen to read, but the deck gets nothing.
+        var tooLongToSave = false
+    }
+
     /// The corrected line is a gap when it differs from what the learner said;
     /// the natural phrasing is a gap when it differs from both. Nothing is planned
     /// when the learner's own words come back unchanged — that would save the
-    /// learner's French as if it were a correction.
-    static func specs(original: String, feedback: SpeakFeedback) -> [SpeakGapSpec] {
+    /// learner's French as if it were a correction. A correction longer than a
+    /// card (a whole free-speech monologue, say) is reduced by `CorrectionCard` to
+    /// the part it changed, and dropped when even that will not fit: the deck can
+    /// only ask about a word or a short phrase (talkmedia-4-1).
+    static func plan(original: String, feedback: SpeakFeedback) -> Plan {
         let learner = original.trimmingCharacters(in: .whitespacesAndNewlines)
         let corrected = feedback.corrected.trimmingCharacters(in: .whitespacesAndNewlines)
         let natural = feedback.natural.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -95,18 +111,33 @@ nonisolated enum SpeakGapPlan {
         // English is a faithful meaning for it when the model gave none of its own.
         let naturalEnglish = feedback.naturalEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
         let concept = feedback.mistakeConceptIds.first
-        var specs: [SpeakGapSpec] = []
+        var plan = Plan()
         if !corrected.isEmpty, !PhraseKey.same(corrected, learner) {
+            let card = CorrectionCard.from(original: learner, corrected: corrected)
+            plan.shortened = card.shortened
+            plan.tooLongToSave = card.isEmpty
             let note = feedback.note.isEmpty ? "Corrected from your speaking practice." : feedback.note
-            specs.append(SpeakGapSpec(kind: .corrected, french: corrected, english: correctedEnglish,
-                                      originalFrench: learner, explanation: note, conceptId: concept))
+            for phrase in card.phrases {
+                plan.specs.append(SpeakGapSpec(kind: .corrected, french: phrase,
+                                               english: card.shortened ? "" : correctedEnglish,
+                                               originalFrench: learner, explanation: note, conceptId: concept))
+            }
         }
-        if !natural.isEmpty, !PhraseKey.same(natural, learner), !PhraseKey.same(natural, corrected) {
-            specs.append(SpeakGapSpec(kind: .natural, french: natural,
-                                      english: naturalEnglish.isEmpty ? correctedEnglish : naturalEnglish,
-                                      originalFrench: learner, explanation: "A more natural way to say it.",
-                                      conceptId: concept))
+        // A rephrasing is only ever saved whole: a fragment of it is not the
+        // phrase the model called natural, and the English it came with would no
+        // longer be its meaning.
+        if !natural.isEmpty, !PhraseKey.same(natural, learner), !PhraseKey.same(natural, corrected),
+           CaptureBuilder.isAcceptableHeadword(natural),
+           !plan.specs.contains(where: { PhraseKey.same($0.french, natural) }) {
+            plan.specs.append(SpeakGapSpec(kind: .natural, french: natural,
+                                           english: naturalEnglish.isEmpty ? correctedEnglish : naturalEnglish,
+                                           originalFrench: learner, explanation: "A more natural way to say it.",
+                                           conceptId: concept))
         }
-        return specs
+        return plan
+    }
+
+    static func specs(original: String, feedback: SpeakFeedback) -> [SpeakGapSpec] {
+        plan(original: original, feedback: feedback).specs
     }
 }

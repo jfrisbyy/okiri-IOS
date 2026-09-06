@@ -228,7 +228,17 @@ struct ReadView: View {
             Image(systemName: "figure.walk").font(.subheadline.weight(.bold)).foregroundStyle(Theme.primary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(ReadinessCopy.bridgeCondition).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+                // Coverage and the retention governor both hold Reading in the
+                // bridge, and they hold it for different reasons — ask the one
+                // place that words the gate rather than always saying "almost
+                // there" on coverage (read-4-4).
+                Text(ReadinessCopy.unlockCondition(for: .reading, readiness: readiness,
+                                                   readingReadiness: readiness,
+                                                   readingMinutes: store.totalMinutes(.reading),
+                                                   governorActive: store.isGovernorActive)
+                     ?? ReadinessCopy.bridgeCondition)
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text("Curated pieces up to \(Tuning.readingBridgeMaxLevel.rawValue). Live headlines and search open with the rest of Reading.")
                     .font(.footnote).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

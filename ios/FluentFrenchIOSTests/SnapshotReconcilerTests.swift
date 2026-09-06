@@ -111,6 +111,58 @@ struct SnapshotReconcilerTests {
                 "a device with no activity at all has nothing to back up")
     }
 
+    // MARK: Deferred restore (store-4-1)
+
+    /// "Continue on this device" hands the ordinary reconcile rule a record it
+    /// cannot judge (see `ordinaryReconcileRuleCannotTellAGuttedStoreFromAGoodOne`
+    /// in StoreTests). The only thing that stops the gutted record from winning is
+    /// the deferred-restore marker, so it has to be on disk, not in a field that a
+    /// relaunch drops.
+    @Test func deferredRestoreSurvivesARelaunch() {
+        let scratch = ScratchDefaults()
+        let marker = DeferredRestoreMarker(defaults: scratch.defaults)
+        #expect(marker.userId == nil)
+        #expect(!marker.isPending(for: "learner-1"))
+
+        marker.set(userId: "learner-1")
+
+        // A brand-new CloudSync on the next launch builds a brand-new marker over
+        // the same defaults: the debt is still recorded.
+        let afterRelaunch = DeferredRestoreMarker(defaults: scratch.defaults)
+        #expect(afterRelaunch.isPending(for: "learner-1"))
+        #expect(afterRelaunch.userId == "learner-1")
+    }
+
+    /// Scoped to the account that deferred: another learner signing in on this
+    /// device must still get the honest "couldn't reach your account" screen
+    /// rather than inheriting someone else's recovery state.
+    @Test func deferredRestoreIsScopedToTheAccountThatDeferredIt() {
+        let scratch = ScratchDefaults()
+        let marker = DeferredRestoreMarker(defaults: scratch.defaults)
+        marker.set(userId: "learner-1")
+        #expect(marker.isPending(for: "learner-1"))
+        #expect(!marker.isPending(for: "learner-2"))
+    }
+
+    /// Cleared only where the debt is settled — a pass that actually read the
+    /// account row, or a sign-out that wipes the record the marker describes.
+    @Test func clearingTheDeferredRestoreForgetsIt() {
+        let scratch = ScratchDefaults()
+        let marker = DeferredRestoreMarker(defaults: scratch.defaults)
+        marker.set(userId: "learner-1")
+        marker.clear()
+        #expect(!marker.isPending(for: "learner-1"))
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).userId == nil,
+                "and it stays forgotten across a relaunch")
+    }
+
+    /// The marker lives beside the sync markers CloudSync already writes, and its
+    /// key is part of the on-disk contract: renaming it silently re-opens
+    /// store-4-1 for anyone mid-recovery when they update the app.
+    @Test func deferredRestoreKeyIsStable() {
+        #expect(DeferredRestoreMarker.key == "ff.cloud.pendingRemoteRestore.v1")
+    }
+
     // MARK: Postgres timestamps
 
     @Test func parsesPostgrestTimestampVariants() throws {

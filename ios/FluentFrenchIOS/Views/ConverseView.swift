@@ -269,6 +269,9 @@ private struct ConverseCallView: View {
     @Environment(\.openURL) private var openURL
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The app leaving the foreground stops microphone capture (no background
+    /// audio mode), so the recording has to stop with it (talkmedia-4-3).
+    @Environment(\.scenePhase) private var scenePhase
     /// The call header carries the scenario title, so it grows with the text size.
     @ScaledMetric(relativeTo: .body) private var chatHeaderHeight: CGFloat = 112
 
@@ -311,6 +314,12 @@ private struct ConverseCallView: View {
         .onDisappear { teardown() }
         .onChange(of: recorder.stoppedAtCap) { _, stopped in
             if stopped { finishListening() }
+        }
+        .onChange(of: recorder.interruptedSeconds) { _, seconds in
+            handleInterruption(seconds)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { recorder.noteInterrupted() }
         }
         .alert(MicAvailability.permissionDenied.title, isPresented: $showSettingsAlert) {
             Button("Open Settings") {
@@ -705,6 +714,19 @@ private struct ConverseCallView: View {
         }
     }
 
+    /// Something took the microphone mid-turn (a call, Siri, leaving the app):
+    /// say so, naming what was captured, and only transcribe the fragment when
+    /// there is enough of it to be a reply (talkmedia-4-3).
+    private func handleInterruption(_ seconds: Int?) {
+        guard let seconds else { return }
+        micNotice = InterruptedRecording.notice(secondsCaptured: seconds)
+        if InterruptedRecording.isWorthTranscribing(secondsCaptured: seconds) {
+            finishListening()
+        } else {
+            recorder.cancel()
+        }
+    }
+
     /// Stop the recording (or pick up one the cap stopped) and use what was heard.
     /// A reply the learner had already typed is never thrown away: speech is
     /// appended to it and left for them to send (talkmedia-3-3).
@@ -1039,6 +1061,13 @@ private struct ConverseCallView: View {
                     Label(kept ? "Correction saved" : "Corrected above", systemImage: kept ? "checkmark.circle.fill" : "arrow.turn.down.right")
                         .font(.system(.caption2, weight: .semibold))
                         .foregroundStyle(kept ? Theme.success : Theme.textSecondary)
+                case .some(.tooLongForACard):
+                    // The store would refuse this line, so the recap says why
+                    // instead of showing a save button that does nothing (talkmedia-4-1).
+                    Label("Too long for a card", systemImage: "text.alignleft")
+                        .font(.system(.caption2, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityLabel("Too long to save as a card — a card holds a word or a short phrase from one sentence")
                 case .none:
                     EmptyView()
                 }

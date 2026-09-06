@@ -98,6 +98,21 @@ struct HomeGateTests {
         #expect(s.unlockCondition(for: .listening) == "Consolidating your base before opening listening.")
     }
 
+    /// A `.locked` Reading verdict can only ever come from coverage below the
+    /// bridge — the governor holds Reading at `.foundation`, never lower — so the
+    /// unlock note must not blame the governor and imply the basics are already
+    /// built (firstrun-4-4).
+    @Test func lockedReadingKeepsTheCoverageSentenceEvenUnderTheGovernor() {
+        let s = store(coverage: 0)
+        s.checkInHistory = Array(repeating: false, count: Tuning.governorMinSamples)
+        #expect(s.isGovernorActive)
+        #expect(s.readiness(for: .reading) == .locked, "the governor never locks reading; coverage did")
+        #expect(s.unlockCondition(for: .reading) == "Unlocks as you build the basics — keep going with your Foundation lessons.")
+        #expect(s.unlockCondition(for: .reading) != ReadinessCopy.governorCondition(for: .reading))
+        // The governor line is still the right one for a modality it really holds.
+        #expect(s.unlockCondition(for: .listening) == "Unlocks after Reading — build the basics first.")
+    }
+
     /// A governed learner who is ALREADY reading in the bridge must not lose that
     /// surface by verifying one more base concept: crossing `readingUnlock` while
     /// the governor holds keeps the bridge open instead of dropping to locked.

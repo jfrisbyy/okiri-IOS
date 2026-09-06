@@ -119,8 +119,14 @@ struct LessonIntroStage: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(gap.frenchWord).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
-                        Text(gap.englishTranslation).font(.caption).foregroundStyle(Theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // The meaning only for items this lesson may TEACH. A check-in
+                        // or an interleaved review is asked on its meaning minutes
+                        // later, so printing it here hands over the answer — the same
+                        // rule the word cards and the concept blocks follow.
+                        if model.mayShowMeaning(for: gap) {
+                            Text(gap.englishTranslation).font(.caption).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
                 }

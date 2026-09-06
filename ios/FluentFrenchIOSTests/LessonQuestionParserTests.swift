@@ -290,4 +290,46 @@ struct LessonQuestionParserTests {
                 "a gender claim is not a meaning claim")
         #expect(LessonQuestionParser.meaningClaim(in: "“le pain” means bread") == nil)
     }
+
+    // MARK: lesson-4-1 — an AI fill-blank answer has to fit the blank
+
+    /// The writer is given the dictionary headword, and for 155 of the shipped
+    /// items the blank needs a different surface form ("ne... pas" → "ne parle
+    /// pas", "je suis" → "suis"). An answer that cannot stand in its own blank is
+    /// rejected, so the gap keeps the scheduler's own fill-blank; the headword is
+    /// still accepted when it IS the blank form modulo its article.
+    @Test func aiFillBlankAnswersMustFitTheBlank() throws {
+        var negation = gap("neg")
+        negation.frenchWord = "ne... pas"
+        negation.englishTranslation = "not"
+        negation.blankForm = "ne parle pas"
+        negation.exampleSentence = "Je ne parle pas anglais."
+        negation.acceptedAnswers = ["ne parles pas"]
+
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ anglais.","answer":"ne... pas"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Tu _____ anglais.","answer":"ne parles pas"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ anglais.","answer":"ne parle pas"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [negation], optionCount: 4, seed: 7)
+        #expect(batch.rejected == 1, "the headword cannot stand in the blank")
+        #expect(batch.questions.count == 2)
+        #expect(batch.questions.allSatisfy { $0.correctAnswer != "ne... pas" })
+        let filled = try #require(batch.questions.first { $0.correctAnswer == "ne parle pas" })
+        #expect(filled.explanation == "Je ne parle pas anglais.")
+        #expect(!LessonQuestionParser.isContentForm("ne... pas", of: negation, kind: .fillBlank))
+        #expect(LessonQuestionParser.isContentForm("ne... pas", of: negation, kind: .translation),
+                "the headword is still the answer to a translation")
+
+        // The blank IS the headword without its article: the headword still fits.
+        var pain = gap("pain")
+        pain.frenchWord = "le pain"
+        pain.englishTranslation = "bread"
+        pain.exampleSentence = "J'aime le pain."
+        #expect(LessonQuestionParser.isContentForm("le pain", of: pain, kind: .fillBlank))
+        #expect(LessonQuestionParser.isContentForm("pain", of: pain, kind: .fillBlank))
+        #expect(!LessonQuestionParser.isContentForm("pains", of: pain, kind: .fillBlank))
+    }
 }

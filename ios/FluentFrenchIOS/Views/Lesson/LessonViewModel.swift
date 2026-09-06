@@ -82,18 +82,23 @@ final class LessonViewModel {
     /// A quit from practice (or while generating) asks first (C13); earlier stages just close.
     var needsQuitConfirmation: Bool { stage == .practice || stage == .generating }
 
-    /// Word cards for the teaching stage: ONLY never-reviewed items, capped by
-    /// `Tuning.teachingWordCards`.
+    /// Word cards for the teaching stage: ONLY items the lesson may teach
+    /// (`LessonSession.mayTeach`), capped by `Tuning.teachingWordCards`.
     ///
     /// A word card shows the meaning, the example sentence and its translation — it
     /// is the answer to every question the lesson can ask about that item. Showing it
     /// for an item that is about to be TESTED (a check-in on a mastered concept, an
     /// interleaved review) turns the test into a memory test of the last screen: the
     /// check-in banks a pass the learner has not earned, and the review answer becomes
-    /// FSRS interval growth. New items are the only ones a card can honestly teach.
+    /// FSRS interval growth. A check-in is excluded by its ROLE, not by its evidence:
+    /// a provisional placement seed is verified on a never-reviewed gap.
     var teachingGaps: [GapItem] {
-        Array(gaps.filter { !$0.isProbe && $0.isNew }.prefix(Tuning.teachingWordCards))
+        Array(session.teachableGaps.prefix(Tuning.teachingWordCards))
     }
+
+    /// Whether a screen before the questions may print this item's meaning (the
+    /// intro preview asks this per row). Same rule as `teachingGaps`, uncapped.
+    func mayShowMeaning(for gap: GapItem) -> Bool { session.mayTeach(gap) }
 
     /// "Show me" is offered for the current question (C12).
     var canReveal: Bool { session.canReveal && !revealed }

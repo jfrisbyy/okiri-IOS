@@ -121,11 +121,10 @@ enum EngineFixtures {
         )
     }
 
-    /// An FSRS memory state as the Foundation loader creates it (fresh card, due now).
+    /// An FSRS memory state as the Foundation loader creates it (fresh, never-answered
+    /// card: due now, zero lapses — see `FSRS.makeUnseenState`).
     static func freshFsrs(at when: Date = now) -> FsrsState {
-        var state = FSRS.makeInitialState(grade: .again, now: when)
-        state.dueAt = when
-        return state
+        FSRS.makeUnseenState(now: when)
     }
 
     /// Foundation-shaped gaps for a taxonomy: `perConcept` fresh, due-now cards per

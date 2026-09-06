@@ -127,7 +127,10 @@ struct WordReader: View {
     @State private var tokenFrames: [Int: CGRect] = [:]
 
     private var blocks: [ContentBlock] { Self.parse(text) }
-    private var keyVocab: [String] { Self.keyVocabulary(from: text) }
+    /// The words this piece offers to look up and save. The rule lives in the
+    /// engine (`KeyVocabulary`): elisions split off, names dropped — a chip is
+    /// one tap from a deck card, so it has to be a headword (read-4-1).
+    private var keyVocab: [String] { KeyVocabulary.words(in: text) }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -745,27 +748,6 @@ struct WordReader: View {
     /// reader shows but never offers to translate.
     static func isLookupable(_ s: String) -> Bool {
         s.contains { $0.isLetter }
-    }
-
-    private static let stopwords: Set<String> = [
-        "dans", "pour", "avec", "cette", "leur", "leurs", "vous", "nous", "elles",
-        "comme", "mais", "donc", "alors", "aussi", "plus", "très", "être", "avoir",
-        "fait", "tout", "tous", "toute", "toutes", "sans", "sous", "entre", "depuis",
-        "selon", "après", "avant", "pendant", "lorsque", "parce", "quand", "encore",
-    ]
-
-    /// A handful of notable words from the body for the key-vocabulary section.
-    static func keyVocabulary(from text: String) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for raw in text.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
-            let word = clean(String(raw))
-            let lower = word.lowercased()
-            guard word.count >= 6, !stopwords.contains(lower), seen.insert(lower).inserted else { continue }
-            result.append(word)
-            if result.count >= 12 { break }
-        }
-        return result
     }
 }
 

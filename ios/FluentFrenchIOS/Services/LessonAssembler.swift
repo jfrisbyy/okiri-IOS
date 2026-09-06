@@ -46,7 +46,15 @@ struct LessonAssembler {
                 // A probe — or a check-in on a concept with no gaps of its own — is a
                 // real French probe item built from the content's `probes` (B13).
                 resolved.append((item, gap))
-                if item.role == .probe { probeGapId = gap.id }
+                if item.role == .probe {
+                    probeGapId = gap.id
+                    // engine-4-4: a blind-spot probe is the only way these concepts are
+                    // ever reached, so give the concept its curriculum at the same time.
+                    // Otherwise the answer diagnoses a skill with no items behind it —
+                    // the concept becomes `.learning` with an empty spine and can never
+                    // be taught. A no-op for a concept that already has gaps.
+                    store.seedConceptContentIfNeeded(concept.id, now: output.request.now)
+                }
             }
             // An item whose gap is gone (or a probe with no content behind it) is
             // dropped: nothing is substituted for it.

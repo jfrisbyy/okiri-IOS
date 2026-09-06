@@ -131,14 +131,20 @@ private struct AccentPracticeView: View {
         }
     }
 
-    /// What saving a practice word stores: the word, its meaning, the IPA and
-    /// the hint as the explanation — a pronunciation gap at A1.
+    /// What saving a practice word stores: the word, its meaning, the plain-English
+    /// sound hint as the pronunciation and the IPA (labelled) in the explanation —
+    /// a pronunciation gap at A1.
+    ///
+    /// The lesson prints `pronunciation` under the French word, and every other
+    /// card there carries a sound-it-out spelling — the gloss service is told never
+    /// to send IPA — so a card from this page must not be the one that shows a
+    /// beginner "/ʒɑ̃.bɔ̃/" with no way to read it (read-4-5).
     private func draft(for w: PronunciationWord) -> CaptureDraft {
         CaptureDraft(
             frenchWord: w.word,
             englishTranslation: w.translation,
-            explanation: "\(w.ipa) — \(w.audioHint)",
-            pronunciation: w.ipa,
+            explanation: "IPA \(w.ipa). \(w.audioHint)",
+            pronunciation: w.audioHint,
             sourceType: .reading,
             sourceTab: "accent",
             sourceLevel: .A1,

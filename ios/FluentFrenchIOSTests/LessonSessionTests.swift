@@ -894,4 +894,75 @@ struct LessonSessionTests {
         #expect(hot.tone == .correct && hot.title.contains("XP"))
         #expect(LessonSession.praise(combo: 1) == "Correct!")
     }
+
+    // MARK: lesson-4-2 — the missed recap reads back the meaning
+
+    /// The recap prints the item's MEANING (plus the completed sentence for a
+    /// sentence format), never the question's own answer: "True" says nothing,
+    /// and a translation or a reversed multiple choice answers with the French
+    /// word that is already the line above it.
+    @Test func recapAnswerRestatesTheMeaningNotTheQuestionsAnswer() throws {
+        var g = gap("g1", reviewCount: 4, consecutiveCorrect: 1)
+        g.exampleSentence = "g1-fr a b c d"
+        let pool = (1...4).map { gap("g\($0)") }
+        var rng = LessonRandom(seed: 4)
+
+        let tf = try #require(scheduler.question(for: g, kind: .trueFalse, pool: [g], optionCount: 3, rng: &rng))
+        #expect(tf.correctAnswer == "True" || tf.correctAnswer == "False")
+        #expect(LessonSession.recapAnswer(for: tf) == "g1-en")
+
+        let translation = try #require(scheduler.question(for: g, kind: .translation, pool: [g], optionCount: 3, rng: &rng))
+        #expect(translation.correctAnswer == "g1-fr" && LessonSession.recapAnswer(for: translation) == "g1-en")
+
+        let reversed = try #require(scheduler.question(for: pool[0], kind: .multipleChoice, variant: 1,
+                                                       pool: pool, optionCount: 3, rng: &rng))
+        #expect(reversed.isReversed && LessonSession.recapAnswer(for: reversed) == "g1-en")
+
+        let forward = try #require(scheduler.question(for: pool[0], kind: .multipleChoice,
+                                                      pool: pool, optionCount: 3, rng: &rng))
+        #expect(LessonSession.recapAnswer(for: forward) == "g1-en")
+
+        let fill = try #require(scheduler.question(for: g, kind: .fillBlank, pool: [g], optionCount: 3, rng: &rng))
+        #expect(fill.kind == .fillBlank && fill.prompt.contains(AnswerGrader.blankToken))
+        #expect(LessonSession.recapAnswer(for: fill) == "g1-en — g1-fr a b c d",
+                "the sentence with the blank filled, not the bare blank form")
+
+        let arrange = try #require(scheduler.question(for: g, kind: .arrange, pool: [g], optionCount: 3, rng: &rng))
+        #expect(arrange.kind == .arrange && LessonSession.recapAnswer(for: arrange) == "g1-en — g1-fr a b c d")
+        #expect(LessonSession.recapAnswer(for: scheduler.matchQuestion(for: pool)) == "g1-en")
+    }
+
+    /// End to end: a missed true/false leaves a recap line the learner can read.
+    @Test func aMissedTrueFalseRecapsTheMeaning() throws {
+        var g = gap("g1", reviewCount: 3, consecutiveCorrect: 1)
+        g.exampleSentence = "g1 example"   // the blank form does not occur: not blankable
+        var s = session(for: lesson([g]), config: config(hearts: 99))
+        let q = try #require(s.current)
+        #expect(q.kind == .trueFalse)
+        _ = try answerWrongly(&s)
+        let missed = try #require(s.summary.missed.first)
+        #expect(missed.kind == .trueFalse && missed.answer == "g1-en")
+    }
+
+    // MARK: lesson-4-3 / lesson-4-4 — what a lesson may teach before it asks
+
+    /// A word card (and the intro's meaning line) is withheld from anything the
+    /// lesson is about to TEST. A check-in is excluded by its ROLE, not by its
+    /// evidence: `ConceptSelector.checkInVehicle` falls back to a never-reviewed
+    /// gap, which is exactly what a provisional placement seed offers.
+    @Test func aCheckInVehicleIsNeverTaughtEvenWhenItHasNeverBeenReviewed() throws {
+        let fresh = gap("new")
+        let seedVehicle = gap("seed")                     // never reviewed, but checked in
+        let interleaved = gap("rev", reviewCount: 4, consecutiveCorrect: 2)
+        var probe = gap("pr")
+        probe.isProbe = true
+        let l = lesson([fresh, seedVehicle, interleaved, probe],
+                       roles: ["new": .target, "seed": .checkIn, "rev": .review, "pr": .probe])
+        let s = LessonSession(lesson: l, isCapstone: false, config: config())
+
+        #expect(seedVehicle.isNew, "the vehicle is never-reviewed — the old filter let it through")
+        #expect(s.teachableGaps.map(\.id) == ["new"])
+        #expect(s.mayTeach(fresh))
+        #expect(!s.mayTeach(seedVehicle) && !s.mayTeach(interleaved) && !s.mayTeach(probe))
+    }
 }

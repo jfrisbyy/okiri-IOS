@@ -565,8 +565,7 @@ nonisolated enum AssessmentService {
             confusionLinks: [],
             conceptId: q.conceptId
         )
-        gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-        gap.fsrs?.dueAt = now
+        gap.fsrs = FSRS.makeUnseenState(now: now)
         return gap
     }
 

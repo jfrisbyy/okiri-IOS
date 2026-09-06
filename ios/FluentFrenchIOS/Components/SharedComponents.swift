@@ -768,7 +768,11 @@ struct CaptureSheet: View {
         }
         .background(Theme.background)
         .safeAreaInset(edge: .bottom) {
-            SaveToDeckButton(draft: draftWithNote, accent: accent, alreadySaved: store.hasGap(forWord: draft.frenchWord)) { outcome in
+            // A draft that may merge is never "already saved": the headword is in
+            // the deck, but this reading of it is not, and the store folds it in
+            // (read-4-2).
+            SaveToDeckButton(draft: draftWithNote, accent: accent,
+                             alreadySaved: !draft.mergeIntoExisting && store.hasGap(forWord: draft.frenchWord)) { outcome in
                 if case .saved = outcome {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
                 }

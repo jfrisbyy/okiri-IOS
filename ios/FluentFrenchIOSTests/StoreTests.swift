@@ -1027,8 +1027,9 @@ struct StoreTests {
         #expect(gap.originalContext?.isLearnerAuthored == true)
         #expect(gap.contextForTagging == gap.exampleSentence)
         #expect(gap.contextForTagging != "orig-x")
-        // A store-made gap starts from the seeded `.again` state (lapses 1); the slip adds one.
-        let seededLapses = FSRS.makeInitialState(grade: .again, now: now).lapses
+        // A store-made gap is born never-answered (zero lapses, engine-4-3); the slip adds one.
+        let seededLapses = FSRS.makeUnseenState(now: now).lapses
+        #expect(seededLapses == 0, "a gap nobody has answered has missed nobody")
         #expect(gap.fsrs != nil && gap.fsrs?.lapses == seededLapses + 1)
         #expect(gap.reviewCount == 1 && gap.consecutiveCorrect == 0)
         #expect(gap.lastReviewedAt == now)

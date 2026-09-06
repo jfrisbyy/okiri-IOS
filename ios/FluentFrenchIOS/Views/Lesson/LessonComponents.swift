@@ -231,13 +231,18 @@ struct LessonMissedList: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.gap.frenchWord).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
-                        Text(item.correctAnswer).font(.footnote).foregroundStyle(Theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // `item.answer` is the recap line the session built for the
+                        // format that was missed (the meaning, plus the completed
+                        // sentence for a fill-blank or an arrange) — never "True".
+                        if !item.answer.isEmpty {
+                            Text(item.answer).font(.footnote).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     // Combined on the text only: combining the whole row would
                     // swallow the Listen button and make it untappable.
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(item.gap.frenchWord): \(item.correctAnswer)")
+                    .accessibilityLabel(item.answer.isEmpty ? item.gap.frenchWord : "\(item.gap.frenchWord): \(item.answer)")
                     Spacer(minLength: 0)
                     // A cloze item ("___ télévision") has nothing to read aloud.
                     if let spoken = LessonSpeech.speakableFrench(item.gap.frenchWord) {

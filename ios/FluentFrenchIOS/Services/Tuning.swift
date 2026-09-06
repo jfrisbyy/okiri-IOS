@@ -453,7 +453,15 @@ nonisolated extension Tuning {
     static let tagNearDuplicateSimilarity: Double = 0.6
     /// Most words a captured headword may contain: a phrase a lesson can ask about
     /// is a few words, not the paragraph a finger swept across in the reader.
-    static let maxCaptureWords: Int = 8
+    /// Sized to hold the bundled idiom set, whose longest expression ("C'est la
+    /// goutte d'eau qui fait déborder le vase") is nine words — a page must never
+    /// offer to save something the deck then refuses (read-4-3).
+    static let maxCaptureWords: Int = 10
+    /// Fewest letters a word needs before the reader offers it as key vocabulary
+    /// (shorter words are the grammar the piece is made of, not what it teaches).
+    static let keyVocabularyMinLength: Int = 6
+    /// Most key-vocabulary chips one piece offers.
+    static let keyVocabularyCount: Int = 12
     /// Highest curated level Reading shows while the gate is in its bridge state (E20 / D5).
     static let readingBridgeMaxLevel: CEFRLevel = .A2
     /// Bands away from the learner's level a piece may sit and still be "at your level" in the library.
@@ -512,6 +520,19 @@ nonisolated extension Tuning {
     static let speakScoreStrongFloor: Int = 75
     /// Fluency score from which speaking feedback reads as fair (amber); below is weak.
     static let speakScoreFairFloor: Int = 50
+    /// Most deck cards one correction may leave behind when the corrected line is
+    /// too long to be a card and has to be reduced to the parts that changed — a
+    /// five-minute monologue must not flood the deck (talkmedia-4-1).
+    static let maxCorrectionCards: Int = 2
+    /// Fewest words a shortened correction card keeps, so a one-word fix ("la")
+    /// is saved with the words around it instead of on its own.
+    static let correctionCardContextWords: Int = 3
+    /// Seconds within which re-submitting the same answer for feedback counts as
+    /// the same attempt, so one attempt never books two misses (talkmedia-4-4).
+    static let speakFeedbackRepeatWindow: TimeInterval = 300
+    /// Seconds of audio a recording cut short by an interruption needs before it
+    /// is worth transcribing at all (talkmedia-4-3).
+    static let minimumUsableRecordingSeconds: Int = 3
 }
 
 nonisolated extension Tuning {

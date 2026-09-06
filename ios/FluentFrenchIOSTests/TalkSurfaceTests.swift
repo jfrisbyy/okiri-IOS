@@ -370,4 +370,236 @@ struct TalkSurfaceTests {
         #expect(DictationMerge.apply(heard: "", toDraft: "") == .nothing)
         #expect(DictationMerge.nothing.notice == nil)
     }
+
+    // MARK: talkmedia-4-1 — a correction only ever leaves a card-sized card
+
+    @Test func aShortCorrectionIsKeptWholeAndALongOneIsCutToTheSentencesItChanged() {
+        // Already a card: kept exactly, and not marked as shortened (so it keeps
+        // the meaning the model wrote for it).
+        let short = CorrectionCard.from(original: "Je vais bien", corrected: "Je vais très bien.")
+        #expect(short.phrases == ["Je vais très bien."])
+        #expect(!short.shortened)
+
+        // Two sentences: only the ones the correction actually changed, each as
+        // its own card, and every one of them is something the deck accepts.
+        let long = CorrectionCard.from(
+            original: "Hier je vais au marché. Je achète du pain. Il fait beau.",
+            corrected: "Hier je suis allé au marché. J'ai acheté du pain. Il fait beau.")
+        #expect(long.phrases == ["Hier je suis allé au marché.", "J'ai acheté du pain."])
+        #expect(long.shortened, "shortened cards carry no meaning of their own — the model's English was for the whole line")
+        #expect(!long.phrases.contains("Il fait beau."), "a sentence the learner had right is not a correction")
+        #expect(long.phrases.allSatisfy { CaptureBuilder.isAcceptableHeadword($0) })
+    }
+
+    @Test func aCorrectionWithNothingCardSizedInItSavesNothing() {
+        let words = (1...40).map { "mot\($0)" }.joined(separator: " ")
+        let fixed = (1...40).map { "corrige\($0)" }.joined(separator: " ")
+        let card = CorrectionCard.from(original: words, corrected: fixed)
+        #expect(card.isEmpty, "one 40-word sentence is text, not a card the deck could ever ask about")
+
+        // A sentence longer than a card still yields the words it changed.
+        let long = "Le week-end dernier je vais au cinéma avec mes amis pour voir un film."
+        let fixedLong = "Le week-end dernier je suis allé au cinéma avec mes amis pour voir un film."
+        let trimmed = CorrectionCard.from(original: long, corrected: fixedLong)
+        #expect(trimmed.phrases.count == 1)
+        #expect(trimmed.phrases[0].contains("suis allé"))
+        #expect(CaptureBuilder.isAcceptableHeadword(trimmed.phrases[0]))
+        #expect(trimmed.shortened)
+
+        #expect(CorrectionCard.from(original: "x", corrected: "   ").isEmpty)
+    }
+
+    @Test func aChangedPhraseKeepsContextAndIgnoresPureDeletions() {
+        // A one-word fix is saved with the words around it, never on its own.
+        let phrase = CorrectionCard.changedPhrase(from: "Je mange le pomme", to: "Je mange la pomme")
+        #expect(phrase == "mange la pomme")
+        // Only words removed: what is left is the learner's own French, so there
+        // is nothing to save.
+        #expect(CorrectionCard.changedPhrase(from: "Je ne sais pas pas", to: "Je ne sais pas") == nil)
+        #expect(CorrectionCard.changedPhrase(from: "Bonjour", to: "") == nil)
+    }
+
+    @Test func speakPlanDropsACorrectionTooLongForACardAndSaysSo() {
+        let monologue = (1...30).map { "mot\($0)" }.joined(separator: " ")
+        let corrected = (1...30).map { "corrige\($0)" }.joined(separator: " ")
+        let feedback = SpeakFeedback(corrected: corrected, note: "n", natural: corrected + " encore",
+                                     score: 40, correctedEnglish: "the whole thing")
+        let plan = SpeakGapPlan.plan(original: monologue, feedback: feedback)
+        #expect(plan.specs.isEmpty)
+        #expect(plan.tooLongToSave, "the learner is told the deck kept nothing")
+        #expect(!plan.shortened)
+    }
+
+    @Test func aShortenedSpeakCardNeverCarriesTheWholeLinesMeaning() throws {
+        let feedback = SpeakFeedback(
+            corrected: "Hier je suis allé au marché. J'ai acheté du pain.",
+            note: "n",
+            natural: "Hier je suis allé au marché. J'ai acheté du pain.",
+            score: 60,
+            correctedEnglish: "Yesterday I went to the market. I bought bread.")
+        let plan = SpeakGapPlan.plan(original: "Hier je vais au marché. Je achète du pain.", feedback: feedback)
+        #expect(plan.shortened)
+        #expect(plan.specs.count == Tuning.maxCorrectionCards)
+        #expect(plan.specs.allSatisfy { $0.kind == .corrected })
+        #expect(plan.specs.allSatisfy { $0.english.isEmpty },
+                "the English described the whole answer, so a piece of it waits for its own lookup")
+        #expect(plan.specs.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.french) })
+    }
+
+    @Test func storeNeverSavesAMonologueAsOneCard() {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1")], gaps: [])
+        let monologue = (1...30).map { "mot\($0)" }.joined(separator: " ")
+        let corrected = (1...30).map { "corrige\($0)" }.joined(separator: " ")
+        let feedback = SpeakFeedback(corrected: corrected, note: "n", natural: "", score: 40,
+                                     mistakeConceptIds: ["c1"])
+        let outcome = store.recordSpeakFeedback(original: monologue, feedback: feedback, promptText: "", now: now)
+        #expect(outcome.savedCount == 0)
+        #expect(outcome.tooLongToSave)
+        #expect(store.gaps.isEmpty, "a five-minute monologue is not a card")
+        #expect(outcome.missedConceptIds == ["c1"], "the concepts the feedback named are still evidence")
+        #expect(store.gaps.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.frenchWord) })
+    }
+
+    @Test func storeSavesTheCorrectedSentencesOfALongAnswer() throws {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let feedback = SpeakFeedback(corrected: "Hier je suis allé au marché. J'ai acheté du pain.",
+                                     note: "n", natural: "", score: 60,
+                                     correctedEnglish: "Yesterday I went to the market. I bought bread.")
+        let outcome = store.recordSpeakFeedback(original: "Hier je vais au marché. Je achète du pain.",
+                                                feedback: feedback, promptText: "", now: now)
+        #expect(outcome.savedCount == 2)
+        #expect(outcome.shortened)
+        #expect(store.gaps.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.frenchWord) })
+        #expect(store.gaps.allSatisfy { $0.needsTranslation && $0.englishTranslation.isEmpty },
+                "no card claims the whole answer's meaning as its own")
+        let first = try #require(store.gaps.first { $0.frenchWord == "Hier je suis allé au marché." })
+        #expect(first.reviewCount == 1, "each correction the learner missed starts as a miss")
+    }
+
+    // MARK: talkmedia-4-4 — one attempt is one attempt
+
+    @Test func resubmittingTheSameAnswerRecordsNothingASecondTime() throws {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1")], gaps: [])
+        let feedback = SpeakFeedback(corrected: "fixed", note: "", natural: "", score: 50,
+                                     mistakeConceptIds: ["c1"])
+        let first = store.recordSpeakFeedback(original: "slip", feedback: feedback, promptText: "", now: now)
+        #expect(first.savedCount == 1)
+        let beta = store.concept("c1")!.beta
+        let gap = try #require(store.gaps.first)
+        #expect(gap.reviewCount == 1)
+
+        let again = store.recordSpeakFeedback(original: "slip", feedback: feedback, promptText: "", now: now.addingTimeInterval(20))
+        #expect(again.repeatedSubmission)
+        #expect(again.savedCount == 0 && again.duplicateCount == 0)
+        #expect(store.gaps.first?.reviewCount == 1, "one attempt never becomes two lapses")
+        #expect(store.concept("c1")!.beta == beta, "nor two misses on the concept")
+
+        // A genuine second attempt (later, or different words) is recorded again.
+        let later = store.recordSpeakFeedback(original: "slip", feedback: feedback, promptText: "",
+                                              now: now.addingTimeInterval(Tuning.speakFeedbackRepeatWindow + 1))
+        #expect(!later.repeatedSubmission)
+        #expect(store.gaps.first?.reviewCount == 2)
+    }
+
+    // MARK: talkmedia-4-1 — Converse
+
+    @Test func aTutorLineTooLongForACardIsNotOfferedForSaving() {
+        let greeting = tutor("Bonjour ! Bienvenue au café. Que désirez-vous ?", english: "Hi there.")
+        let transcript = [greeting]
+        #expect(ConverseRecap.saveCandidate(for: greeting, in: transcript) == .tooLongForACard)
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        #expect(!store.captureConversePhrase(french: greeting.french, english: greeting.english,
+                                             scenarioTitle: "Café", now: now))
+        #expect(store.gaps.isEmpty)
+
+        let short = tutor("Que désirez-vous ?", english: "What would you like?")
+        #expect(ConverseRecap.saveCandidate(for: short, in: [short]) == .tutorPhrase(french: "Que désirez-vous ?",
+                                                                                     english: "What would you like?"))
+        #expect(store.captureConversePhrase(french: short.french, english: short.english, scenarioTitle: "Café", now: now))
+    }
+
+    @Test func aLongTutorCorrectionKeepsItsEvidenceEvenWhenNoCardFits() {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1")], gaps: [])
+        let betaBefore = store.concept("c1")!.beta
+        let slip = (1...30).map { "mot\($0)" }.joined(separator: " ")
+        let fixed = (1...30).map { "corrige\($0)" }.joined(separator: " ")
+        #expect(store.recordConverseCorrection(originalFrench: slip, correctedFrench: fixed, explanation: "e",
+                                               conceptId: "c1", englishTranslation: "the whole line", now: now) == nil)
+        #expect(store.gaps.isEmpty, "no unanswerable card")
+        #expect(store.concept("c1")!.beta > betaBefore, "the slip still counts against the concept")
+    }
+
+    @Test func aShortenedTutorCorrectionWaitsForItsOwnMeaning() throws {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let gap = try #require(store.recordConverseCorrection(
+            originalFrench: "Hier je vais au marché avec mes amis pour acheter du pain.",
+            correctedFrench: "Hier je suis allé au marché avec mes amis pour acheter du pain.",
+            explanation: "e", conceptId: nil, englishTranslation: "Yesterday I went to the market with my friends to buy bread.",
+            now: now))
+        #expect(CaptureBuilder.isAcceptableHeadword(gap.frenchWord))
+        #expect(gap.frenchWord.contains("suis allé"))
+        #expect(gap.needsTranslation && gap.englishTranslation.isEmpty,
+                "the tutor's English was for the whole line, not for the piece that was kept")
+        #expect(gap.exampleSentence.hasPrefix("Hier je suis allé"), "the whole corrected line stays as the example")
+    }
+
+    // MARK: talkmedia-4-3 — an interrupted recording is announced, never silently graded
+
+    @Test func anInterruptedRecordingSaysHowMuchWasCaptured() {
+        #expect(!InterruptedRecording.isWorthTranscribing(secondsCaptured: 0))
+        #expect(!InterruptedRecording.isWorthTranscribing(secondsCaptured: Tuning.minimumUsableRecordingSeconds - 1))
+        #expect(InterruptedRecording.isWorthTranscribing(secondsCaptured: Tuning.minimumUsableRecordingSeconds))
+        let notice = InterruptedRecording.notice(secondsCaptured: 95)
+        #expect(notice.contains("1:35"), "the learner is told what was actually captured")
+        #expect(notice.contains("interrupted"))
+        #expect(InterruptedRecording.notice(secondsCaptured: 0).contains("record again"))
+    }
+
+    // MARK: compile-4-1 — a tutor reply with no local ids still becomes a guide
+
+    @Test func aGuideParsesFromTheReplyShapeTheTutorIsAskedFor() throws {
+        // Exactly the shape the system prompt demands: content only, no `id` anywhere.
+        let raw = """
+        {"title":"At the bakery","titleFrench":"À la boulangerie","summary":"What to expect.",
+         "keyPhrases":[{"french":"Bonjour","english":"Hello","context":"Always greet first"}],
+         "questionsAndAnswers":[{"question":"Et avec ceci ?","questionEnglish":"Anything else?",
+                                 "answer":"Ce sera tout","answerEnglish":"That will be all"}],
+         "tips":[{"tip":"Greet before ordering","category":"cultural"}],
+         "nativeExpressions":[{"french":"Ça marche","english":"Works for me","context":"Casual agreement"}]}
+        """
+        let guide = try #require(ScenarioGuide.parse(raw), "the tutor never sends an id; the guide must decode without one")
+        #expect(guide.title == "At the bakery")
+        #expect(guide.titleFrench == "À la boulangerie")
+        #expect(guide.keyPhrases.first?.french == "Bonjour")
+        #expect(guide.questionsAndAnswers.first?.answer == "Ce sera tout")
+        #expect(guide.tips.first?.category == "cultural")
+        #expect(guide.nativeExpressions.first?.english == "Works for me")
+        #expect(Set(guide.keyPhrases.map(\.id)).count == guide.keyPhrases.count, "each row gets its own identity")
+    }
+
+    @Test func aGuideMissingSectionsKeepsWhatTheTutorDidSend() throws {
+        let raw = "```json\n{\"title\":\"Pharmacy\",\"keyPhrases\":[{\"french\":\"J'ai mal ici\",\"english\":\"It hurts here\"}]}\n```"
+        let guide = try #require(ScenarioGuide.parse(raw), "a fenced, partial reply is still usable")
+        #expect(guide.title == "Pharmacy")
+        #expect(guide.keyPhrases.first?.context == "", "a dropped field is empty, not a failed guide")
+        #expect(guide.questionsAndAnswers.isEmpty && guide.tips.isEmpty && guide.nativeExpressions.isEmpty)
+    }
+
+    @Test func aReplyWithNothingToTeachIsRefused() {
+        #expect(ScenarioGuide.parse("sorry, I cannot help with that") == nil)
+        #expect(ScenarioGuide.parse(#"{"title":"Empty","keyPhrases":[]}"#) == nil,
+                "a guide with no phrases is a bad reply, not an empty screen")
+    }
+
+    @Test func aSavedGuideSurvivesTheRoundTripItIsStoredWith() throws {
+        let guide = try #require(ScenarioGuide.parse(#"""
+        {"title":"T","titleFrench":"TF","summary":"S",
+         "keyPhrases":[{"french":"F","english":"E","context":"C"}],
+         "questionsAndAnswers":[{"question":"Q","questionEnglish":"QE","answer":"A","answerEnglish":"AE"}],
+         "tips":[{"tip":"P","category":"native"}],"nativeExpressions":[]}
+        """#))
+        let data = try JSONEncoder().encode(guide)
+        let back = try JSONDecoder().decode(ScenarioGuide.self, from: data)
+        #expect(back == guide, "a stored guide comes back with the same ids and text")
+    }
 }

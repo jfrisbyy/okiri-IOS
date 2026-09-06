@@ -116,12 +116,13 @@ struct ConceptSelectorTests {
 
     @Test func smartFallsBackToACheckInWhenNothingIsEligible() {
         // A mastered concept that was never scheduled for a check-in is overdue for
-        // one: it comes back as ONE check-in item (its weakest gap, most overdue on
-        // ties), not as a pile of review.
+        // one: its PRACTISED items come back as ONE check-in item (the weakest, most
+        // overdue on ties), not as a pile of review.
         let concepts = [EngineFixtures.mastered("done", category: .vocabulary)]
         let gaps = (0..<3).map {
             EngineFixtures.gap("done-\($0)", concept: "done", category: .vocabulary,
-                               due: EngineFixtures.now.addingTimeInterval(-Double($0) * EngineFixtures.day))
+                               due: EngineFixtures.now.addingTimeInterval(-Double($0) * EngineFixtures.day),
+                               reviewCount: 3)
         }
         let store = EngineFixtures.store(concepts: concepts, gaps: gaps)
         let output = ConceptSelector(store: store).select(.smart(now: EngineFixtures.now))
@@ -436,6 +437,111 @@ struct ConceptSelectorTests {
         }
     }
 
+    // MARK: Mastered concepts — practised items vs. never-answered ones (engine-4-1)
+
+    /// Mastery is a belief about a CONCEPT; a concept owns many ITEMS. A word the
+    /// learner captured while reading lands on whatever concept the tagger names —
+    /// often one they already know — and every review path dropped it, while "Due
+    /// now" kept counting it. The check-in vehicle always prefers an already-reviewed
+    /// gap, so a never-answered one had no path into a smart lesson at all.
+    @Test func aNeverAnsweredGapOfAMasteredConceptIsStillTaught() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let known = EngineFixtures.mastered("known", category: .vocabulary)
+        var gaps = (0..<2).map {
+            EngineFixtures.gap("known-\($0)", concept: "known", category: .vocabulary,
+                               due: now.addingTimeInterval(-Double($0 + 1) * day),
+                               consecutiveCorrect: 2, reviewCount: 4)
+        }
+        // A word saved while reading, tagged to that same known skill, never asked.
+        gaps.append(EngineFixtures.gap("captured", concept: "known", category: .vocabulary,
+                                       due: now, sourceType: .reading))
+        let store = EngineFixtures.store(concepts: [known], gaps: gaps)
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(store.dueNow(at: now).contains { $0.id == "captured" }, "the app counts it as due")
+        #expect(output.gapIds.contains("captured"), "so the lesson has to be able to ask it")
+        #expect(output.items.first { $0.gapId == "captured" }?.role == .review)
+        #expect(output.checkInItems.map { $0.gapId } == ["known-1"], "practised material still returns as ONE check-in")
+        #expect(!output.gapIds.contains("known-0"), "the other practised gap does not ride in as review")
+
+        // A provisional placement seed is the exception: its Foundation items are the
+        // vehicles that VERIFY the claim "I already know this", and teaching them would
+        // re-teach exactly that. They open up when the seed fails its check-ins and the
+        // concept drops out of mastery (B7/B9).
+        var seed = EngineFixtures.mastered("seeded")
+        seed.isProvisional = true
+        let seedStore = EngineFixtures.store(concepts: [seed],
+                                             gaps: (0..<3).map { EngineFixtures.gap("seeded-\($0)", concept: "seeded", due: now) })
+        seedStore.sessionIndex = 1
+        let provisional = ConceptSelector(store: seedStore).select(.smart(now: now))
+        #expect(provisional.items.count == 1 && provisional.items.first?.role == .checkIn,
+                "an unverified seed is checked, never re-taught")
+    }
+
+    /// A consolidation day (nothing left to teach) let check-ins take every slot, so
+    /// the whole session was material the engine already believes the learner knows
+    /// while genuinely due items kept rotting. `reviewSlotsPerLesson` is a floor on
+    /// every day, not only on days with a target.
+    @Test func consolidationCheckInsNeverTakeTheReservedReviewSlots() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        var concepts: [Concept] = []
+        var gaps: [GapItem] = []
+        for i in 0..<8 {
+            var m = EngineFixtures.mastered("m\(i)")
+            m.nextCheckInAt = now.addingTimeInterval(-Double(i + 1) * day)
+            concepts.append(m)
+            gaps.append(EngineFixtures.gap("m\(i)-0", concept: "m\(i)", due: now.addingTimeInterval(-day),
+                                           consecutiveCorrect: 2, reviewCount: 4))
+        }
+        // One due, practicable word the learner saved, on no concept at all.
+        gaps.append(EngineFixtures.gap("saved", concept: nil, category: .vocabulary, due: now, sourceType: .reading))
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps)
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(output.targetConceptId == nil, "nothing left to teach: a consolidation day")
+        #expect(output.checkInItems.count == Tuning.lessonSize - Tuning.reviewSlotsPerLesson)
+        #expect(output.gapIds.contains("saved"), "due review keeps its reserved slots")
+        #expect(output.items.count == output.checkInItems.count + 1)
+
+        // With nothing due to review, check-ins may still fill the whole lesson.
+        store.gaps.removeAll { $0.id == "saved" }
+        let full = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(full.checkInItems.count == Tuning.lessonSize)
+    }
+
+    /// The blind-spot probe is appended AFTER the lesson is built, so it must not be
+    /// counted as one of the lesson's own items when the headline is chosen: every
+    /// probe session turned a check-in lesson into "Today: review", and a lesson made
+    /// only of the probe described a never-met skill as review.
+    @Test func aProbeDoesNotMakeACheckInLessonReadAsReview() {
+        let now = EngineFixtures.now
+        var m = EngineFixtures.mastered("m")
+        m.nextCheckInAt = now.addingTimeInterval(-EngineFixtures.day)
+        let blind = EngineFixtures.concept("blind", category: .pronunciation)   // frontier, no gaps
+        let gaps = [EngineFixtures.gap("m-0", concept: "m", due: now.addingTimeInterval(-EngineFixtures.day),
+                                       consecutiveCorrect: 2, reviewCount: 4)]
+        let store = EngineFixtures.store(concepts: [m, blind], gaps: gaps)
+        store.sessionIndex = Tuning.probeEveryNSessions   // a probe session
+        #expect(ConceptSelector(store: store).probeConcept()?.id == "blind")
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(output.items.filter { $0.role == .probe }.count == 1)
+        #expect(output.checkInItems.count == 1)
+        #expect(output.headline == "Today: check-ins — making sure what you've learned still holds.")
+
+        // A lesson that is ONLY the probe says so, instead of calling a skill the
+        // learner has never met "review".
+        store.concepts = [blind]
+        store.gaps = []
+        let probeOnly = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(probeOnly.items.map { $0.role } == [.probe])
+        #expect(probeOnly.headline == "Today: a quick check on Concept blind — a skill you haven't met yet.")
+    }
+
     // MARK: Reason copy — "missed" counts misses, not reviews
 
     /// `GapItem.reviewCount` is bumped on every answer, right or wrong, so any copy
@@ -467,6 +573,26 @@ struct ConceptSelectorTests {
         #expect(reasons["clean"] == "Due for review.", "12 correct answers are not 12 misses")
         #expect(reasons["slipped"] == "You've missed this 3× — time to lock it in.")
         #expect(Tuning.repeatedMissReasonFloor == 2, "the floor gates on misses, not reviews")
+    }
+
+    /// Every gap-creation path stamps an initial `.again` FSRS state, and `.again`
+    /// used to mean one lapse — so a gap nobody had ever been asked was born with a
+    /// miss on its record and the first lesson of a brand-new learner read
+    /// "you've slipped on it 12 times" for 12 seeded items.
+    @Test func aNeverAnsweredGapCarriesNoMisses() {
+        let now = EngineFixtures.now
+        #expect(FSRS.makeUnseenState(now: now).lapses == 0, "nobody has missed an item nobody has been asked")
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("focus", mastery: 0.4)], gaps: [])
+        store.gaps = (0..<3).map { i in
+            store.makeCapturedGap(frenchWord: "focus-w\(i)", englishTranslation: "focus-w\(i)-en",
+                                  sourceType: .foundation, conceptId: "focus", now: now)
+        }
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(output.targetConceptId == "focus")
+        #expect(output.headline == "Today: Concept focus.")
+        #expect(output.items.allSatisfy { !$0.reason.contains("missed") })
     }
 
     @Test func smartHeadlineCountsLapsesNotReviews() {

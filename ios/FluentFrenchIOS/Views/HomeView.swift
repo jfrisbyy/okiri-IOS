@@ -552,20 +552,28 @@ struct HomeView: View {
         .accessibilityLabel("\(label): \(value)")
     }
 
-    /// The weekly goal from Preferences (D11): days with a lesson this week.
+    /// The weekly goal from Preferences (D11): days with a COMPLETED LESSON this
+    /// week. That is not the rule the streak counts (any day with a correct
+    /// answer), so the row names its own rule (`HomeCopy`) rather than leaving the
+    /// two numbers to disagree silently.
     private func weeklyGoalRow(done: Int, goal: Int) -> some View {
         let progress = min(1, Double(done) / Double(max(1, goal)))
+        let met = goal > 0 && done >= goal
         return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Weekly goal").font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
-                Spacer()
-                Text("\(done) of \(goal) days").font(.caption).foregroundStyle(Theme.textSecondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text(HomeCopy.weeklyGoalTitle(met: met))
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text(HomeCopy.weeklyGoalValue(done: done, goal: goal))
+                    .font(.caption).foregroundStyle(met ? Theme.success : Theme.textSecondary)
+                    .layoutPriority(1)
             }
-            progressBar(progress, tint: Theme.primary, height: 6)
+            progressBar(progress, tint: met ? Theme.success : Theme.primary, height: 6)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Weekly goal")
-        .accessibilityValue("\(done) of \(goal) days")
+        .accessibilityLabel(HomeCopy.weeklyGoalTitle(met: met))
+        .accessibilityValue(HomeCopy.weeklyGoalValue(done: done, goal: goal))
     }
 
     private func progressBar(_ progress: Double, tint: Color, height: CGFloat) -> some View {

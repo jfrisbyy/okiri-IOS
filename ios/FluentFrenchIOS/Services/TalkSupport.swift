@@ -222,6 +222,127 @@ nonisolated enum PhraseKey {
     }
 }
 
+/// What a correction (spoken, written or from a tutor turn) may leave on a deck
+/// card. A card is a word or a short phrase — `CaptureBuilder.isAcceptableHeadword`,
+/// the same rule the reader enforces and the save button explains — so a
+/// correction of a whole spoken answer is reduced to the part it actually
+/// changed, and nothing is saved when even that will not fit. Without this a
+/// five-minute monologue became one card no lesson could ever ask about
+/// (talkmedia-4-1).
+nonisolated enum CorrectionCard {
+    /// What one correction leaves behind.
+    struct Result: Equatable {
+        /// The phrases worth saving, in the order they appear in the correction.
+        var phrases: [String] = []
+        /// True when `phrases` are pieces of the correction rather than the whole
+        /// corrected line. The meaning the model wrote describes the WHOLE line,
+        /// so a shortened card must never carry it — it waits for its own lookup.
+        var shortened = false
+
+        var isEmpty: Bool { phrases.isEmpty }
+    }
+
+    /// Characters trimmed from the ends of a phrase cut out of a sentence.
+    private static let edgeMarks = CharacterSet(charactersIn: " \t\n.,;:!?…\"'“”‘’«»()")
+
+    /// The card-sized phrases of `corrected`. The whole line when it is already a
+    /// card; otherwise each sentence the correction rewrote — or, when a rewritten
+    /// sentence is itself longer than a card, just the words it changed — capped
+    /// at `limit`.
+    static func from(original: String, corrected: String,
+                     limit: Int = Tuning.maxCorrectionCards) -> Result {
+        let fixed = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fixed.isEmpty else { return Result() }
+        if CaptureBuilder.isAcceptableHeadword(fixed) { return Result(phrases: [fixed]) }
+
+        let learnerSentences = SentenceExtractor.sentences(in: original)
+        var phrases: [String] = []
+        var seen: Set<String> = []
+        for sentence in SentenceExtractor.sentences(in: fixed) {
+            guard phrases.count < max(0, limit) else { break }
+            let source = nearest(sentence, in: learnerSentences)
+            guard !PhraseKey.same(sentence, source) else { continue }   // the learner had this one right
+            let candidate = CaptureBuilder.isAcceptableHeadword(sentence)
+                ? sentence
+                : changedPhrase(from: source, to: sentence)
+            guard let phrase = candidate, CaptureBuilder.isAcceptableHeadword(phrase) else { continue }
+            let key = PhraseKey.normalized(phrase)
+            guard !key.isEmpty, !seen.contains(key) else { continue }
+            seen.insert(key)
+            phrases.append(phrase)
+        }
+        return Result(phrases: phrases, shortened: !phrases.isEmpty)
+    }
+
+    /// The learner sentence a corrected sentence rewrites: the one sharing the
+    /// most words with it ("" when the learner said nothing comparable).
+    private static func nearest(_ sentence: String, in candidates: [String]) -> String {
+        let target = Set(SentenceExtractor.tokens(in: sentence))
+        guard !target.isEmpty else { return "" }
+        var best = ""
+        var bestScore = 0
+        for candidate in candidates {
+            let score = Set(SentenceExtractor.tokens(in: candidate)).intersection(target).count
+            if score > bestScore { bestScore = score; best = candidate }
+        }
+        return best
+    }
+
+    /// The words `corrected` added or changed, widened to
+    /// `Tuning.correctionCardContextWords` words of context so a one-word fix is
+    /// still a phrase. nil when the correction only deleted words (the remaining
+    /// text is the learner's own) or when the change is itself too long for a card.
+    static func changedPhrase(from original: String, to corrected: String) -> String? {
+        let old = words(original), new = words(corrected)
+        guard !new.isEmpty else { return nil }
+        var lower = 0
+        while lower < min(old.count, new.count),
+              SentenceExtractor.fold(old[lower]) == SentenceExtractor.fold(new[lower]) { lower += 1 }
+        var suffix = 0
+        while suffix < min(old.count, new.count) - lower,
+              SentenceExtractor.fold(old[old.count - 1 - suffix]) == SentenceExtractor.fold(new[new.count - 1 - suffix]) {
+            suffix += 1
+        }
+        var upper = new.count - suffix
+        guard lower < upper else { return nil }   // nothing added: only words removed
+        guard upper - lower <= Tuning.maxCaptureWords else { return nil }
+        // Widen alternately for context, never past the sentence or the card cap.
+        let target = min(Tuning.correctionCardContextWords, Tuning.maxCaptureWords)
+        while upper - lower < target, lower > 0 || upper < new.count {
+            if lower > 0 { lower -= 1 }
+            if upper - lower >= target { break }
+            if upper < new.count { upper += 1 }
+        }
+        let phrase = new[lower..<upper].joined(separator: " ")
+            .trimmingCharacters(in: edgeMarks)
+        return phrase.isEmpty ? nil : phrase
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).map(String.init)
+    }
+}
+
+/// A recording something else took the microphone from (a call, Siri, the app
+/// leaving the foreground). The learner is always told, so feedback on the
+/// fragment that was captured is never presented as feedback on their whole
+/// answer (talkmedia-4-3).
+nonisolated enum InterruptedRecording {
+    /// Whether what was captured before the interruption is worth transcribing.
+    static func isWorthTranscribing(secondsCaptured: Int) -> Bool {
+        secondsCaptured >= Tuning.minimumUsableRecordingSeconds
+    }
+
+    /// What the learner is told, naming how much was actually captured.
+    static func notice(secondsCaptured: Int) -> String {
+        let captured = SpeakRecordingCap.countdown(secondsLeft: max(0, secondsCaptured))
+        guard isWorthTranscribing(secondsCaptured: secondsCaptured) else {
+            return "Something interrupted the recording before anything was captured. Tap to record again."
+        }
+        return "Something interrupted the recording, so only the first \(captured) was captured — the feedback covers that much. Tap to record again."
+    }
+}
+
 /// Recording caps: the duration selector is a hard limit, not decoration (E16).
 nonisolated enum SpeakRecordingCap {
     /// Seconds a free-speech recording may run for the selected minutes. Unknown

@@ -385,7 +385,8 @@ struct ProfileView: View {
 /// Streak + weekly goal. Never celebrates a streak of 0 (D19): a fresh record
 /// reads "Start your streak today", and the flame only lights once there is one.
 /// The weekly goal (D11) counts days with a completed lesson this week against
-/// `preferences.daysPerWeekGoal`.
+/// `preferences.daysPerWeekGoal` — a different rule from the seven-day grid below
+/// it (any day practised), so the row names its own rule (`HomeCopy`).
 struct PracticeStreakCard: View {
     @Environment(AppStore.self) private var store
 
@@ -466,12 +467,14 @@ struct PracticeStreakCard: View {
         let fraction = goal > 0 ? min(1, Double(done) / Double(goal)) : 0
         let met = done >= goal
         return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(met ? "Weekly goal met" : "Weekly goal")
+            HStack(alignment: .firstTextBaseline) {
+                Text(HomeCopy.weeklyGoalTitle(met: met))
                     .font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
-                Spacer()
-                Text("\(done) of \(goal) days this week")
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text(HomeCopy.weeklyGoalValue(done: done, goal: goal))
                     .font(.footnote).foregroundStyle(met ? Theme.success : Theme.textSecondary)
+                    .layoutPriority(1)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -482,8 +485,8 @@ struct PracticeStreakCard: View {
             .frame(height: 6)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Weekly goal")
-        .accessibilityValue("\(done) of \(goal) days this week")
+        .accessibilityLabel(HomeCopy.weeklyGoalTitle(met: met))
+        .accessibilityValue(HomeCopy.weeklyGoalValue(done: done, goal: goal))
     }
 
     /// VoiceOver reading of the seven-day grid, which is otherwise colour-only.

@@ -44,6 +44,20 @@ nonisolated enum FSRS {
         )
     }
 
+    /// The schedule a gap the learner has NEVER been asked starts from: the `.again`
+    /// stability and difficulty (a new item is fragile and due immediately), but with
+    /// ZERO reps and ZERO lapses — nobody has answered it, so nobody has missed it.
+    /// `lapses` is what the copy layer reads for "you've missed this N×" and for the
+    /// lesson headline's "you've slipped on it N times"; seeding it at 1 told a
+    /// brand-new learner they had already slipped on every item of their first lesson.
+    static func makeUnseenState(now: Date = Date()) -> FsrsState {
+        var state = makeInitialState(grade: .again, now: now)
+        state.reps = 0
+        state.lapses = 0
+        state.dueAt = now
+        return state
+    }
+
     /// Probability of recall right now given elapsed days since last review.
     static func retrievability(state: FsrsState, now: Date = Date()) -> Double {
         guard let last = state.lastReviewAt else { return 1.0 }

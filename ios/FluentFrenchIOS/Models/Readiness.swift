@@ -67,7 +67,11 @@ nonisolated enum ReadinessCopy {
                 // rather than repeating the coverage bridge note.
                 return governorActive ? governorBridgeCondition : bridgeCondition
             case .locked:
-                return governorActive ? governorCondition(for: modality) : "Unlocks as you build the basics — keep going with your Foundation lessons."
+                // Reading is only ever `.locked` because coverage is below the
+                // bridge — the governor holds it at `.foundation`, never lower
+                // (AppStore.governorHeldVerdict). So the honest sentence here is
+                // always the coverage one, even while the governor is active.
+                return "Unlocks as you build the basics — keep going with your Foundation lessons."
             }
         default:
             guard readiness != .unlocked else { return nil }

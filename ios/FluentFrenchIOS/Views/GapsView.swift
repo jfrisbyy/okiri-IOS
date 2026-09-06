@@ -142,9 +142,15 @@ struct GapsView: View {
         let masteryProgress = Double(stat.mastered) / Double(total)
         let healthLabel: String
         let healthColor: Color
+        // No gaps of this category at all — nothing seeded, nothing captured, nothing
+        // scheduled. There is no evidence to be green about, so this must NOT read
+        // "All clear": a day-one learner has never been asked to pronounce anything.
+        if stat.active == 0 && stat.mastered == 0 && stat.due == 0 {
+            healthLabel = "Not started"; healthColor = Theme.textSecondary
+        }
         // Nothing unmastered left, but the schedule still wants some checks back:
         // "All clear" would contradict the "N due now" line right below it.
-        if stat.active == 0 && stat.due > 0 { healthLabel = "Due for a check"; healthColor = Theme.warning }
+        else if stat.active == 0 && stat.due > 0 { healthLabel = "Due for a check"; healthColor = Theme.warning }
         else if stat.active == 0 { healthLabel = "All clear"; healthColor = Theme.success }
         // Never reviewed: no recall evidence yet, so no health claim either (D19).
         else if stat.reviewed == 0 { healthLabel = "New"; healthColor = Theme.primary }

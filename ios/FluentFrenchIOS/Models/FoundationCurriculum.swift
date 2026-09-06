@@ -71,8 +71,7 @@ nonisolated enum FoundationCurriculum {
                 confusionLinks: [],
                 conceptId: s.6
             )
-            g.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-            g.fsrs?.dueAt = now
+            g.fsrs = FSRS.makeUnseenState(now: now)
             return g
         }
     }

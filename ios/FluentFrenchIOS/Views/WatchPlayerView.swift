@@ -49,6 +49,12 @@ struct WatchPlayerView: View {
     /// on every re-appearance, not just on id changes, so without this marker
     /// leaving the player and coming back would re-translate settled lines.
     @State private var translationRunFor = 0
+    /// The `attempt` the transcript has already been fetched for. Same reason as
+    /// `translationRunFor`: `.task(id:)` re-runs when the view re-appears, which
+    /// is exactly what leaving fullscreen does, and without this marker the
+    /// transcript on screen (and the learner's place in it) would be thrown away
+    /// and refetched from zero (talkmedia-4-2). `-1` so the first pass runs.
+    @State private var loadRunFor = -1
 
     private let speeds: [Double] = [0.75, 1.0, 1.25]
 
@@ -485,11 +491,25 @@ struct WatchPlayerView: View {
     /// service. English captions are shown as soon as they arrive and translated
     /// in place under their own budget (`Tuning.transcriptTranslationTimeout`);
     /// leaving the screen cancels the `.task`, which stops the pass. A retry is
-    /// a new `attempt`, which re-runs the `.task`.
+    /// a new `attempt`, which re-runs the `.task`. Coming back from fullscreen is
+    /// NOT a new attempt: `loadRunFor` keeps the transcript that is already here
+    /// (talkmedia-4-2), and only the line highlight is re-synced to the player.
     private func loadTranscript() async {
+        guard loadRunFor != attempt else {
+            updateActiveIndex(for: controller.currentTime)
+            // A translation pass the learner interrupted (by going fullscreen)
+            // left lines in English; pick it up where it stopped rather than
+            // leaving the panel on "translating" for good.
+            if transcript.coverage.isTranslating { await runTranslationPass() }
+            return
+        }
         transcript = .loading
         activeIndex = -1
         let result = await TranscriptService.fetch(videoId: video.videoId)
+        // A fetch cut short by the view going away is not a completed attempt:
+        // the marker is only set once there is a real answer to keep.
+        guard !Task.isCancelled else { return }
+        loadRunFor = attempt
         switch result {
         case .segments(let lines, let language, let origin):
             guard !lines.isEmpty else { transcript = .noCaptions; return }
@@ -499,10 +519,7 @@ struct WatchPlayerView: View {
             case .english:
                 transcript = .loaded(lines, coverage: .translating(done: 0, total: lines.count), origin: origin)
                 updateActiveIndex(for: controller.currentTime)
-                for await progress in TranscriptService.translateToFrench(lines) {
-                    guard !Task.isCancelled else { return }
-                    transcript = .loaded(progress.segments, coverage: progress.coverage, origin: origin)
-                }
+                await runTranslationPass()
             }
         case .noCaptions: transcript = .noCaptions
         case .unavailable(let failure): transcript = .unavailable(failure)
@@ -526,6 +543,14 @@ struct WatchPlayerView: View {
     private func translateRemainingLines() async {
         guard translationAttempt > 0, translationAttempt != translationRunFor else { return }
         translationRunFor = translationAttempt
+        await runTranslationPass()
+    }
+
+    /// Translate the lines still in English, streaming each batch into the panel.
+    /// Shared by the first pass, the footnote's "Try again" and the resume after
+    /// an interrupted pass, so all three stream the same way and none of them
+    /// refetches captions that already arrived.
+    private func runTranslationPass() async {
         let lines = segments
         guard lines.contains(where: { $0.language == .english }) else { return }
         let origin = transcript.origin

@@ -228,25 +228,30 @@ struct IdiomsView: View {
     }
 
     /// Save-to-deck affordance (E25): opens the shared capture card, or shows
-    /// that the idiom is already in the deck.
+    /// that the idiom is already in the deck. An expression the deck could not
+    /// hold says so HERE rather than opening a card whose only button is greyed
+    /// out — the row never invites a save the store would refuse (read-4-3).
     private func saveRow(for idiom: FrenchIdiom) -> some View {
         let saved = store.hasGap(forWord: idiom.french)
+        let capturable = CaptureBuilder.isAcceptableHeadword(idiom.french)
+        let title = saved ? "In your deck" : (capturable ? "Save to my deck" : "Too long to save as a card")
+        let symbol = saved ? "checkmark.circle.fill" : (capturable ? "plus.circle.fill" : "exclamationmark.circle.fill")
         return Button {
-            guard !saved else { return }
+            guard !saved, capturable else { return }
             Haptics.tap()
             captureDraft = draft(for: idiom)
         } label: {
-            Label(saved ? "In your deck" : "Save to my deck",
-                  systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
+            Label(title, systemImage: symbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(saved ? Theme.success : accent)
                 .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
                 .background(saved ? Theme.successLight : accent.opacity(0.1))
                 .clipShape(.rect(cornerRadius: Radius.chip))
+                .opacity(capturable ? 1 : 0.55)
         }
         .buttonStyle(.plain)
-        .disabled(saved)
-        .accessibilityLabel(saved ? "Already in your deck" : "Save to my deck")
-        .accessibilityHint(saved ? "" : "Adds this idiom to your practice deck")
+        .disabled(saved || !capturable)
+        .accessibilityLabel(saved ? "Already in your deck" : title)
+        .accessibilityHint(saved || !capturable ? "" : "Adds this idiom to your practice deck")
     }
 }

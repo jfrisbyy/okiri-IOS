@@ -83,7 +83,8 @@ struct TensesView: View {
         if !answers.contains(phrase) { answers.insert(phrase, at: 0) }
         return CaptureDraft(
             frenchWord: word,
-            englishTranslation: "\(verb.meaning) — \(pronouns.joined(separator: " / ")), \(tense.name.lowercased())",
+            englishTranslation: ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
+                                                        tense: tense.name),
             explanation: "\(tense.frenchName) of \(verb.infinitive) (\(verb.meaning)). \(tense.detail).",
             exampleSentence: phrase,
             exampleTranslation: "",
@@ -93,8 +94,21 @@ struct TensesView: View {
             category: .grammar,
             partOfSpeech: "verb",
             conceptId: Self.conceptId(for: tense, verb: verb),
-            acceptedAnswers: answers
+            acceptedAnswers: answers,
+            // Paradigms also repeat a form ACROSS tenses (parler's "parlions" is
+            // imparfait and subjonctif), so saving it from a second tense adds
+            // that reading to the one card instead of being refused (read-4-2).
+            mergeIntoExisting: true
         )
+    }
+
+    /// Whether the deck already holds this form AS the tense on screen. A form two
+    /// tenses spell alike is one card, so "saved" has to mean the card covers this
+    /// tense — not merely that the spelling is somewhere in the deck (read-4-2).
+    private func isSaved(_ form: String, in tense: FrenchTense) -> Bool {
+        let word = form.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let gap = store.existingGap(forWord: word) else { return false }
+        return ConjugationCard.covers(tense: tense.name, meaning: gap.englishTranslation)
     }
 
     /// The taxonomy concept a tense/verb pair is evidence of (nil when none fits).
@@ -243,7 +257,7 @@ struct TensesView: View {
     /// Save-to-deck affordance (E25) for ONE conjugated form.
     private func saveButton(for verb: FrenchVerb, in tense: FrenchTense,
                             pronoun: String, form: String) -> some View {
-        let saved = store.hasGap(forWord: form)
+        let saved = isSaved(form, in: tense)
         return Button {
             guard !saved, let draft = draft(for: verb, in: tense, pronoun: pronoun, form: form) else { return }
             Haptics.tap()
@@ -268,9 +282,10 @@ struct TensesView: View {
                           forms: [(pronoun: String, form: String)]) -> some View {
         // Count DISTINCT forms: the deck keys cards by headword, so the repeated
         // rows of a paradigm (être/imparfait "étais" for je and tu) are one card,
-        // and counting rows would jump to "2 of 6" after a single save.
+        // and counting rows would jump to "2 of 6" after a single save. A card
+        // only counts when it covers THIS tense (read-4-2).
         let unique = Set(forms.map { $0.form.trimmingCharacters(in: .whitespacesAndNewlines) })
-        let saved = unique.filter { store.hasGap(forWord: $0) }.count
+        let saved = unique.filter { isSaved($0, in: tense) }.count
         let text: String
         if saved == 0 {
             text = "Tap + on a form to save it to your deck"

@@ -179,8 +179,11 @@ struct DeckView: View {
                 Spacer()
             }
 
+            // The due-now review lives on the SRS card above; this CTA is always the
+            // mixed one, so the two adjacent buttons never carry the same label and
+            // the same action.
             Button {
-                startScoped(due > 0 ? .dueNow : .mixed)
+                startScoped(.mixed)
             } label: {
                 HStack(spacing: 14) {
                     Image(systemName: "bolt.fill").scaledFont(18).foregroundStyle(.white)
@@ -188,9 +191,9 @@ struct DeckView: View {
                         .background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(due > 0 ? "Review due now" : "Start Practice")
+                        Text("Mixed practice")
                             .scaledFont(16, weight: .semibold).foregroundStyle(.white)
-                        Text(due > 0 ? "\(due) card\(due == 1 ? "" : "s") due now" : "Mixed review of all categories")
+                        Text("A mix across all categories")
                             .font(.footnote).foregroundStyle(.white.opacity(0.9))
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -199,13 +202,13 @@ struct DeckView: View {
                         .accessibilityHidden(true)
                 }
                 .padding(Space.lg)
-                .background(due > 0 ? Theme.error : Theme.primary)
+                .background(Theme.primary)
                 .clipShape(.rect(cornerRadius: Radius.card))
                 .softLift(radius: 14, y: 6, strength: 0.8)
             }
             .buttonStyle(.plain)
             .pressable()
-            .accessibilityHint("Starts a practice session")
+            .accessibilityHint("Starts a mixed practice session across all categories")
         }
     }
 

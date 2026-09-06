@@ -195,7 +195,12 @@ final class AppStore {
     @ObservationIgnored private(set) var translationAttempts: [String: Int] = [:]
 
     // MARK: - Package E-talk stored state (edit only inside this block)
-    // (converse / speaking stored properties go here)
+    /// The learner line + correction the last round of speaking feedback recorded,
+    /// and when. Transient (this session only): re-submitting the same answer
+    /// within `Tuning.speakFeedbackRepeatWindow` is the same attempt, and must not
+    /// book a second miss on the same card (talkmedia-4-4).
+    @ObservationIgnored private var lastSpeakFeedbackKey: String? = nil
+    @ObservationIgnored private var lastSpeakFeedbackAt: Date? = nil
 
     // MARK: - Package E-media stored state (edit only inside this block)
     // (listening / watching stored properties go here)
@@ -380,8 +385,7 @@ final class AppStore {
         probe.isProbe = true
         probe.probeOptions = content.options
         // Like every gap the store creates, a probe starts with a schedule (B4).
-        probe.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-        probe.fsrs?.dueAt = now
+        probe.fsrs = FSRS.makeUnseenState(now: now)
         gaps.insert(probe, at: 0)
         return probe
     }
@@ -891,9 +895,12 @@ final class AppStore {
     /// are provisional and never count toward coverage (B8), so a seed-only learner
     /// always starts in Foundation; only mastery already VERIFIED on this record
     /// (a retake by a learner whose reading is open) predicts otherwise.
+    /// A retake never re-locks reading or resets coverage (see the retake branch of
+    /// `applyPlacement`), so an already-open learner stays open even if the retake
+    /// bottomed out and reported `isTrueBeginner` — the unlock check comes first.
     func willEnterFoundation(after result: PlacementResult, config: ReadinessConfig = .tuning) -> Bool {
-        if result.isTrueBeginner { return true }
         if unlockedModalities.contains(LearningModality.reading.rawValue) { return false }
+        if result.isTrueBeginner { return true }
         return baseCoverage < config.readingUnlock
     }
 
@@ -1264,7 +1271,9 @@ final class AppStore {
     /// A tutor correction in Converse: the corrected French becomes a gap (through
     /// the capture factory, deduped on the headword) and the slip is recorded as a
     /// `.again` on it at the converse format's weight. Returns the gap the evidence
-    /// landed on, or nil when there was nothing to correct.
+    /// landed on, or nil when there was nothing to correct — including when the
+    /// correction is longer than a card and nothing card-sized survives it
+    /// (talkmedia-4-1); the concept still hears about the slip in that case.
     @discardableResult
     func recordConverseCorrection(originalFrench: String, correctedFrench: String, explanation: String,
                                   conceptId: String?, englishTranslation: String? = nil,
@@ -1272,18 +1281,32 @@ final class AppStore {
         let corrected = correctedFrench.trimmingCharacters(in: .whitespacesAndNewlines)
         let original = originalFrench.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !corrected.isEmpty, captureKey(corrected) != captureKey(original) else { return nil }
+        // A card holds a word or a short phrase, so a rewritten paragraph is cut
+        // down to the part the tutor changed. A shortened card cannot keep the
+        // tutor's English — that described the whole line — so it waits for a lookup.
+        let card = CorrectionCard.from(original: original, corrected: corrected, limit: 1)
+        guard let headword = card.phrases.first else {
+            // Nothing savable, but the learner still got it wrong: keep the evidence.
+            if let conceptId, concept(conceptId) != nil {
+                recordConceptAnswer(conceptId: conceptId, correct: false,
+                                    weight: Tuning.formatEvidenceWeight(.converse), now: now)
+                save()
+            }
+            return nil
+        }
+        let english = card.shortened ? nil : englishTranslation
 
         let gapId: String
-        if let existing = existingGap(forWord: corrected) {
+        if let existing = existingGap(forWord: headword) {
             gapId = existing.id
         } else {
             let linked = concept(conceptId)
             var gap = makeCapturedGap(
-                frenchWord: corrected,
-                englishTranslation: englishTranslation ?? "",
+                frenchWord: headword,
+                englishTranslation: english ?? "",
                 explanation: explanation,
-                exampleSentence: corrected,
-                exampleTranslation: englishTranslation ?? "",
+                exampleSentence: card.shortened ? corrected : headword,
+                exampleTranslation: english ?? "",
                 sourceType: .speech,
                 category: linked?.category ?? .phrasing,
                 cefrLevel: linked?.cefrLevel,
@@ -1293,7 +1316,7 @@ final class AppStore {
                 conceptId: linked?.id,
                 now: now
             )
-            gap.needsTranslation = englishTranslation == nil
+            gap.needsTranslation = english == nil
             guard captureGap(gap) else { return nil }
             gapId = gap.id
         }
@@ -1432,8 +1455,7 @@ final class AppStore {
             relatedWords: relatedWords,
             conceptId: conceptId
         )
-        gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-        gap.fsrs?.dueAt = now
+        gap.fsrs = FSRS.makeUnseenState(now: now)
         return gap
     }
 
@@ -2406,6 +2428,27 @@ extension AppStore {
         return slice.count
     }
 
+    /// Seed ONE concept's own Foundation items on demand, when a blind-spot probe
+    /// lands on it (engine-4-4). The probe deliberately picks a frontier concept with
+    /// no gaps, and above the seeded bands that is the only kind of concept left: its
+    /// curriculum is in the content file but no seeding path ever reaches it. Without
+    /// this the probe answer moves the concept to `.learning` with an empty spine, so
+    /// it can never become a lesson target — the app diagnoses a skill it can never
+    /// teach. Seeding turns the probe into the door to that skill instead. A no-op when
+    /// the concept already has non-probe gaps of its own, or has no content to seed.
+    /// Returns how many gaps were added.
+    @discardableResult
+    func seedConceptContentIfNeeded(_ conceptId: String, now: Date = Date()) -> Int {
+        guard !gaps.contains(where: { $0.conceptId == conceptId && !$0.isProbe }) else { return 0 }
+        let existingHeadwords = Set(gaps.map { FoundationSeeder.headwordKey($0.frenchWord) })
+        let slice = foundationSlice(conceptIds: [conceptId], excludedHeadwords: existingHeadwords,
+                                    existingIds: Set(gaps.map { $0.id }), now: now)
+        guard !slice.isEmpty else { return 0 }
+        gaps.append(contentsOf: slice)
+        save()
+        return slice.count
+    }
+
     /// Base concepts the Foundation track has actually seeded content for — the
     /// denominator of the Foundation progress bar (D10). Every base concept when
     /// nothing has been seeded yet, so the bar never divides by zero.
@@ -2488,7 +2531,16 @@ extension AppStore {
         // up by a long drag in the reader is not a card either — a lesson could
         // only ever ask "What does <paragraph> mean?" and never grade it.
         guard CaptureBuilder.isAcceptableHeadword(word) else { return .rejected }
-        if let existing = existingGap(forWord: word) { return .duplicate(existing) }
+        if let existing = existingGap(forWord: word) {
+            // A form that two tenses spell the same way is ONE card in a deck
+            // keyed by headword, so the conjugation tables ask for the second
+            // reading to be folded into the card that already holds it (read-4-2)
+            // rather than the page claiming the tense on screen is already saved.
+            if draft.mergeIntoExisting, let extended = extendCard(existing, with: draft) {
+                return .saved(extended)
+            }
+            return .duplicate(existing)
+        }
 
         let level = CaptureBuilder.level(sourceLevel: draft.sourceLevel, learnerLevel: learnerLevel)
         let category = CaptureBuilder.category(explicit: draft.category, partOfSpeech: draft.partOfSpeech,
@@ -2541,6 +2593,44 @@ extension AppStore {
             return existingGap(forWord: word).map { .duplicate($0) } ?? .rejected
         }
         return .saved(gaps.first { $0.id == gap.id } ?? gap)
+    }
+
+    /// Fold a second reading of a headword the deck already holds into that card:
+    /// the meaning gains the new reading, the explanation the new rule, and the
+    /// new phrase becomes an accepted answer. Returns the updated card, or nil
+    /// when the card already says all of it (nothing changed).
+    private func extendCard(_ existing: GapItem, with draft: CaptureDraft) -> GapItem? {
+        guard let idx = gaps.firstIndex(where: { $0.id == existing.id }) else { return nil }
+        var changed = false
+        if let meaning = ConjugationCard.joinedMeaning(gaps[idx].englishTranslation,
+                                                       adding: draft.englishTranslation) {
+            gaps[idx].englishTranslation = meaning
+            gaps[idx].needsTranslation = meaning.isEmpty
+            changed = true
+        }
+        if let explanation = ConjugationCard.joinedExplanation(gaps[idx].explanation,
+                                                              adding: draft.explanation) {
+            gaps[idx].explanation = explanation
+            changed = true
+        }
+        var answers = gaps[idx].acceptedAnswers ?? []
+        for answer in (draft.acceptedAnswers ?? []).map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        where !answer.isEmpty && answer != gaps[idx].frenchWord && !answers.contains(answer) {
+            answers.append(answer)
+            changed = true
+        }
+        // An untagged card adopts the concept this reading names (the same link
+        // `capture` makes for a new gap), so the second tense is at least filed
+        // somewhere. A card that already names a concept keeps it: one card can
+        // only be evidence for one concept.
+        if gaps[idx].conceptId == nil, let linked = concept(draft.conceptId) {
+            gaps[idx].conceptId = linked.id
+            changed = true
+        }
+        guard changed else { return nil }
+        gaps[idx].acceptedAnswers = answers.isEmpty ? nil : answers
+        save()
+        return gaps[idx]
     }
 
     // MARK: Pending translations (E4)
@@ -2663,6 +2753,14 @@ extension AppStore {
         var missedConceptIds: [String] = []
         /// Concepts that received a hit.
         var strongConceptIds: [String] = []
+        /// True when what was saved is the part of the correction that changed,
+        /// not the whole corrected line (it was too long for a card).
+        var shortened: Bool = false
+        /// True when there was a correction but none of it was card-sized.
+        var tooLongToSave: Bool = false
+        /// True when this was the same answer as the last round: nothing was
+        /// recorded a second time (talkmedia-4-4).
+        var repeatedSubmission: Bool = false
 
         var savedCount: Int { savedGaps.count }
         var recordedEvidence: Bool { !missedConceptIds.isEmpty || !strongConceptIds.isEmpty }
@@ -2683,12 +2781,28 @@ extension AppStore {
     /// corrected gap starts with the miss the learner just made, the prompt they
     /// were answering is kept on the card, and every concept the feedback names —
     /// validated against the taxonomy by the parser — gets speaking evidence. The
-    /// learner's own unchanged line is never saved.
+    /// learner's own unchanged line is never saved. A correction too long to be a
+    /// card is reduced to the part it changed, or dropped (talkmedia-4-1), and the
+    /// same answer submitted twice in a row is recorded once (talkmedia-4-4).
     @discardableResult
     func recordSpeakFeedback(original: String, feedback: SpeakFeedback, promptText: String,
                              now: Date = Date()) -> SpeakFeedbackOutcome {
         var outcome = SpeakFeedbackOutcome()
-        let specs = SpeakGapPlan.specs(original: original, feedback: feedback)
+        // One attempt is one attempt: pressing "Get feedback" again on text that
+        // was just graded would book a second lapse on the same card and a second
+        // miss on every concept the feedback named.
+        let key = "\(captureKey(original))|\(captureKey(feedback.corrected))"
+        if key == lastSpeakFeedbackKey, let last = lastSpeakFeedbackAt,
+           now.timeIntervalSince(last) < Tuning.speakFeedbackRepeatWindow {
+            outcome.repeatedSubmission = true
+            return outcome
+        }
+        lastSpeakFeedbackKey = key
+        lastSpeakFeedbackAt = now
+        let plan = SpeakGapPlan.plan(original: original, feedback: feedback)
+        let specs = plan.specs
+        outcome.shortened = plan.shortened
+        outcome.tooLongToSave = plan.tooLongToSave
         for spec in specs {
             if let existing = existingGap(forWord: spec.french) {
                 outcome.duplicateCount += 1
@@ -2756,12 +2870,15 @@ extension AppStore {
 
     /// A tutor line from a Converse call saved as said (E9). English may be empty
     /// (older reply shape) — then the gap waits for a translation rather than
-    /// carrying a placeholder. Returns false when the phrase was already in the deck.
+    /// carrying a placeholder. Returns false when the phrase was already in the
+    /// deck, or when the line is not card-sized: a three-sentence tutor greeting
+    /// is text, not a card, and the recap says so instead of offering it
+    /// (talkmedia-4-1).
     @discardableResult
     func captureConversePhrase(french: String, english: String, scenarioTitle: String, now: Date = Date()) -> Bool {
         let phrase = french.trimmingCharacters(in: .whitespacesAndNewlines)
         let translation = english.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !phrase.isEmpty else { return false }
+        guard !phrase.isEmpty, CaptureBuilder.isAcceptableHeadword(phrase) else { return false }
         var gap = makeCapturedGap(
             frenchWord: phrase,
             englishTranslation: translation,

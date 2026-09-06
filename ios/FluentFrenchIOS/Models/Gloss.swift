@@ -162,6 +162,13 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
     /// the lesson shows them as multiple choice and never asks for the headword
     /// to be typed, blanked or arranged. Copied onto `GapItem.isTestable`.
     var isTestable: Bool = true
+    /// True when a second reading of a headword the deck already holds should be
+    /// folded into that card instead of being refused as a duplicate. French
+    /// paradigms spell one form in two tenses ("parlions" is imparfait AND
+    /// subjonctif) and the deck keys cards by headword, so the conjugation tables
+    /// set this: the card then names both tenses rather than the tense that
+    /// happened to be open first (read-4-2).
+    var mergeIntoExisting: Bool = false
 
     var id: String { "\(sourceTab)|\(frenchWord.lowercased())" }
 
@@ -219,7 +226,7 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
          sourceLevel: CEFRLevel? = nil, category: GapCategory? = nil, difficulty: GapDifficulty? = nil,
          partOfSpeech: String? = nil, register: String? = nil, conceptId: String? = nil,
          acceptedAnswers: [String]? = nil, note: String = "",
-         isTestable: Bool = true) {
+         isTestable: Bool = true, mergeIntoExisting: Bool = false) {
         self.frenchWord = frenchWord
         self.englishTranslation = englishTranslation
         self.explanation = explanation
@@ -238,12 +245,15 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
         self.acceptedAnswers = acceptedAnswers
         self.note = note
         self.isTestable = isTestable
+        self.mergeIntoExisting = mergeIntoExisting
     }
 }
 
 /// What happened when a draft was handed to the store.
 nonisolated enum CaptureOutcome: Equatable {
-    /// A new gap was created (scheduled, deduped, tagging queued).
+    /// A new gap was created (scheduled, deduped, tagging queued) — or, for a
+    /// draft that may merge (`CaptureDraft.mergeIntoExisting`), the card that
+    /// already held the headword was extended to cover this reading too.
     case saved(GapItem)
     /// The headword was already in the deck; nothing changed.
     case duplicate(GapItem)

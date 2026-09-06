@@ -18,6 +18,9 @@ struct SpeakView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The app leaving the foreground stops microphone capture (no background
+    /// audio mode), so the recording has to stop with it (talkmedia-4-3).
+    @Environment(\.scenePhase) private var scenePhase
     /// The header holds the largest text on the screen, so its height grows with
     /// the learner's text size instead of clipping the title and the stat row.
     @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 195
@@ -73,6 +76,12 @@ struct SpeakView: View {
         }
         .onChange(of: recorder.stoppedAtCap) { _, stopped in
             if stopped { finishRecording() }
+        }
+        .onChange(of: recorder.interruptedSeconds) { _, seconds in
+            handleInterruption(seconds)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { recorder.noteInterrupted() }
         }
         .onChange(of: mode) { _, _ in
             if recorder.isRecording { recorder.cancel() }
@@ -243,6 +252,11 @@ struct SpeakView: View {
     private func runFeedback(for response: String, prompt promptText: String) {
         let text = response.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !feedbackLoading else { return }
+        // One attempt, one round: asking again for feedback on text that is
+        // already graded on screen would book a second miss on the same card
+        // (talkmedia-4-4). A retry after a failure still runs — no feedback is
+        // showing then.
+        if feedback != nil, let lastRequest, lastRequest.response == text, lastRequest.prompt == promptText { return }
         guard feedbackAvailable else { feedbackFailure = .noKey; return }
         Haptics.select()
         writeFocused = false
@@ -333,8 +347,11 @@ struct SpeakView: View {
     private func outcomeCard(_ outcome: AppStore.SpeakFeedbackOutcome) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: outcome.savedCount > 0 ? "tray.and.arrow.down.fill" : "checkmark.circle")
-                    .font(.system(.footnote)).foregroundStyle(Theme.success).accessibilityHidden(true)
+                Image(systemName: outcome.tooLongToSave ? "text.alignleft"
+                        : (outcome.savedCount > 0 ? "tray.and.arrow.down.fill" : "checkmark.circle"))
+                    .font(.system(.footnote))
+                    .foregroundStyle(outcome.tooLongToSave ? Theme.textSecondary : Theme.success)
+                    .accessibilityHidden(true)
                 Text(outcomeHeadline(outcome)).font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.text)
             }
             if !outcome.missedConceptIds.isEmpty || !outcome.strongConceptIds.isEmpty {
@@ -347,10 +364,17 @@ struct SpeakView: View {
         .background(Theme.successLight).clipShape(.rect(cornerRadius: 12))
     }
 
+    /// What the round left in the deck, in the learner's terms — including the
+    /// two cases the deck's own rule creates: a correction too long to be a card,
+    /// and one that was shortened to the part that changed (talkmedia-4-1).
     private func outcomeHeadline(_ outcome: AppStore.SpeakFeedbackOutcome) -> String {
+        if outcome.repeatedSubmission { return "Same answer as last time — nothing recorded twice." }
         switch (outcome.savedCount, outcome.duplicateCount) {
+        case (0, 0) where outcome.tooLongToSave:
+            return "Too long to save as a card — a card holds a word or a short phrase, so read the correction above instead."
         case (0, 0): return "Nothing new to save — your line was already good."
         case (0, _): return "These phrases are already in your deck."
+        case (1, _) where outcome.shortened: return "Saved the part we corrected as 1 phrase."
         case (1, _): return "Saved 1 phrase to your deck."
         default: return "Saved \(outcome.savedCount) phrases to your deck."
         }
@@ -411,6 +435,20 @@ struct SpeakView: View {
             case .nothingHeard, .failed:
                 micNotice = outcome.message
             }
+        }
+    }
+
+    /// Something took the microphone mid-recording (a call, Siri, leaving the
+    /// app). Say so, naming how much was captured, and only send that fragment
+    /// for feedback when there is enough of it to grade — never silently treat a
+    /// few seconds as the whole answer (talkmedia-4-3).
+    private func handleInterruption(_ seconds: Int?) {
+        guard let seconds else { return }
+        micNotice = InterruptedRecording.notice(secondsCaptured: seconds)
+        if InterruptedRecording.isWorthTranscribing(secondsCaptured: seconds) {
+            finishRecording()
+        } else {
+            recorder.cancel()
         }
     }
 

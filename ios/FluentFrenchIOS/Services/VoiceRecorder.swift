@@ -24,10 +24,17 @@ final class VoiceRecorder {
     /// Flips to true when the recorder stopped itself at the cap; the view then
     /// transcribes what was recorded. Cleared by the next start / cancel.
     private(set) var stoppedAtCap = false
+    /// Seconds captured before something else took the microphone (a call, Siri,
+    /// the app leaving the foreground). nil while nothing has interrupted the
+    /// current recording. The surfaces watch this so a dead microphone never goes
+    /// on counting down, and feedback on the fragment is announced as such
+    /// (talkmedia-4-3). Cleared by the next start / cancel.
+    private(set) var interruptedSeconds: Int?
 
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
     private var countdown: Task<Void, Never>?
+    private var interruptionObserver: NSObjectProtocol?
 
     /// Why `start` would fail.
     enum StartFailure: Error, Equatable {
@@ -89,8 +96,10 @@ final class VoiceRecorder {
             fileURL = url
             isRecording = true
             stoppedAtCap = false
+            interruptedSeconds = nil
             capSeconds = max(1, maxSeconds)
             secondsLeft = capSeconds
+            observeInterruptions()
             startCountdown()
             return .success(())
         } catch {
@@ -113,10 +122,43 @@ final class VoiceRecorder {
         }
     }
 
+    /// Watch for the system taking the microphone away mid-recording. Without
+    /// this the capture stops but `isRecording` stays true, so the countdown goes
+    /// on promising "Listening…" over a dead microphone (talkmedia-4-3).
+    private func observeInterruptions() {
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            Task { @MainActor in self?.noteInterrupted() }
+        }
+    }
+
+    private func stopObservingInterruptions() {
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        interruptionObserver = nil
+    }
+
+    /// Something else took the microphone (an interruption, or the app leaving the
+    /// foreground — the target has no background audio mode, so capture stops
+    /// either way). Stop for real and publish how much was actually captured.
+    func noteInterrupted() {
+        guard isRecording else { return }
+        let captured = max(0, capSeconds - secondsLeft)
+        stopRecorder()
+        stoppedAtCap = false
+        interruptedSeconds = captured
+    }
+
     /// Stops the audio recorder, keeping the file for transcription.
     private func stopRecorder() {
         countdown?.cancel()
         countdown = nil
+        stopObservingInterruptions()
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -146,6 +188,7 @@ final class VoiceRecorder {
     func cancel() {
         stopRecorder()
         stoppedAtCap = false
+        interruptedSeconds = nil
         if let url = fileURL { try? FileManager.default.removeItem(at: url) }
         fileURL = nil
     }

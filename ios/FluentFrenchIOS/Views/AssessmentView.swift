@@ -329,7 +329,7 @@ struct AssessmentView: View {
                     scoreCard(result)
                     routeCard(result)
 
-                    primaryButton(result.isTrueBeginner ? "Start building the basics" : "Start learning") { finish(result) }
+                    primaryButton(entersFoundation(result) ? "Start building the basics" : "Start learning") { finish(result) }
                 }
                 .padding(Space.xl)
             }
@@ -400,9 +400,21 @@ struct AssessmentView: View {
         }
     }
 
+    /// Whether the results screen should promise a Foundation start.
+    ///
+    /// "True beginner" only routes to Foundation on the FIRST run. On a retake
+    /// `applyPlacement` never re-locks reading, resets coverage or reseeds
+    /// Foundation (it only ever adds evidence), so a bottomed-out retake must
+    /// not promise a restart the app never performs — the coverage gate alone
+    /// decides.
+    private func entersFoundation(_ result: PlacementResult) -> Bool {
+        if isFirstRun && result.isTrueBeginner { return true }
+        return store.willEnterFoundation(after: result)
+    }
+
     /// Where the learner is headed — straight to content or Foundation first.
     private func routeCard(_ result: PlacementResult) -> some View {
-        let foundation = result.isTrueBeginner || store.willEnterFoundation(after: result)
+        let foundation = entersFoundation(result)
         return HStack(spacing: 14) {
             Image(systemName: foundation ? "building.columns.fill" : "book.fill")
                 .scaledFont(20).foregroundStyle(.white)
@@ -439,7 +451,7 @@ struct AssessmentView: View {
     }
 
     private func headline(_ result: PlacementResult) -> String {
-        if result.isTrueBeginner { return "Starting fresh" }
+        if isFirstRun && result.isTrueBeginner { return "Starting fresh" }
         switch displayedLevel(result) {
         case .A1: return "Just getting started"
         case .A2: return "Building your basics"
@@ -449,7 +461,7 @@ struct AssessmentView: View {
     }
 
     private func blurb(_ result: PlacementResult) -> String {
-        if result.isTrueBeginner {
+        if isFirstRun && result.isTrueBeginner {
             return "No worries — we'll guide you from the very first words and build up step by step."
         }
         if !isFirstRun {

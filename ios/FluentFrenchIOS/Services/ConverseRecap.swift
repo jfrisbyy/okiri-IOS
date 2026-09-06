@@ -101,6 +101,10 @@ nonisolated enum RecapSaveCandidate: Hashable {
     case tutorPhrase(french: String, english: String)
     /// A learner line the tutor corrected: the CORRECTION is saved, never the slip.
     case correction(ConverseCorrection)
+    /// A tutor line worth reading but not a card: a deck card holds a word or a
+    /// short phrase from one sentence, and the recap says so rather than offering
+    /// a save the store would refuse (talkmedia-4-1).
+    case tooLongForACard
 }
 
 nonisolated enum ConverseRecap {
@@ -126,14 +130,15 @@ nonisolated enum ConverseRecap {
         return result
     }
 
-    /// The save offer for one recap line. Tutor lines save as said; a learner
-    /// line saves only the tutor's correction of it, and offers nothing when the
-    /// tutor found nothing to fix.
+    /// The save offer for one recap line. A card-sized tutor line saves as said
+    /// (a longer one reports why it cannot); a learner line saves only the tutor's
+    /// correction of it, and offers nothing when the tutor found nothing to fix.
     static func saveCandidate(for turn: ChatTurn, in transcript: [ChatTurn]) -> RecapSaveCandidate? {
         switch turn.role {
         case .tutor:
             let french = turn.french.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !french.isEmpty else { return nil }
+            guard CaptureBuilder.isAcceptableHeadword(french) else { return .tooLongForACard }
             return .tutorPhrase(french: french, english: turn.english.trimmingCharacters(in: .whitespacesAndNewlines))
         case .user:
             guard let index = transcript.firstIndex(where: { $0.id == turn.id }),

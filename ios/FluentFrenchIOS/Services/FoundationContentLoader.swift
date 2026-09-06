@@ -304,8 +304,7 @@ nonisolated enum FoundationContentLoader {
         gap.blankForm = item.verifiedBlank
         gap.acceptedAnswers = item.alts
         gap.isTestable = item.isTestable
-        gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-        gap.fsrs?.dueAt = now
+        gap.fsrs = FSRS.makeUnseenState(now: now)
         return gap
     }
 

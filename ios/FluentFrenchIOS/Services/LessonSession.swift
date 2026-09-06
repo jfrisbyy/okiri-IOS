@@ -112,7 +112,10 @@ nonisolated struct LessonFeedback: Equatable {
 nonisolated struct LessonMissedItem: Identifiable, Equatable {
     var id: String { gap.id }
     let gap: GapItem
-    let correctAnswer: String
+    /// What the recap prints under the French word — the item's MEANING, plus the
+    /// completed sentence for a sentence format. Not the question's own answer:
+    /// see `LessonSession.recapAnswer(for:)`.
+    let answer: String
     let kind: QuestionKind
 }
 
@@ -291,6 +294,26 @@ nonisolated struct LessonSession {
         roles[gap.id] ?? q.role
     }
 
+    /// Whether the lesson may show this item's MEANING before it asks about it —
+    /// the word card on the teaching stage and the meaning line on the intro
+    /// preview both use this.
+    ///
+    /// Two exclusions, both about not banking a pass the learner has not earned:
+    ///   • an item that has been reviewed before is here to be TESTED (an
+    ///     interleaved review), and its answer is what FSRS is about to grade;
+    ///   • a CHECK-IN, whatever its evidence. `ConceptSelector.checkInVehicle`
+    ///     falls back to a never-reviewed gap when a mastered concept has no
+    ///     reviewed one, which is exactly the case for a provisional placement
+    ///     seed — teaching it would "verify" the seed on evidence just handed over.
+    /// A probe is never taught: it is a blind-spot diagnosis.
+    func mayTeach(_ gap: GapItem) -> Bool {
+        guard !gap.isProbe, gap.isNew else { return false }
+        return (roles[gap.id] ?? .review) != .checkIn
+    }
+
+    /// The lesson's items the learner may be shown the meaning of, in lesson order.
+    var teachableGaps: [GapItem] { lesson.gaps.filter(mayTeach) }
+
     var summary: LessonSummary {
         let accuracy = scored > 0 ? Double(scoredCorrect) / Double(scored) : 0
         return LessonSummary(end: end ?? .quit, answered: answered, scored: scored, scoredCorrect: scoredCorrect,
@@ -372,7 +395,7 @@ nonisolated struct LessonSession {
         } else {
             if counts {
                 missCountByGap[leftId, default: 0] += 1
-                noteMissed(leftGap, correctAnswer: leftGap.englishTranslation, kind: .match)
+                noteMissed(leftGap, answer: leftGap.englishTranslation, kind: .match)
             }
             if !roundHadWrong {
                 roundHadWrong = true
@@ -469,7 +492,7 @@ nonisolated struct LessonSession {
         } else {
             combo = 0
             missCountByGap[q.gap.id, default: 0] += 1
-            if !q.isProbe { noteMissed(q.gap, correctAnswer: q.correctAnswer, kind: q.kind) }
+            if !q.isProbe { noteMissed(q.gap, answer: Self.recapAnswer(for: q), kind: q.kind) }
             let costsHeart = revealed ? config.revealCostsHeart : (q.isProbe ? config.probeMissCostsHeart : true)
             if costsHeart {
                 outcome.heartLost = loseHeart()
@@ -508,9 +531,48 @@ nonisolated struct LessonSession {
         return true
     }
 
-    private mutating func noteMissed(_ gap: GapItem, correctAnswer: String, kind: QuestionKind) {
+    private mutating func noteMissed(_ gap: GapItem, answer: String, kind: QuestionKind) {
         guard !missed.contains(where: { $0.gap.id == gap.id }) else { return }
-        missed.append(LessonMissedItem(gap: gap, correctAnswer: correctAnswer, kind: kind))
+        missed.append(LessonMissedItem(gap: gap, answer: answer, kind: kind))
+    }
+
+    /// What the missed-items recap prints under the French word (C26).
+    ///
+    /// The QUESTION's answer is usually not worth reading back: it is "True" or
+    /// "False" for a true/false, and the French word itself — the line above it —
+    /// for a translation or a reversed multiple choice. What the learner missed is
+    /// the MEANING, and for a sentence format the sentence with the answer in it.
+    /// The first miss of a gap fixes its recap line, so the line has to stand on
+    /// its own whatever format produced it.
+    static func recapAnswer(for q: LessonQuestion) -> String {
+        let meaning = q.gap.englishTranslation.trimmingCharacters(in: .whitespacesAndNewlines)
+        let answer = q.correctAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch q.kind {
+        case .fillBlank:
+            // The model's (or the content's) own sentence, with the blank filled.
+            let filled = answer.isEmpty
+                ? q.prompt
+                : q.prompt.replacingOccurrences(of: AnswerGrader.blankToken, with: answer)
+            let sentence = filled.trimmingCharacters(in: .whitespacesAndNewlines)
+            return joinRecap(meaning, AnswerGrader.isCloze(sentence) ? "" : sentence)
+        case .arrange:
+            // `correctAnswer` is the target sentence.
+            return joinRecap(meaning, answer)
+        case .multipleChoice:
+            // A reversed multiple choice answers with the French word itself.
+            let echoesWord = AnswerGrader.normalize(answer) == AnswerGrader.normalize(q.gap.frenchWord)
+            if q.isReversed || echoesWord || answer.isEmpty { return meaning }
+            return answer
+        case .trueFalse, .translation, .match:
+            return meaning
+        }
+    }
+
+    /// "meaning — sentence", dropping either half when it is empty.
+    private static func joinRecap(_ meaning: String, _ sentence: String) -> String {
+        if meaning.isEmpty { return sentence }
+        if sentence.isEmpty { return meaning }
+        return "\(meaning) — \(sentence)"
     }
 
     /// Queue a stepped-down remedial for a missed question (C6). False for capstones,

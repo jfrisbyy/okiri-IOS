@@ -177,6 +177,11 @@ final class NaturalVoice: NSObject {
     /// its "playing" highlight instead of leaving it lit forever.
     private(set) var isSpeaking = false
 
+    /// Who asked for the utterance that is loading or sounding now, so a surface
+    /// with several speak controls can light up exactly the one that started it.
+    /// Observable, so those controls re-render when the owner changes.
+    private(set) var owner: UUID? = nil
+
     private var player: AVAudioPlayer?
     private var token = 0
 
@@ -191,10 +196,12 @@ final class NaturalVoice: NSObject {
     ///   - voice: which natural voice to use.
     ///   - rate: playback speed (1.0 normal, 0.6 slow for pronunciation drills).
     ///   - fallbackLanguage: BCP-47 language for the system-voice fallback.
-    func speak(_ text: String, voice: NaturalVoiceID = .female, rate: Float = 1.0, fallbackLanguage: String = "fr-FR") {
+    ///   - owner: identifies the control that started this utterance.
+    func speak(_ text: String, voice: NaturalVoiceID = .female, rate: Float = 1.0, fallbackLanguage: String = "fr-FR", owner: UUID? = nil) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         stop()
+        self.owner = owner
         token += 1
         let current = token
         let key = "\(voice.rawValue)|\(clean)"
@@ -236,6 +243,7 @@ final class NaturalVoice: NSObject {
                 if player?.isPlaying == true { continue }
                 if FrenchSpeech.shared.isSpeaking { continue }
                 isSpeaking = false
+                owner = nil
                 return
             }
         }
@@ -248,6 +256,7 @@ final class NaturalVoice: NSObject {
         player = nil
         loadingKey = nil
         isSpeaking = false
+        owner = nil
         FrenchSpeech.shared.stop()
     }
 

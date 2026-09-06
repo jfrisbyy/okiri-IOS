@@ -149,6 +149,18 @@ nonisolated struct LessonScheduler {
                 // that slipped through selection is never asked inside it.
                 continue
             }
+            if role == .checkIn, gap.isProbe {
+                // A mastered concept with no items of its own is verified on a probe
+                // item. The ROLE decides how it is asked: this is a scored check-in
+                // on the riskiest claim the engine holds — never a throwaway
+                // blind-spot probe — so it keeps the content's own distractors but
+                // none of the probe's exemptions.
+                if var q = probeQuestion(for: gap, role: .checkIn, rng: &rng) {
+                    q.isProbe = false
+                    rounds[0].append(q)
+                }
+                continue
+            }
             if gap.isProbe || role == .probe {
                 // B13 / C19: exactly one MC item from the content's own distractors.
                 if let q = probeQuestion(for: gap, role: role, rng: &rng) { probes.append(q) }
@@ -360,8 +372,14 @@ nonisolated struct LessonScheduler {
         guard !distractors.isEmpty else { return nil }
         var options = distractors + [gap.englishTranslation]
         options.shuffle(using: &rng)
+        // Many probes are cloze items — "___ gare", "tu ___ (parler)" — whose answer
+        // is the French form that fills the blank, not a meaning. Asking "What does
+        // “___ gare” mean?" over four French options is unanswerable as written.
+        let prompt = AnswerGrader.isCloze(gap.frenchWord)
+            ? "Which one fits? \(gap.frenchWord)"
+            : "What does “\(gap.frenchWord)” mean?"
         var q = LessonQuestion(gap: gap, kind: .multipleChoice,
-                               prompt: "What does “\(gap.frenchWord)” mean?",
+                               prompt: prompt,
                                correctAnswer: gap.englishTranslation, options: options,
                                hint: nil, role: role)
         q.isProbe = true
@@ -403,6 +421,17 @@ nonisolated struct LessonScheduler {
         guard !question.isCapstone, !question.isProbe,
               attempt >= 1, attempt <= config.maxRemedialsPerGap else { return nil }
         let gap = question.gap
+        if gap.isProbe {
+            // A check-in riding a probe item can only be re-asked with the probe's
+            // own distractors: `smartDistractors` would offer English meanings
+            // against a French answer.
+            var rng = LessonRandom(seed: config.seed.map { $0 &+ UInt64(attempt) })
+            guard var r = probeQuestion(for: gap, role: question.role, rng: &rng) else { return nil }
+            r.isProbe = false
+            r.isRemedial = true
+            r.showsAnswer = !question.showsAnswer
+            return r
+        }
         let stepped: QuestionKind
         switch question.kind {
         case .translation, .arrange:
@@ -423,6 +452,10 @@ nonisolated struct LessonScheduler {
     /// Drop the remaining questions of a released target concept (after
     /// `position`) and backfill the same number of questions from the lesson's
     /// review gaps. Interstitials stay. Nothing changes when there is nothing to drop.
+    ///
+    /// The backfill lands BEFORE the trailing probes — a blind-spot probe closes the
+    /// lesson — and goes to the gaps with the fewest questions so far: a third
+    /// asking of an item already answered `masteryTarget` times teaches nothing.
     func releaseTargetConcept(conceptId: String, from schedule: [LessonQuestion], after position: Int) -> [LessonQuestion] {
         let cut = max(0, position + 1)
         guard cut < schedule.count else { return schedule }
@@ -448,17 +481,35 @@ nonisolated struct LessonScheduler {
                 .map { $0.options.count }.max() ?? config.minMultipleChoiceOptions
             var usage: [String: Int] = [:]
             for q in schedule where !q.isInterstitial { usage[q.gap.id, default: 0] += 1 }
+            var order: [String: Int] = [:]
+            for (i, gap) in reviewGaps.enumerated() { order[gap.id] = i }
             var rng = LessonRandom(seed: config.seed.map { $0 ^ 0xA5A5 })
-            for i in 0..<dropped.count {
-                let gap = reviewGaps[i % reviewGaps.count]
-                let ks = kinds(for: gap)
+            var backfill: [LessonQuestion] = []
+            for _ in 0..<dropped.count {
+                // Least-asked first: a gap still short of `masteryTarget` questions
+                // is backfilled before one that has already had its full round.
+                guard let gap = reviewGaps.min(by: { a, b in
+                    let ua = usage[a.id, default: 0], ub = usage[b.id, default: 0]
+                    if ua != ub { return ua < ub }
+                    return (order[a.id] ?? 0) < (order[b.id] ?? 0)
+                }) else { break }
                 let n = usage[gap.id, default: 0]
                 usage[gap.id] = n + 1
+                // A gap that has already had its full round comes back one tier UP
+                // — this lesson just supplied the evidence for it — rather than as
+                // the same recognition question a third time.
+                var tier = level(for: gap)
+                if n >= config.masteryTarget, let up = QuestionLevel(rawValue: tier.rawValue + 1) {
+                    tier = min(up, maxLevel(for: gap))
+                }
+                let ks = kinds(for: gap, at: tier)
                 if let q = question(for: gap, kind: ks[n % ks.count], variant: n, role: .review,
                                     pool: pool, optionCount: optionCount, rng: &rng) {
-                    remaining.append(q)
+                    backfill.append(q)
                 }
             }
+            let insertAt = remaining.firstIndex { $0.isProbe } ?? remaining.count
+            remaining.insert(contentsOf: backfill, at: insertAt)
         }
         return kept + remaining
     }

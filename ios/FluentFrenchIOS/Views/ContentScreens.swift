@@ -39,8 +39,8 @@ struct ArticleReaderView: View {
             levelLabel: article.levelLabel,
             tint: Color(hex: article.category.hex),
             categoryLabel: article.category.label,
-            regionLabel: article.region.label,
-            regionEmoji: article.region.emoji,
+            regionLabel: article.region?.label,
+            regionEmoji: article.region?.emoji,
             imageUrl: article.imageUrl,
             summary: article.contextSummary,
             text: article.body,
@@ -158,6 +158,9 @@ struct WordReader: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        // The story is read aloud from inside this screen; leaving it must not
+        // leave a five-paragraph narration playing over the rest of the app.
+        .onDisappear { NaturalVoice.shared.stop() }
         .sheet(item: $target) { t in
             GlossSheet(
                 term: t.term,
@@ -419,8 +422,12 @@ struct WordReader: View {
 
     @ViewBuilder
     private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
+        let cleaned = Self.clean(token.text)
+        // "2030" or "%" is text, not a word: it gets no tap, no button trait and
+        // no "opens the translation" promise the reader cannot keep.
+        let lookupable = Self.isLookupable(cleaned)
         let highlighted = isHighlighted(token.id)
-        let saved = savedTerms.contains(Self.clean(token.text).lowercased()) && !Self.clean(token.text).isEmpty
+        let saved = lookupable && savedTerms.contains(cleaned.lowercased())
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
         let wordView = Text(token.text)
             .font(Theme.scaledFontValue(size, weight: weight, for: sizeCategory))
@@ -442,17 +449,20 @@ struct WordReader: View {
                     )
                 }
             }
+        // Each word is its own control: VoiceOver announces it as a button and
+        // says what activating it does.
+        let control = wordView
             .onTapGesture { handleTap(token: token, blockId: blockId) }
-            // Each word is its own control: VoiceOver announces it as a button
-            // and says what activating it does.
             .accessibilityAddTraits(.isButton)
             .accessibilityHint("Opens the translation")
         // The underline that marks a saved word gets said in words — but only
         // for saved words, so the reader is not read out as a wall of values.
-        if saved {
-            wordView.accessibilityValue("Saved to your deck")
-        } else {
+        if !lookupable {
             wordView
+        } else if saved {
+            control.accessibilityValue("Saved to your deck")
+        } else {
+            control
         }
     }
 
@@ -608,7 +618,9 @@ struct WordReader: View {
     /// (E5) — never the whole article.
     private func present(term: String) {
         let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        // A bare number ("2030") or a stray symbol ("%", "€") has no meaning to
+        // look up and must never become a deck card, so it is not a term at all.
+        guard Self.isLookupable(clean) else { return }
         target = GlossTarget(term: clean, context: SentenceExtractor.sentence(containing: clean, in: text))
     }
 
@@ -684,6 +696,13 @@ struct WordReader: View {
 
     static func clean(_ s: String) -> String {
         s.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:«»\"'()—–…0123456789\n\t"))
+    }
+
+    /// True when a token is something the dictionary could answer for: it has at
+    /// least one letter. Numbers, punctuation runs and lone symbols are text the
+    /// reader shows but never offers to translate.
+    static func isLookupable(_ s: String) -> Bool {
+        s.contains { $0.isLetter }
     }
 
     private static let stopwords: Set<String> = [

@@ -319,4 +319,25 @@ struct DailyPlanEngineTests {
         #expect(s.dailyPlanOfRecord == recomputed)
         #expect(s.todaysPlan(now: now.addingTimeInterval(7200)) == recomputed, "cached for the rest of the day")
     }
+
+    // MARK: firstrun-2-4 — every plan carries the lessons spine
+
+    /// Home suppresses its separate "Lesson ready" card whenever the plan already
+    /// carries a `.lessons` row, because both start the same lesson. That is only
+    /// safe if the spine is really always there — locked and unlocked alike.
+    @Test func everyPlanCarriesALessonsSpineSoHomeNeverOffersTheSameLessonTwice() {
+        let now = EngineFixtures.now
+        let foundation = EngineFixtures.store()
+        foundation.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        #expect(foundation.readiness(for: .reading) != .unlocked)
+        let locked = DailyPlanEngine(store: foundation).makePlan(now: now)
+        #expect(locked.isLessonPaced && locked.lessonItem?.target == Tuning.foundationLessonsPerDay)
+
+        for chosen: Set<LearningModality> in [[.reading], [.listening, .speaking], []] {
+            let s = readingOpenStore(chosen: chosen)
+            let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+            #expect(plan.isLessonPaced, "no lessons spine for chosen = \(chosen)")
+            #expect(plan.lessonItem!.target >= Tuning.unlockedLessonsPerDayMin)
+        }
+    }
 }

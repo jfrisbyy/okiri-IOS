@@ -33,6 +33,12 @@ nonisolated struct AssessmentQuestion: Identifiable, Hashable {
     let exampleTranslation: String
     /// Base concept this item is evidence of (for seeding mastery), if any.
     let conceptId: String?
+    /// True for items built from a concept's content probes. A probe is a diagnostic
+    /// cloze ("___ gare" → "la"), so `french`/`english` are a stem and its missing
+    /// token — NOT a headword and its meaning. Missing one must therefore never be
+    /// turned into a deck card; the concept is seeded from real content instead
+    /// (`AssessmentService.gaps(forMissed:)`).
+    var isProbe: Bool = false
 
     var level: CEFRLevel { AssessmentService.level(forBand: band) }
 
@@ -301,7 +307,10 @@ nonisolated struct PlacementEngine {
         return hi - lo <= 1
     }
 
-    func result() -> PlacementResult {
+    /// `items` is the Foundation content lookup used to seed a real headword for a
+    /// concept whose probe was missed (see `AssessmentService.gaps(forMissed:)`);
+    /// the app takes the bundled default, tests inject synthetic content.
+    func result(items: (String) -> [FoundationItemContent] = { FoundationContentLoader.items(for: $0) }) -> PlacementResult {
         if declaredBeginner {
             return PlacementResult(
                 vocabBand: 0, grammarBand: 0, estimatedLevel: .A1, isTrueBeginner: true,
@@ -330,7 +339,7 @@ nonisolated struct PlacementEngine {
             estimatedLevel: level,
             isTrueBeginner: beginner,
             masteredConceptIds: mastered,
-            missedGaps: AssessmentService.gaps(forMissed: missed),
+            missedGaps: AssessmentService.gaps(forMissed: missed, items: items),
             askedCount: asked.count,
             correctCount: correctCount,
             seedsAreProvisional: true,
@@ -430,8 +439,10 @@ nonisolated enum AssessmentService {
         return probes.compactMap { probe in
             guard !probe.fr.isEmpty, !probe.en.isEmpty, !probe.options.isEmpty else { return nil }
             let prompt = probe.fr.contains("___") ? "Fill in the blank: “\(probe.fr)”" : "What does “\(probe.fr)” mean?"
-            return q(band, concept.category, prompt, probe.fr, probe.en, probe.options, probe.en,
-                     "", probe.ex, probe.exEn, concept.id)
+            var item = q(band, concept.category, prompt, probe.fr, probe.en, probe.options, probe.en,
+                         "", probe.ex, probe.exEn, concept.id)
+            item.isProbe = true          // a cloze stem is not a headword — never seed a card from it
+            return item
         }
     }
 
@@ -462,38 +473,83 @@ nonisolated enum AssessmentService {
     /// Build gap items from the questions the learner missed. Like every gap the
     /// store creates they start with an FSRS state due now (B4), so a missed
     /// placement item is on the schedule from day one.
-    static func gaps(forMissed missed: [AssessmentQuestion], now: Date = Date()) -> [GapItem] {
-        return missed.map { q in
-            var gap = GapItem(
-                id: UUID().uuidString,
-                frenchWord: q.french,
-                englishTranslation: q.english,
-                explanation: q.explanation,
-                exampleSentence: q.exampleSentence,
-                exampleTranslation: q.exampleTranslation,
-                pronunciation: nil,
-                sourceType: .foundation,
-                category: q.category,
-                difficulty: .hard,
-                reviewCount: 0,
-                consecutiveCorrect: 0,
-                lastReviewedAt: nil,
-                nextReviewAt: now,
-                masteredAt: nil,
-                createdAt: now,
-                cefrLevel: q.level,
-                easeFactor: 2.5,
-                currentInterval: 0,
-                irtDifficulty: Double(q.band) * 0.6 - 0.8,
-                fsrs: nil,
-                originalContext: nil,
-                confusionLinks: [],
-                conceptId: q.conceptId
-            )
-            gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-            gap.fsrs?.dueAt = now
-            return gap
+    ///
+    /// A PROBE is never turned into a card. Its `french`/`english` are a cloze stem
+    /// and the token that fills it ("___ gare" / "la"), so seeding it would put a
+    /// blank on the front of a deck card and a bare French word on its "meaning"
+    /// side, and the lesson would ask "What does '___ gare' mean?". Instead the
+    /// concept the probe diagnosed is seeded from its REAL content items — a
+    /// headword with a meaning, an example and a verified blank —
+    /// `Tuning.placementMissSeedItems` of them, marked `.hard` and due now. Hand-bank
+    /// items ARE headword items and are seeded as themselves.
+    ///
+    /// `items` is the content lookup (the bundled file by default; tests inject).
+    /// A concept with no content simply seeds nothing: it is already in
+    /// `missedConceptIds`, so it is excluded from the mastery seeds and — when it is
+    /// a base concept — the first-run Foundation slice teaches it anyway.
+    static func gaps(forMissed missed: [AssessmentQuestion], now: Date = Date(),
+                     items: (String) -> [FoundationItemContent] = { FoundationContentLoader.items(for: $0) }) -> [GapItem] {
+        var result: [GapItem] = []
+        var seenHeadwords = Set<String>()
+        var seededConcepts = Set<String>()
+        for q in missed {
+            guard q.isProbe else {
+                let key = FoundationSeeder.headwordKey(q.french)
+                guard !key.isEmpty, !seenHeadwords.contains(key) else { continue }
+                seenHeadwords.insert(key)
+                result.append(gap(forMissed: q, now: now))
+                continue
+            }
+            guard let cid = q.conceptId, !seededConcepts.contains(cid) else { continue }
+            seededConcepts.insert(cid)
+            let content = items(cid)
+            var taken = 0
+            for (idx, item) in content.enumerated() where taken < Tuning.placementMissSeedItems {
+                guard item.isTestable, !item.fr.isEmpty, !item.en.isEmpty else { continue }
+                let key = FoundationSeeder.headwordKey(item.fr)
+                guard !seenHeadwords.contains(key) else { continue }
+                seenHeadwords.insert(key)
+                result.append(FoundationContentLoader.gap(from: item, conceptId: cid, index: idx,
+                                                          category: q.category, level: q.level,
+                                                          difficulty: .hard, now: now))
+                taken += 1
+            }
         }
+        return result
+    }
+
+    /// A gap built from a hand-bank placement item the learner missed (a real
+    /// headword → meaning pair).
+    private static func gap(forMissed q: AssessmentQuestion, now: Date) -> GapItem {
+        var gap = GapItem(
+            id: UUID().uuidString,
+            frenchWord: q.french,
+            englishTranslation: q.english,
+            explanation: q.explanation,
+            exampleSentence: q.exampleSentence,
+            exampleTranslation: q.exampleTranslation,
+            pronunciation: nil,
+            sourceType: .foundation,
+            category: q.category,
+            difficulty: .hard,
+            reviewCount: 0,
+            consecutiveCorrect: 0,
+            lastReviewedAt: nil,
+            nextReviewAt: now,
+            masteredAt: nil,
+            createdAt: now,
+            cefrLevel: q.level,
+            easeFactor: 2.5,
+            currentInterval: 0,
+            irtDifficulty: Double(q.band) * 0.6 - 0.8,
+            fsrs: nil,
+            originalContext: nil,
+            confusionLinks: [],
+            conceptId: q.conceptId
+        )
+        gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
+        gap.fsrs?.dueAt = now
+        return gap
     }
 
     // MARK: - Banked item bank (curated, lightweight recognition)

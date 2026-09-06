@@ -334,6 +334,104 @@ struct LessonSchedulerTests {
         #expect(released.count == 1 + schedule.filter { $0.isInterstitial }.count)
     }
 
+    /// The backfill goes to the gap that has not had its full round yet — a third
+    /// asking of an item already answered `masteryTarget` times teaches nothing —
+    /// and lands BEFORE the trailing probe, which still closes the lesson.
+    @Test func releaseBackfillSitsBeforeTheProbeAndTopsUpTheLeastAskedGap() throws {
+        let target = gap("t", concept: "T")
+        let r1 = gap("r1", concept: "R")
+        let r2 = gap("r2", concept: "R")
+        var probe = gap("p", concept: "P")
+        probe.isProbe = true
+        probe.probeOptions = ["d1", "d2", "d3"]
+        var rng = LessonRandom(seed: 5)
+        let probeQ = try #require(scheduler.probeQuestion(for: probe, rng: &rng))
+
+        func mc(_ g: GapItem, _ tag: String, role: SelectedItemRole = .review) -> LessonQuestion {
+            var q = LessonQuestion(gap: g, kind: .multipleChoice, prompt: tag, correctAnswer: g.englishTranslation,
+                                   options: [g.englishTranslation, "b", "c"])
+            q.role = role
+            return q
+        }
+        // r1 has had its full round; r2 has had one question; one target question
+        // is still ahead and is what the release drops.
+        let schedule = [mc(target, "t1", role: .target), mc(r1, "r1a"), mc(r2, "r2a"),
+                        mc(target, "t2", role: .target), mc(r1, "r1b"), probeQ]
+        let released = scheduler.releaseTargetConcept(conceptId: "T", from: schedule, after: 0)
+
+        #expect(released.count == schedule.count, "every dropped question is backfilled")
+        #expect(!released.dropFirst().contains { $0.role == .target }, "the released concept's remaining question is gone")
+        let originalIds = Set(schedule.map { $0.id })
+        let backfill = try #require(released.first { !originalIds.contains($0.id) })
+        #expect(backfill.gap.id == "r2", "the gap short of its full round is topped up first")
+        let backfillIndex = try #require(released.firstIndex { $0.id == backfill.id })
+        let probeIndex = try #require(released.firstIndex { $0.isProbe })
+        #expect(backfillIndex < probeIndex, "the blind-spot probe still closes the lesson")
+        #expect(released.last?.isProbe == true)
+        #expect(backfill.level == .recognition, "r2 is still short of its full round: same tier")
+
+        // With every review gap already at its full round, the extra question comes
+        // back a tier UP instead of repeating a recognition question a third time.
+        let full = [mc(target, "t1", role: .target), mc(r1, "r1a"), mc(r1, "r1b"),
+                    mc(target, "t2", role: .target), probeQ]
+        let stepped = scheduler.releaseTargetConcept(conceptId: "T", from: full, after: 0)
+        let fullIds = Set(full.map { $0.id })
+        let extra = try #require(stepped.first { !fullIds.contains($0.id) })
+        #expect(extra.gap.id == "r1" && extra.level == .recall, "a third asking steps up, it does not repeat")
+        #expect(stepped.last?.isProbe == true)
+    }
+
+    /// A mastered concept with no items of its own is verified on a probe item.
+    /// The ROLE decides how it is asked: a scored check-in with the probe's own
+    /// distractors, never a throwaway blind-spot probe.
+    @Test func aCheckInRidingAProbeItemIsAskedAsACheckIn() throws {
+        var probe = gap("p", concept: "noun-gender")
+        probe.isProbe = true
+        probe.probeOptions = ["d1", "d2", "d3"]
+        let filler = (0..<3).map { gap("f\($0)") }
+        let l = lesson([probe] + filler, roles: ["p": .checkIn])
+        let schedule = scheduler.build(for: l, abilityOptionCount: 6)
+
+        let qs = questions(for: "p", in: schedule)
+        #expect(qs.count == 1, "a check-in is one question")
+        let q = try #require(qs.first)
+        #expect(q.isCheckIn && !q.isProbe, "a check-in, not a blind-spot check")
+        #expect(q.role == .checkIn && q.answerFormat != .probe, "scored evidence, not a diagnosis")
+        #expect(Set(q.options) == ["d1", "d2", "d3", "p-en"], "the probe's own distractors, never English fallbacks")
+        #expect(schedule.last?.id != q.id, "it is not appended behind the trailing probes")
+        #expect(!schedule.contains { $0.isProbe }, "no blind-spot probe in this lesson")
+
+        // A miss on it is remediated with the same French options.
+        let remedial = try #require(scheduler.remedial(for: q, attempt: 1, pool: l.gaps))
+        #expect(!remedial.isProbe && remedial.isRemedial && remedial.role == .checkIn)
+        #expect(Set(remedial.options) == ["d1", "d2", "d3", "p-en"])
+    }
+
+    /// Half the shipped probes are cloze items whose answer is the French form
+    /// that fills the blank: "What does “___ gare” mean?" over four French
+    /// options is unanswerable, and a sentence with a hole in it is not spoken.
+    @Test func clozeProbesAskWhichFormFitsAndAreNotSpoken() throws {
+        var cloze = gap("cloze", concept: "definite-articles", category: .grammar)
+        cloze.isProbe = true
+        cloze.frenchWord = "___ gare"
+        cloze.englishTranslation = "la"
+        cloze.probeOptions = ["les", "l'", "le"]
+        var rng = LessonRandom(seed: 3)
+        let q = try #require(scheduler.probeQuestion(for: cloze, rng: &rng))
+        #expect(q.prompt == "Which one fits? ___ gare")
+        #expect(!q.prompt.contains("mean"), "nothing asks for the meaning of a blank")
+        #expect(LessonSpeech.spokenPrompt(for: q) == nil)
+        #expect(LessonSpeech.spokenAnswer(for: q) == nil)
+
+        var word = cloze
+        word.frenchWord = "rire"
+        word.englishTranslation = "to laugh"
+        let plain = try #require(scheduler.probeQuestion(for: word, rng: &rng))
+        #expect(plain.prompt == "What does “rire” mean?")
+        #expect(LessonSpeech.spokenPrompt(for: plain) == "rire")
+        #expect(AnswerGrader.isCloze("tu ___ (parler)") && !AnswerGrader.isCloze("rire"))
+    }
+
     @Test func releaseTrackerFiresOnceAtTheStreak() {
         var tracker = ConceptReleaseTracker()
         let n = Tuning.conceptReleaseStreak

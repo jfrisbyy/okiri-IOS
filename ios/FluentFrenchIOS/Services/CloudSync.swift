@@ -108,7 +108,10 @@ final class CloudSync {
     /// Skip a foreground reconcile when the last one finished more recently than this.
     static let foregroundReconcileMinInterval: TimeInterval = 60
     /// Quiet period after the last local mutation before the snapshot is uploaded.
-    static let pushDebounce: Duration = .milliseconds(1_500)
+    /// Deliberately longer than the gap between two answers: a lesson uploads once
+    /// when it ends (`AppStore.flushToCloud`) or when the app backgrounds, not once
+    /// per answer (store-2-2).
+    static let pushDebounce: Duration = .seconds(Tuning.cloudPushDebounce)
     /// Total attempts for one reconcile read before it is reported as failed.
     static let fetchAttempts = 3
     /// Delay before the second read attempt; doubles on each further attempt.
@@ -164,11 +167,6 @@ final class CloudSync {
     private let markerLocalKey = "ff.cloud.lastSyncedLocalUpdatedAt.v1"
     private let markerServerKey = "ff.cloud.lastSyncedServerUpdatedAt.v1"
 
-    private static let isoEncoder: JSONEncoder = {
-        let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
-        return e
-    }()
     private static let isoDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
@@ -230,8 +228,17 @@ final class CloudSync {
         /// Recovery pass: the cloud row is applied unconditionally because the
         /// device copy is unreadable. `discardUnreadableCopy` says whether the
         /// preserved `.corrupt` blobs are deleted or kept for support.
-        case takeRemote(discardUnreadableCopy: Bool)
+        /// `requireRemoteRow` marks the pass the learner asked for by tapping
+        /// "Restore from my account": an account with no row is then a FAILED
+        /// restore, not a first sign-in — nothing is discarded and nothing is
+        /// uploaded (store-2-1).
+        case takeRemote(discardUnreadableCopy: Bool, requireRemoteRow: Bool)
     }
+
+    /// Shown on the recovery screen when the learner asked to restore and the
+    /// account has never been written to.
+    static let noAccountBackupMessage =
+        "There's no backup in your account yet, so there's nothing to restore. The unreadable copy is still on this device."
 
     /// Pull the cloud snapshot and reconcile against local state using
     /// `SnapshotReconciler.decide`. `initial` is the sign-in / launch pass: it
@@ -248,14 +255,22 @@ final class CloudSync {
     /// account row and apply it unconditionally, bypassing the newer-side rule —
     /// the gutted local state must never be compared with, or pushed over, the
     /// good cloud copy. `discardUnreadableCopy` deletes the preserved corrupt
-    /// blobs; `false` keeps them on the device for support. When the account
-    /// has no row yet, the device state is uploaded as on any first sign-in.
-    /// Returns true when the store left its recovery state (row applied, or no
-    /// row to restore); on a failed read `store.loadError` is left set so the
-    /// recovery screen stays up and the learner can try again.
+    /// blobs; `false` keeps them on the device for support. An account with no
+    /// row is a failed restore, not a first sign-in: nothing is discarded and
+    /// nothing is uploaded, so the only surviving copy of the learner's progress
+    /// stays where it is (store-2-1).
+    /// Returns true when the store left its recovery state (the row was applied);
+    /// on a failed read — or an account with no backup — `store.loadError` is left
+    /// set so the recovery screen stays up with the reason and the learner can try
+    /// again or continue on the device.
     @discardableResult
     func restoreFromAccount(store: AppStore, userId uid: String, discardUnreadableCopy: Bool) async -> Bool {
-        await run(store: store, userId: uid, initial: true, mode: .takeRemote(discardUnreadableCopy: discardUnreadableCopy))
+        await run(
+            store: store,
+            userId: uid,
+            initial: true,
+            mode: .takeRemote(discardUnreadableCopy: discardUnreadableCopy, requireRemoteRow: true)
+        )
         return store.loadError == nil
     }
 
@@ -267,7 +282,12 @@ final class CloudSync {
     func continueWithLocalCopy(store: AppStore, userId uid: String) async {
         pendingRemoteRestore = true
         store.acknowledgeLoadError(discard: false)
-        await run(store: store, userId: uid, initial: true, mode: .takeRemote(discardUnreadableCopy: false))
+        await run(
+            store: store,
+            userId: uid,
+            initial: true,
+            mode: .takeRemote(discardUnreadableCopy: false, requireRemoteRow: false)
+        )
     }
 
     /// Serialises reconcile passes: waits for the in-flight pass (cancelling it
@@ -294,7 +314,7 @@ final class CloudSync {
         // pass until the account row has actually been read.
         var mode = requestedMode
         if pendingRemoteRestore, case .compare = mode {
-            mode = .takeRemote(discardUnreadableCopy: false)
+            mode = .takeRemote(discardUnreadableCopy: false, requireRemoteRow: false)
         }
         defer {
             reconcileInFlight = false
@@ -360,7 +380,17 @@ final class CloudSync {
             return
 
         case .none:
-            if case .takeRemote(let discard) = mode {
+            if case .takeRemote(let discard, let requireRemoteRow) = mode {
+                if requireRemoteRow {
+                    // store-2-1: the learner asked to restore from the account and
+                    // the account has no row. Discarding the preserved copy and
+                    // uploading the gutted record here would destroy the only
+                    // remaining evidence of their progress, so the restore simply
+                    // fails: the recovery screen stays up and says why.
+                    syncState = .failed(Self.noAccountBackupMessage)
+                    lastReconcileAt = Date()
+                    return
+                }
                 store.acknowledgeLoadError(discard: discard)
             }
             let ok = await pushNow(store: store, userId: uid)
@@ -373,7 +403,7 @@ final class CloudSync {
         case .snapshot(let remote, let serverUpdatedAt):
             let decision: SnapshotReconciler.Decision
             switch mode {
-            case .takeRemote(let discard):
+            case .takeRemote(let discard, _):
                 // Recovery: the account copy is the learner's state, full stop.
                 clearMarkers()
                 store.acknowledgeLoadError(discard: discard)
@@ -442,6 +472,12 @@ final class CloudSync {
     @discardableResult
     func flushPending(store: AppStore) async -> Bool {
         if userId == nil, let uid = reconciledUserId {
+            // Never reconcile under an open lesson: `apply(snapshot:)` would swap
+            // `gaps`/`concepts` out from under it, losing the answers already
+            // recorded and no-oping every later one (store-1-3 / store-2-4). The
+            // foreground path guards the same way; this one is reached from the
+            // background hook, where a lesson can still be open.
+            guard !store.isLessonInProgress else { return false }
             await reconcile(store: store, userId: uid, initial: false)
             return userId != nil
         }
@@ -490,8 +526,10 @@ final class CloudSync {
         let previous = syncState
         syncState = .syncing
         do {
-            let data = try Self.isoEncoder.encode(snapshot)
-            let snapshotJSON = try JSONDecoder().decode(AnyJSON.self, from: data)
+            // Off the MainActor: the record is a few hundred KB from day one and
+            // this runs at the end of every lesson — encoding it on the answer
+            // frame is a visible hitch (store-2-2).
+            let snapshotJSON = try await Self.encodeForUpload(snapshot)
             let isoTimestamp = ISO8601DateFormatter().string(from: snapshot.clientUpdatedAt)
             let row = SnapshotRow(user_id: uid, snapshot: snapshotJSON, client_updated_at: isoTimestamp)
             let written: UpdatedAtRow = try await client
@@ -521,6 +559,18 @@ final class CloudSync {
             }
             return false
         }
+    }
+
+    /// Encode the snapshot into the JSON value the row carries, off the main
+    /// actor. The encoder is built inside the task so nothing MainActor-isolated
+    /// (or non-Sendable) crosses the boundary.
+    private nonisolated static func encodeForUpload(_ snapshot: ProgressSnapshot) async throws -> AnyJSON {
+        try await Task.detached(priority: .utility) {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(snapshot)
+            return try JSONDecoder().decode(AnyJSON.self, from: data)
+        }.value
     }
 
     // MARK: - Reads

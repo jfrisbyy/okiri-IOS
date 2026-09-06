@@ -2,7 +2,7 @@
 //  ProfileView.swift
 //  FluentFrenchIOS
 //
-//  Profile + analytics: mastery streak grid, retention curve, and error-pattern
+//  Profile + analytics: practice streak grid, retention curve, and error-pattern
 //  insights — mirroring the Expo app's profile additions.
 //
 
@@ -34,7 +34,7 @@ struct ProfileView: View {
                     profileHeader
                     levelCard
                     preferencesCard
-                    MasteryStreakCard()
+                    PracticeStreakCard()
                     RetentionCard()
                     errorPatternsSection
                     accountSection
@@ -69,7 +69,7 @@ struct ProfileView: View {
                 }
             }
             HStack(spacing: 20) {
-                statBlock("\(store.visibleGaps.count)", "Active gaps")
+                statBlock("\(store.visibleGaps.count)", HomeCopy.toLearnLabel)
                 statBlock("\(store.masteredGaps.count)", "Mastered")
                 statBlock("\(store.xp)", "XP")
             }
@@ -380,20 +380,20 @@ struct ProfileView: View {
     }
 }
 
-// MARK: - Mastery streak card
+// MARK: - Practice streak card
 
 /// Streak + weekly goal. Never celebrates a streak of 0 (D19): a fresh record
 /// reads "Start your streak today", and the flame only lights once there is one.
 /// The weekly goal (D11) counts days with a completed lesson this week against
 /// `preferences.daysPerWeekGoal`.
-struct MasteryStreakCard: View {
+struct PracticeStreakCard: View {
     @Environment(AppStore.self) private var store
 
     private var last7: [(date: Date, active: Bool)] {
         let today = Date()
         return (0..<7).reversed().map { offset in
             let d = store.calendar.date(byAdding: .day, value: -offset, to: today) ?? today
-            return (d, store.masteredOn(d))
+            return (d, store.practisedOn(d))
         }
     }
 
@@ -405,7 +405,7 @@ struct MasteryStreakCard: View {
                 Image(systemName: streak > 0 ? "flame.fill" : "flame")
                     .foregroundStyle(streak > 0 ? Theme.primary : Theme.textMuted)
                     .accessibilityHidden(true)
-                Text("Mastery streak").scaledSerifDisplay(19, weight: .semibold).foregroundStyle(Theme.text)
+                Text("Practice streak").scaledSerifDisplay(19, weight: .semibold).foregroundStyle(Theme.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if best > 0 {
@@ -428,7 +428,7 @@ struct MasteryStreakCard: View {
             } else {
                 Text("Start your streak today")
                     .scaledFont(22, weight: .bold).foregroundStyle(Theme.text)
-                Text("Master a word in a lesson and day one is yours.")
+                Text("Answer one card right and day one is yours.")
                     .font(.subheadline).foregroundStyle(Theme.textSecondary)
             }
             if let goal = store.weeklyGoalProgress {
@@ -454,7 +454,7 @@ struct MasteryStreakCard: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Last seven days")
             .accessibilityValue(last7Summary)
-            Text("Counts only days you mastered a word — not minutes spent.")
+            Text("Counts days you practised — not minutes spent.")
                 .font(.caption).foregroundStyle(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -491,9 +491,9 @@ struct MasteryStreakCard: View {
         let days = last7
         let activeDays = days.filter { $0.active }
         let active = activeDays.count
-        if active == 0 { return "No days with a word mastered" }
+        if active == 0 { return "No days practised" }
         let names = activeDays.map { fullWeekday($0.date) }
-        return "\(active) of 7 days with a word mastered: \(names.joined(separator: ", "))"
+        return "\(active) of 7 days practised: \(names.joined(separator: ", "))"
     }
 
     private func fullWeekday(_ date: Date) -> String {

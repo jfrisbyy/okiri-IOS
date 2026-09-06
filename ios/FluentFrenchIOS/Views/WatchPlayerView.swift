@@ -42,6 +42,13 @@ struct WatchPlayerView: View {
     @State private var scrollResumeWork: DispatchWorkItem? = nil
     @State private var isFullscreen = false
     @State private var attempt = 0
+    /// Bumped by the coverage footnote's "Try again": translates the lines still
+    /// in English without refetching the transcript (talkmedia-2-3).
+    @State private var translationAttempt = 0
+    /// The `translationAttempt` a pass has already run for. `.task(id:)` re-runs
+    /// on every re-appearance, not just on id changes, so without this marker
+    /// leaving the player and coming back would re-translate settled lines.
+    @State private var translationRunFor = 0
 
     private let speeds: [Double] = [0.75, 1.0, 1.25]
 
@@ -90,6 +97,7 @@ struct WatchPlayerView: View {
         .background(Color(hex: "0E0805"))
         .ignoresSafeArea(edges: .bottom)
         .task(id: attempt) { await loadTranscript() }
+        .task(id: translationAttempt) { await translateRemainingLines() }
         .onChange(of: controller.currentTime) { _, newValue in
             updateActiveIndex(for: newValue)
         }
@@ -304,7 +312,7 @@ struct WatchPlayerView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             if coverage.isRetryable {
-                Button { retryTranscript() } label: {
+                Button { retryTranslation() } label: {
                     Text(TranscriptCopy.retryTranslation).font(.caption.weight(.semibold)).foregroundStyle(Theme.primary)
                         .padding(.horizontal, 8).frame(minWidth: 44, minHeight: 44)
                 }
@@ -472,8 +480,29 @@ struct WatchPlayerView: View {
         updateActiveIndex(for: controller.currentTime)
     }
 
+    /// The "couldn't load" notice: nothing was fetched, so fetch it all again.
     private func retryTranscript() {
         attempt += 1
+    }
+
+    /// The coverage footnote's "Try again": the captions are already here and
+    /// some lines are already French, so only the lines still in English are
+    /// translated. Refetching would throw the transcript (and the learner's
+    /// place in it) away to redo work that succeeded (talkmedia-2-3).
+    private func retryTranslation() {
+        translationAttempt += 1
+    }
+
+    private func translateRemainingLines() async {
+        guard translationAttempt > 0, translationAttempt != translationRunFor else { return }
+        translationRunFor = translationAttempt
+        let lines = segments
+        guard lines.contains(where: { $0.language == .english }) else { return }
+        transcript = .loaded(lines, coverage: .of(lines, finished: false, stop: nil))
+        for await progress in TranscriptService.translateToFrench(lines) {
+            guard !Task.isCancelled else { return }
+            transcript = .loaded(progress.segments, coverage: progress.coverage)
+        }
     }
 
     private func updateActiveIndex(for time: Double) {

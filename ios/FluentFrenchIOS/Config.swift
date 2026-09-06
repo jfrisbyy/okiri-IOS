@@ -6,10 +6,22 @@
 // to add values, and do not inspect it to discover env values (you will
 // only ever see ""). To find a value at agent-time, look up the env name
 // in the project's .env file or in the Rork agent's environment listing.
+//
+// GENERATOR NOTE: the `nonisolated` keyword on `enum Config` below is REQUIRED
+// and must be preserved by whatever rewrites this file at build time. The
+// project builds with SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, so without it
+// every `static let` here becomes MainActor-isolated and each of the twelve
+// nonisolated service call sites (SpeechToText, TranslationService,
+// NewsService, YouTubeService, ElevenLabsTTS, LessonService, ConceptTagger,
+// ConverseService, TranslationCache, TranscriptService, ...) emits a
+// "main actor-isolated static property ... can not be referenced from a
+// nonisolated context" warning -- a hard error under Swift 6 / strict
+// concurrency. The values are immutable `Sendable` Strings, so reading them
+// from any isolation domain is safe.
 
 import Foundation
 
-enum Config {
+nonisolated enum Config {
     static let EXPO_PUBLIC_ELEVENLABS_API_KEY = ""
     static let EXPO_PUBLIC_NEWSAPI_KEY = ""
     static let EXPO_PUBLIC_OPENROUTER_API_KEY = ""

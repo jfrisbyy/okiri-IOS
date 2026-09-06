@@ -494,7 +494,7 @@ struct HomeView: View {
                 VStack(spacing: 14) {
                     Divider().background(Theme.borderLight)
                     HStack(spacing: 8) {
-                        miniStat(icon: "target", value: "\(store.visibleGaps.count)", label: "Active gaps", tint: Theme.primary, bg: Theme.primaryLight)
+                        miniStat(icon: "target", value: "\(store.visibleGaps.count)", label: HomeCopy.toLearnLabel, tint: Theme.primary, bg: Theme.primaryLight)
                         miniStat(icon: "rosette", value: "\(store.masteredGaps.count)", label: "Mastered", tint: Theme.success, bg: Theme.successLight)
                         miniStat(icon: "clock", value: "\(store.upcoming.count)", label: HomeCopy.upcomingLabel, tint: Theme.secondary, bg: Theme.secondaryLight)
                         miniStat(icon: "calendar", value: "\(store.longestStreak)", label: "Best streak", tint: Theme.warning, bg: Theme.warningLight)
@@ -844,8 +844,10 @@ struct HomeView: View {
                 ForEach(store.lockedChosenModalities) { m in lockedPlanRow(m) }
             }
 
+            // The plan already carries a lessons row that starts the same lesson,
+            // so the "Lesson ready" card only shows for a plan with no lessons spine.
             if capstoneReady { capstoneRow }
-            else if lessonReady { lessonReadyRow }
+            else if lessonReady && !plan.isLessonPaced { lessonReadyRow }
         }
         .padding(Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1161,7 +1163,7 @@ struct HomeView: View {
             FeatureCard(id: "learn", title: "Learn", subtitle: "Practice your gaps",
                         description: "Master vocabulary, grammar & more with adaptive lessons",
                         icon: "graduationcap.fill", iconColor: Theme.secondary, iconBg: Theme.secondaryLight,
-                        stats: "\(store.visibleGaps.count) gaps to practice", modality: nil) {
+                        stats: HomeCopy.learnCardStat(toLearn: store.visibleGaps.count, practised: store.practisedGaps.count), modality: nil) {
                 startSmartLesson()
             },
             FeatureCard(id: "read", title: "Read", subtitle: "Articles & stories",
@@ -1346,7 +1348,7 @@ struct HomeView: View {
         let total = max(active + mastered, 1)
         return VStack(spacing: 12) {
             HStack(spacing: 0) {
-                learnStat(value: "\(active)", label: "Gaps")
+                learnStat(value: "\(active)", label: HomeCopy.toLearnLabel)
                 Rectangle().fill(Theme.border).frame(width: 1, height: 26)
                 learnStat(value: "\(mastered)", label: "Mastered")
                 Rectangle().fill(Theme.border).frame(width: 1, height: 26)

@@ -82,6 +82,66 @@ nonisolated enum ReadRegionGroup: String, CaseIterable, Identifiable {
         case .canada: return "🇨🇦"
         }
     }
+
+    /// The region a live news item belongs to, read off its outlet's name and web
+    /// address: an explicit region word first ("RFI Afrique", "Radio-Canada"), then
+    /// the country top-level domain, then a known European masthead. Returns nil
+    /// when neither says — a story is filed under a region only when the app can
+    /// justify it, never "Europe by default", because a wrong flag on the card and
+    /// a region filter that hides the story are both worse than no region at all.
+    static func forSource(name: String?, url: String?) -> ReadRegionGroup? {
+        let host = hostOf(url)
+        // Padded so a short masthead key (" rfi ") can be written as a whole word.
+        let haystack = " " + (name ?? "").lowercased().replacingOccurrences(of: "\u{2019}", with: "'") + " " + host + " "
+        for (needle, group) in regionWords where haystack.contains(needle) { return group }
+        for (suffix, group) in hostSuffixes where host.hasSuffix(suffix) { return group }
+        for masthead in europeanMastheads where haystack.contains(masthead) { return .europe }
+        return nil
+    }
+
+    /// The lowercased host of a URL, without a leading "www." ("" when there is none).
+    private static func hostOf(_ url: String?) -> String {
+        guard let url, let host = URLComponents(string: url)?.host?.lowercased() else { return "" }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    /// Region words that settle it wherever they appear (outlet name or host).
+    private static let regionWords: [(String, ReadRegionGroup)] = [
+        ("afrique", .africa), ("africa", .africa), ("african", .africa),
+        ("sénégal", .africa), ("senegal", .africa), ("dakar", .africa),
+        ("maroc", .africa), ("morocco", .africa), ("algér", .africa), ("alger", .africa),
+        ("tunisie", .africa), ("abidjan", .africa), ("ivoir", .africa),
+        ("cameroun", .africa), ("congo", .africa), ("bamako", .africa), ("burkina", .africa),
+        ("québec", .canada), ("quebec", .canada), ("canada", .canada), ("canadien", .canada),
+        ("montréal", .canada), ("montreal", .canada), ("le devoir", .canada), ("ledevoir", .canada),
+        ("la presse", .canada), ("lapresse", .canada),
+        ("haïti", .caribbean), ("haiti", .caribbean), ("antilles", .caribbean),
+        ("martinique", .caribbean), ("guadeloupe", .caribbean), ("guyane", .caribbean),
+        ("caraïbe", .caribbean), ("caribbean", .caribbean),
+    ]
+
+    /// Country top-level domains, checked after the region words so "rfi.fr"
+    /// covering Africa is still filed by what its name says.
+    private static let hostSuffixes: [(String, ReadRegionGroup)] = [
+        (".sn", .africa), (".ci", .africa), (".ml", .africa), (".bf", .africa),
+        (".cm", .africa), (".cd", .africa), (".tg", .africa), (".bj", .africa),
+        (".mg", .africa), (".ma", .africa), (".dz", .africa), (".tn", .africa),
+        (".ca", .canada), (".ht", .caribbean),
+        (".fr", .europe), (".be", .europe), (".ch", .europe), (".lu", .europe), (".mc", .europe),
+    ]
+
+    /// French-language European mastheads that publish on a generic domain. Short
+    /// names are written with their surrounding spaces so a source called "Sports"
+    /// is not read as the Swiss broadcaster RTS.
+    private static let europeanMastheads: [String] = [
+        "le monde", "lemonde", "figaro", "libération", "liberation", "france 24", "france24",
+        "franceinfo", "france info", "france culture", " bfm", "les échos", "lesechos",
+        "l'équipe", "lequipe", "20 minutes", "20minutes", "ouest-france", "ouestfrance",
+        "le parisien", "leparisien", "la croix", "lacroix", "mediapart", "nouvel obs",
+        "nouvelobs", "l'obs", "sud ouest", "sudouest", "rtbf", "le soir", "lesoir",
+        "le temps", "letemps", " rts ", "rts.ch", "euronews", " rfi ", "rfi.fr",
+        "sciences et avenir",
+    ]
 }
 
 nonisolated enum ReadCategory: String, CaseIterable, Identifiable {

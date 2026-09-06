@@ -26,11 +26,22 @@ final class FrenchSpeech {
         speakAny(text, language: "fr-FR", rate: rate)
     }
 
+    /// Put the shared audio session back into playback mode before making sound.
+    /// The recorder switches the process-wide session to `.playAndRecord` /
+    /// `.measurement`, which suppresses the system's output processing; every
+    /// built-in-voice playback re-asserts the playback category so a line spoken
+    /// after the learner has recorded sounds like one spoken before it.
+    static func activatePlaybackSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, options: [.mixWithOthers])
+        try? session.setActive(true)
+    }
+
     /// Speak text in an arbitrary BCP-47 language (e.g. "en-US", "fr-FR").
     func speakAny(_ text: String, language: String, rate: Float = AVSpeechUtteranceDefaultSpeechRate) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         stop()
-        try? AVAudioSession.sharedInstance().setActive(true)
+        Self.activatePlaybackSession()
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: language)
         utterance.rate = rate

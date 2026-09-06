@@ -79,6 +79,16 @@ nonisolated struct PlaybackState: Equatable {
         return wasPlaying
     }
 
+    /// Move to a line and start playing it. Returns true when a line exists, so
+    /// a tap on a transcript line makes sound even from a paused player
+    /// (`jump(to:)` keeps the transport state; this one asks for playback).
+    mutating func jumpAndPlay(to index: Int) -> Bool {
+        _ = jump(to: index)
+        guard hasTurns else { return false }
+        isPlaying = true
+        return true
+    }
+
     /// Start the current line again from the top. Returns true when a line exists.
     mutating func replay() -> Bool {
         guard hasTurns else { return false }

@@ -67,7 +67,11 @@ final class AppStore {
     var concepts: [Concept] = []
     var errors: [ErrorRecord] = []
     var abilityTheta: Double = Tuning.defaultAbilityTheta
-    var masteryDays: Set<String> = []   // ISO "yyyy-MM-dd" days a word was mastered/reviewed correctly
+    /// ISO "yyyy-MM-dd" days the learner answered at least one item correctly — a
+    /// PRACTICE record, not a mastery one (a gap is mastered by `Tuning.gapMasteryStreak`
+    /// correct answers in a row, which this never checks). The streak surfaces say so.
+    /// The stored key and the cloud field keep the historical `masteryDays` name.
+    var masteryDays: Set<String> = []
     var hasCompletedAssessment: Bool = false
     var assessedLevel: CEFRLevel = .A1
     /// Monotonic counter incremented per lesson; used to damp recently-taught concepts.
@@ -184,6 +188,12 @@ final class AppStore {
     /// True while `resolvePendingTranslations(using:)` is running (re-entrancy guard).
     @ObservationIgnored private(set) var isResolvingTranslations = false
 
+    /// How many times each pending gap's translation has been asked for and come
+    /// back unusable. Transient (this session only): it exists so a term the
+    /// service reliably chokes on sinks to the back of the retry queue instead of
+    /// sitting at its head forever.
+    @ObservationIgnored private(set) var translationAttempts: [String: Int] = [:]
+
     // MARK: - Package E-talk stored state (edit only inside this block)
     // (converse / speaking stored properties go here)
 
@@ -252,6 +262,16 @@ final class AppStore {
 
     /// Alias of `activeGaps` kept for call sites written against the earlier name.
     var visibleGaps: [GapItem] { activeGaps }
+
+    /// Active gaps the learner has actually been asked at least once. Day one seeds
+    /// the whole Foundation slice, so `activeGaps` is hundreds of items the learner
+    /// has never met — counts that claim to describe the LEARNER (weak spots,
+    /// practice history) read this, and counts that describe the CURRICULUM AHEAD
+    /// read `newGaps`. Same split GapsView and Retention already draw.
+    var practisedGaps: [GapItem] { activeGaps.filter { !$0.isNew } }
+
+    /// Active gaps never yet answered — seeded curriculum, not diagnosed weaknesses.
+    var newGaps: [GapItem] { activeGaps.filter { $0.isNew } }
 
     /// Every unmastered gap INCLUDING probe items — the opt-in evidence view the
     /// selector and concept bookkeeping use. Views must not list or count this.
@@ -474,7 +494,7 @@ final class AppStore {
         pruneHistory(now: now)
         metricsLog.record(metricsSnapshot(now: now))
         save()
-        flush()
+        flushToCloud()
         return unlocked
     }
 
@@ -964,9 +984,7 @@ final class AppStore {
 
     /// Gaps with recall evidence: reviewed at least once. Averages read this so a
     /// fresh seed of never-answered items cannot masquerade as "at risk" (B4).
-    private var reviewedVisibleGaps: [GapItem] {
-        visibleGaps.filter { !$0.isNew }
-    }
+    private var reviewedVisibleGaps: [GapItem] { practisedGaps }
 
     var gapHealth: (score: Int, label: String) {
         gapHealth(at: Date())
@@ -1029,7 +1047,7 @@ final class AppStore {
         return gaps.filter { !$0.isProbe && ($0.masteredAt ?? .distantPast) >= weekAgo }.count
     }
 
-    // MARK: - Mastery streak
+    // MARK: - Practice streak
 
     /// Day key in the current calendar (module-wide default; the store instance
     /// method below honours an injected calendar).
@@ -1069,8 +1087,8 @@ final class AppStore {
         return longest
     }
 
-    /// Did the learner master a word on the given day (for the 7-day grid)?
-    func masteredOn(_ date: Date) -> Bool {
+    /// Did the learner answer anything correctly on the given day (the 7-day grid)?
+    func practisedOn(_ date: Date) -> Bool {
         masteryDays.contains(dayKey(date))
     }
 
@@ -1150,8 +1168,18 @@ final class AppStore {
         if correct {
             gap.consecutiveCorrect += 1
             masteryDays.insert(dayKey(now))
-            // Update learner ability (IRT-style nudge).
-            abilityTheta = min(3, abilityTheta + Tuning.thetaGainOnCorrect * (1 - successProbability(theta: abilityTheta, b: gap.irtDifficulty)))
+            // Update learner ability (IRT-style nudge), bounded by the EVIDENCE: an
+            // item at difficulty b says nothing about ability far above b, so the
+            // gain stops at `b + Tuning.thetaEvidenceCeiling`. Without this the
+            // gain/loss ratchet has a fixed point well above the material — a
+            // beginner drilling A1 Foundation items (b ≈ −1.4…−0.7) would read as B1
+            // inside a week while still locked inside Foundation. Ability is never
+            // LOWERED here: a learner placed high keeps their placement.
+            let evidenceCeiling = gap.irtDifficulty + Tuning.thetaEvidenceCeiling
+            if abilityTheta < evidenceCeiling {
+                let gain = Tuning.thetaGainOnCorrect * (1 - successProbability(theta: abilityTheta, b: gap.irtDifficulty))
+                abilityTheta = min(evidenceCeiling, min(3, abilityTheta + gain))
+            }
             if gap.consecutiveCorrect >= Tuning.gapMasteryStreak && gap.masteredAt == nil {
                 gap.masteredAt = now
             }
@@ -1379,9 +1407,18 @@ final class AppStore {
         return gap
     }
 
-    /// Normalised headword used for capture de-duplication.
+    /// Normalised headword used for capture de-duplication: case-folded, with the
+    /// typographic apostrophe mapped to the straight one and runs of whitespace
+    /// collapsed, so "l’eau" tapped in a live headline is the same card as the
+    /// deck's "l'eau". Diacritics are deliberately KEPT — "ou" and "où" are
+    /// different words and must stay different cards.
     private func captureKey(_ word: String) -> String {
-        word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalised = word
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{02bc}", with: "'")
+            .lowercased()
+        return normalised.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
     /// The (non-probe) gap with the same headword, if one is already saved.
@@ -1702,6 +1739,16 @@ final class AppStore {
         }
     }
 
+    /// Persist the learner's saved scenario guides. Goes through the store — not
+    /// straight to `UserDefaults` — so the write marks the record dirty, moves the
+    /// sync clock and reaches the account; otherwise the device looks clean and the
+    /// next reconcile applies the account's older blob over the guide just saved
+    /// (store-2-3).
+    func setSavedScenarios(_ data: Data?) {
+        savedScenariosData = data
+        save()
+    }
+
     /// Apply a snapshot pulled from the cloud, replacing local state. Persists
     /// locally without re-pushing to the cloud (this state already lives there).
     /// A known-good cloud snapshot supersedes an unreadable local blob, so any
@@ -1939,7 +1986,7 @@ final class AppStore {
                 seeded.append(contentsOf: foundationSlice(
                     conceptIds: FoundationSeeder.firstRunConceptIds(seededMastered: result.masteredConceptIds),
                     excludedHeadwords: Set(seeded.map { FoundationSeeder.headwordKey($0.frenchWord) }),
-                    existingIds: [], now: now))
+                    existingIds: Set(seeded.map { $0.id }), now: now))
             }
             gaps = seeded
             journeyStartedAt = now
@@ -1963,8 +2010,14 @@ final class AppStore {
             dailyPlanOfRecord = nil
             dailyPlanDayKey = nil
         } else {
-            let existing = Set(gaps.map { $0.frenchWord.lowercased() })
-            let fresh = result.missedGaps.filter { !existing.contains($0.frenchWord.lowercased()) }
+            // A retake only adds what the record does not already hold. A missed
+            // probe now seeds a REAL Foundation item, which carries that item's own
+            // stable id, so the id check matters as much as the headword one.
+            let existingIds = Set(gaps.map { $0.id })
+            let existing = Set(gaps.map { FoundationSeeder.headwordKey($0.frenchWord) })
+            let fresh = result.missedGaps.filter {
+                !existingIds.contains($0.id) && !existing.contains(FoundationSeeder.headwordKey($0.frenchWord))
+            }
             gaps.insert(contentsOf: fresh, at: 0)
             if journeyStartedAt == nil { journeyStartedAt = now }
         }
@@ -2026,6 +2079,20 @@ final class AppStore {
         if pendingCloudPush {
             pendingCloudPush = false
             cloud?.progressDidChange(self)
+        }
+    }
+
+    /// Write pending state AND upload it now, without waiting out the cloud
+    /// debounce. Called at the boundaries that matter — a finished lesson — so the
+    /// account is current within a second of the learner stopping, while ordinary
+    /// answers ride the long debounce instead of uploading the whole record each
+    /// time (store-2-2).
+    func flushToCloud() {
+        flush()
+        guard let cloud else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await cloud.flushPending(store: self)
         }
     }
 
@@ -2375,7 +2442,9 @@ extension AppStore {
     @discardableResult
     func capture(_ draft: CaptureDraft, now: Date = Date()) -> CaptureOutcome {
         let word = draft.frenchWord.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !word.isEmpty else { return .rejected }
+        // A headword has to be a word: "2030" or "%" picked out of an article body
+        // is text, not vocabulary, and must never become a card.
+        guard word.contains(where: { $0.isLetter }) else { return .rejected }
         if let existing = existingGap(forWord: word) { return .duplicate(existing) }
 
         let level = CaptureBuilder.level(sourceLevel: draft.sourceLevel, learnerLevel: learnerLevel)
@@ -2470,26 +2539,53 @@ extension AppStore {
     }
 
     /// Retry the pending captures now that a lookup has just succeeded (so the
-    /// network is evidently reachable). At most `limit` gaps per pass, oldest
-    /// first; the pass stops at the first failure (offline again). Returns how
-    /// many were resolved. `resolver` is `TranslationService.lookup` in the app
-    /// and a fake in tests.
+    /// network is evidently reachable). At most `limit` gaps per pass, least-tried
+    /// first and oldest first within that. The pass stops early ONLY when the
+    /// device is offline or the build has no key — nothing else could succeed
+    /// either. A per-term `.serviceError` (or a gloss that came back without a
+    /// meaning) is counted against that gap and skipped, so one word the service
+    /// cannot parse never blocks every other word saved offline —
+    /// `Tuning.pendingTranslationFailureStreak` failures in a row do end the pass,
+    /// because that is the service being down rather than one odd word. Returns how
+    /// many were resolved. `resolver` is `TranslationService.lookup` in the app and a
+    /// fake in tests.
     @discardableResult
     func resolvePendingTranslations(using resolver: (String, String) async -> GlossLookup,
                                     limit: Int = Tuning.pendingTranslationBatch) async -> Int {
         guard !isResolvingTranslations else { return 0 }
         isResolvingTranslations = true
         defer { isResolvingTranslations = false }
-        let batch = pendingTranslations.sorted { $0.createdAt < $1.createdAt }.prefix(max(0, limit))
+        let batch = pendingTranslations
+            .sorted { a, b in
+                let ta = translationAttempts[a.id] ?? 0, tb = translationAttempts[b.id] ?? 0
+                if ta != tb { return ta < tb }
+                return a.createdAt < b.createdAt
+            }
+            .prefix(max(0, limit))
         var resolved = 0
+        var failureStreak = 0
         for gap in batch {
             let context = gap.originalContext?.sentence ?? ""
             switch await resolver(gap.frenchWord, context) {
             case .gloss(let g):
-                if applyResolvedTranslation(gapId: gap.id, gloss: g) { resolved += 1 }
-            case .unavailable:
-                return resolved
+                if applyResolvedTranslation(gapId: gap.id, gloss: g) {
+                    resolved += 1
+                    failureStreak = 0
+                    translationAttempts[gap.id] = nil
+                } else {
+                    failureStreak += 1
+                    translationAttempts[gap.id, default: 0] += 1
+                }
+            case .unavailable(let failure):
+                // Offline / no key: the rest of the batch would fail the same way.
+                guard failure == .serviceError else { return resolved }
+                // This one term failed. Note it so it goes last next time, and
+                // carry on with the words behind it.
+                failureStreak += 1
+                translationAttempts[gap.id, default: 0] += 1
             }
+            // Several in a row is the service being down, not one odd word.
+            if failureStreak >= Tuning.pendingTranslationFailureStreak { return resolved }
         }
         return resolved
     }

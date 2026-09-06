@@ -121,7 +121,12 @@ final class VoiceRecorder {
         recorder = nil
         isRecording = false
         secondsLeft = 0
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        // Leave the process-wide session as we found it: recording swapped it to
+        // `.playAndRecord`/`.measurement`, which would otherwise stay in force for
+        // every later playback (tutor replies, "Hear the corrected line", Listen).
+        try? session.setCategory(.playback, options: [.mixWithOthers])
     }
 
     /// Stops recording (if still running) and transcribes the clip.

@@ -85,7 +85,10 @@ struct LessonIntroStage: View {
         if model.isCapstone {
             return "\(items) · one question each — your first answer is what counts."
         }
-        return "\(items) · answer each right \(Tuning.masteryTarget)× to master it this session."
+        // Not "each": check-ins are asked once, and a skill you show you already
+        // have is released early — so promising every item twice is a promise the
+        // lesson does not keep.
+        return "\(items) · answer an item right \(Tuning.masteryTarget)× to master it this session."
     }
 
     private var startTitle: String {

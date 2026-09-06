@@ -17,7 +17,11 @@ nonisolated struct NewsArticle: Identifiable, Hashable {
     let summary: String
     let source: String
     let category: NewsCategory
-    let region: ReadRegionGroup
+    /// Where the story comes from, when the outlet says so (`ReadRegionGroup
+    /// .forSource`). Nil for a live article whose source names no region — the
+    /// card shows no region badge and the region filter leaves it under "All"
+    /// rather than claiming it is European.
+    let region: ReadRegionGroup?
     let imageUrl: String?
     let publishedAt: Date
     let body: String
@@ -266,7 +270,7 @@ nonisolated struct NewsAPIArticle: Decodable {
             summary: summary,
             source: source?.name ?? "Actualités",
             category: category == .all ? .society : category,
-            region: .europe,
+            region: ReadRegionGroup.forSource(name: source?.name, url: url),
             imageUrl: urlToImage,
             publishedAt: date,
             body: text,

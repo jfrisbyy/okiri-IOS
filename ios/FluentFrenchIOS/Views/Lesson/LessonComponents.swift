@@ -239,7 +239,10 @@ struct LessonMissedList: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(item.gap.frenchWord): \(item.correctAnswer)")
                     Spacer(minLength: 0)
-                    SpeakButton(text: item.gap.frenchWord, size: 26)
+                    // A cloze item ("___ télévision") has nothing to read aloud.
+                    if let spoken = LessonSpeech.speakableFrench(item.gap.frenchWord) {
+                        SpeakButton(text: spoken, size: 26)
+                    }
                 }
             }
         }

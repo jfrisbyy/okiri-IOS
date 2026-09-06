@@ -118,11 +118,13 @@ nonisolated enum ScenarioStore {
         return (try? decoder.decode([SavedScenario].self, from: data)) ?? []
     }
 
-    static func save(_ scenarios: [SavedScenario]) {
+    /// Encode guides for persistence. The blob itself is written by
+    /// `AppStore.setSavedScenarios`, never here: a direct `UserDefaults` write
+    /// leaves the record looking clean, so it is never uploaded and the next
+    /// reconcile applies the account's older blob over it (store-2-3).
+    static func encoded(_ scenarios: [SavedScenario]) -> Data? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(scenarios) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
+        return try? encoder.encode(scenarios)
     }
 }

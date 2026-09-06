@@ -69,8 +69,13 @@ struct LessonAssembler {
         // 4. Reasons + headline come from the selector; skill cards are built here.
         //    A capstone is a pure test: no teaching cards.
         let reasons = output.reasonsByGapId
+        // A probe item is never teaching material: a card built from it would hand
+        // the learner the answer to the very question that is meant to diagnose
+        // whether they already knew it.
+        let probeIds = Set(resolved.filter { $0.item.role == .probe || $0.gap.isProbe }.map { $0.gap.id })
         let blocks = output.mode.isCapstone ? [] : buildConceptBlocks(for: gaps, target: target, reasons: reasons,
-                                                                       stalled: Set(output.stalledConceptIds))
+                                                                       stalled: Set(output.stalledConceptIds),
+                                                                       probeGapIds: probeIds)
 
         return AssembledLesson(selection: output, targetConcept: target, gaps: gaps,
                                reasons: reasons, headline: output.headline,
@@ -111,15 +116,21 @@ struct LessonAssembler {
     /// One ConceptBlock per distinct concept present in the lesson, target first.
     /// Pulls a real worked example from the lesson's own gaps and reuses the
     /// already-built reason line. Capped so lessons don't become a slog.
+    ///
+    /// Probe items are invisible to this: a concept carried only by a blind-spot
+    /// probe gets NO card, and no card ever takes its worked example from a probe.
+    /// Teaching a skill — with the probe's own sentence and its translation — right
+    /// before probing it turns the diagnosis into a memory test of the last screen.
     private func buildConceptBlocks(for gaps: [GapItem], target: Concept?, reasons: [String: String],
-                                    stalled: Set<String> = []) -> [ConceptBlock] {
+                                    stalled: Set<String> = [], probeGapIds: Set<String> = []) -> [ConceptBlock] {
         var blocks: [ConceptBlock] = []
         var seen = Set<String>()
+        let taught = gaps.filter { !$0.isProbe && !probeGapIds.contains($0.id) }
 
         func makeBlock(_ concept: Concept) -> ConceptBlock {
-            let example = gaps.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
-                ?? gaps.first { $0.conceptId == concept.id }
-                ?? store.gaps(forConcept: concept.id).first { !$0.exampleSentence.isEmpty }
+            let example = taught.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
+                ?? taught.first { $0.conceptId == concept.id }
+                ?? store.gaps(forConcept: concept.id).first { !$0.isProbe && !$0.exampleSentence.isEmpty }
             let reason = example.flatMap { reasons[$0.id] }
             return ConceptBlock(concept: concept, explanation: concept.description,
                                 example: example, reason: reason,
@@ -131,7 +142,7 @@ struct LessonAssembler {
             blocks.append(makeBlock(target))
             seen.insert(target.id)
         }
-        for gap in gaps {
+        for gap in taught {
             guard let cid = gap.conceptId, !seen.contains(cid),
                   let concept = store.concept(cid) else { continue }
             seen.insert(cid)

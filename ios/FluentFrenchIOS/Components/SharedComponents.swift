@@ -194,11 +194,24 @@ struct SpeakButton: View {
     /// The circular chrome grows with the type ratio so the glyph keeps its
     /// proportions at large text sizes.
     @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
+    /// Identifies this button's own utterance among all the speak buttons on screen.
+    @State private var identity = UUID()
+
+    /// True while this button's own audio is loading or sounding, so a second tap
+    /// silences it instead of restarting a long passage from the top. Both reads
+    /// are on the observable `NaturalVoice`, so the glyph and the accessibility
+    /// label follow the audio — including when another surface stops it.
+    private var isPlaying: Bool { NaturalVoice.shared.owner == identity && NaturalVoice.shared.isBusy }
+
     var body: some View {
         Button {
-            NaturalVoice.shared.speak(text)
+            if isPlaying {
+                NaturalVoice.shared.stop()
+            } else {
+                NaturalVoice.shared.speak(text, owner: identity)
+            }
         } label: {
-            Image(systemName: "speaker.wave.2.fill")
+            Image(systemName: isPlaying ? "stop.fill" : "speaker.wave.2.fill")
                 .scaledFont(size * 0.5, relativeTo: .body)
                 .foregroundStyle(Theme.primary)
                 .frame(width: size * Theme.chromeScale(typeScale), height: size * Theme.chromeScale(typeScale))
@@ -207,8 +220,8 @@ struct SpeakButton: View {
                 .minimumHitTarget()
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Listen")
-        .accessibilityHint("Reads the French aloud")
+        .accessibilityLabel(isPlaying ? "Stop" : "Listen")
+        .accessibilityHint(isPlaying ? "Stops the audio" : "Reads the French aloud")
     }
 }
 

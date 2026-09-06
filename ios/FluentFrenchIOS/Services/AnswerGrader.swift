@@ -66,9 +66,17 @@ nonisolated enum AnswerGrader {
     /// either side of an "a / b" gloss, and for vocabulary the headword itself —
     /// but only when the headword IS the expected answer (see `acceptsHeadword`).
     /// Display forms keep their original spelling (minus tags) for feedback.
+    ///
+    /// Two alternatives are never accepted, because accepting them would teach the
+    /// wrong thing and the "Also accepted" line would advertise it:
+    ///   • one that differs from the expected answer only in diacritics ("ou" for
+    ///     "où") — that is an accent slip, and `.closeAccents` says so;
+    ///   • in a fill-blank, one that cannot stand in the blank (see `fitsBlank`).
     static func acceptedForms(for gap: GapItem, expected: String, kind: QuestionKind) -> [(display: String, normalized: String)] {
         var raw: [String] = [expected]
-        raw.append(contentsOf: gap.acceptedAnswers ?? [])
+        raw.append(contentsOf: (gap.acceptedAnswers ?? []).filter {
+            kind != .fillBlank || fitsBlank($0, gap: gap, expected: expected)
+        })
         if kind.isTyped, gap.category == .vocabulary, acceptsHeadword(gap, expected: expected) {
             raw.append(gap.frenchWord)
         }
@@ -76,6 +84,7 @@ nonisolated enum AnswerGrader {
         for form in raw where form.contains("/") {
             raw.append(contentsOf: form.split(separator: "/").map { String($0) })
         }
+        let expectedNorm = normalize(expected)
         var out: [(display: String, normalized: String)] = []
         var seen = Set<String>()
         for form in raw {
@@ -83,9 +92,48 @@ nonisolated enum AnswerGrader {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let norm = normalize(form)
             guard !norm.isEmpty, seen.insert(norm).inserted else { continue }
+            // An accent-stripped spelling is not a second correct spelling.
+            guard norm == expectedNorm || fold(norm) != fold(expectedNorm) else { continue }
             out.append((display: display.isEmpty ? form : display, normalized: norm))
         }
         return out
+    }
+
+    /// Whether a content alternative can stand in a fill-blank's blank.
+    ///
+    /// `alts` are authored for the translation format — "parle" for "je parle",
+    /// "les chats" for "chats", "se laver" for "me lave" — so dropping or adding a
+    /// word the sentence around the blank already supplies ("Au travail, _____
+    /// anglais." → "Au travail, parle anglais.") is ungrammatical, and marking it
+    /// correct grades away the very pairing the item teaches. An alternative fills
+    /// the blank only when it has the same shape as the expected form — the same
+    /// number of words, an elision counting as two — and is not the dictionary
+    /// headword standing in for the form the item exists to teach.
+    static func fitsBlank(_ alternative: String, gap: GapItem, expected: String) -> Bool {
+        let alt = words(normalize(alternative)).map(fold)
+        let target = words(normalize(expected))
+        guard !alt.isEmpty, !target.isEmpty, alt.count == target.count else { return false }
+        // The dictionary headword — whole, or its opening words ("se brosser" for
+        // "se brosser les dents") — is not the form the item teaches.
+        let headword = words(normalize(gap.frenchWord)).map(fold)
+        if !headword.isEmpty, alt.count <= headword.count, Array(headword.prefix(alt.count)) == alt,
+           !acceptsHeadword(gap, expected: expected) { return false }
+        return true
+    }
+
+    /// The words of a French form, an elision ("j'ai", "l'eau") counting as two.
+    static func words(_ s: String) -> [String] {
+        s.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "'" || $0 == "\u{2019}" })
+            .map(String.init)
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+    }
+
+    static func wordCount(_ s: String) -> Int { words(s).count }
+
+    /// Whether a string is a cloze: it carries a blank the learner has to fill,
+    /// so it has no meaning to ask for and nothing to read aloud.
+    static func isCloze(_ s: String) -> Bool {
+        s.range(of: #"_{2,}"#, options: .regularExpression) != nil
     }
 
     /// Whether the dictionary headword is itself an accepted typed answer.

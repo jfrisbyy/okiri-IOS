@@ -248,6 +248,22 @@ nonisolated struct LessonSession {
         return min(1, Double(position + (currentAnswered ? 1 : 0)) / Double(schedule.count))
     }
 
+    /// The gaps that can still reach the session mastery target: the LIVE schedule
+    /// holds at least `masteryTarget` unaided questions for them. A check-in is
+    /// asked once, and a released concept's remaining questions are dropped, so
+    /// neither can ever be "mastered this session" — counting them would put a
+    /// denominator on the practice bar that a flawless lesson cannot reach.
+    var masterableGapIds: Set<String> {
+        var counts: [String: Int] = [:]
+        for q in schedule where !q.isInterstitial && !q.isProbe && !q.isRemedial {
+            counts[q.gap.id, default: 0] += 1
+        }
+        return Set(counts.filter { $0.value >= config.masteryTarget }.keys)
+    }
+
+    /// The denominator the practice bar shows next to `masteredGapIds.count`.
+    var masterableCount: Int { max(masterableGapIds.count, masteredGapIds.count) }
+
     /// "Show me" is available for the current question (C12): never in a capstone,
     /// never for a match round, and only while reveals remain.
     var canReveal: Bool {
@@ -599,12 +615,18 @@ nonisolated enum LessonSpeech {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return spoken.isEmpty ? nil : spoken
         case .multipleChoice:
-            return q.isReversed ? nil : q.gap.frenchWord
+            return q.isReversed ? nil : speakableFrench(q.gap.frenchWord)
         case .trueFalse:
-            return q.gap.frenchWord
+            return speakableFrench(q.gap.frenchWord)
         case .translation, .arrange, .match:
             return nil
         }
+    }
+
+    /// French worth reading aloud: nothing for a cloze item, whose "French" is a
+    /// sentence with a hole in it ("___ gare").
+    static func speakableFrench(_ french: String) -> String? {
+        AnswerGrader.isCloze(french) ? nil : french
     }
 
     /// After the answer: the completed sentence, the French form, or the arranged sentence.
@@ -615,9 +637,9 @@ nonisolated enum LessonSpeech {
         case .translation, .arrange:
             return q.correctAnswer
         case .multipleChoice:
-            return q.isReversed ? q.correctAnswer : q.gap.frenchWord
+            return q.isReversed ? q.correctAnswer : speakableFrench(q.gap.frenchWord)
         case .trueFalse:
-            return q.gap.frenchWord
+            return speakableFrench(q.gap.frenchWord)
         case .match:
             return nil
         }

@@ -609,7 +609,8 @@ struct ConceptSelector {
 
     /// The shared score plus the capstone tiers: learning concepts outrank mastered
     /// ones, and learning-but-trending-mastered outrank both. The tier weights are
-    /// sized above the ranker's maximum so tiers hold; the score orders within a tier.
+    /// sized above the shared score's full spread (including `stallPrerequisiteBonus`
+    /// and the governor's urgency multiplier) so tiers hold; the score orders within a tier.
     func capstoneScore(_ concept: Concept, now: Date = Date()) -> Double {
         var total = score(concept, now: now)
         if concept.state == .learning {
@@ -657,6 +658,11 @@ struct ConceptSelector {
         return store.gaps.first { $0.id == link.partnerGapId }
     }
 
+    /// Times the learner actually got this wrong. `GapItem.reviewCount` counts EVERY
+    /// answer, right or wrong, so any copy that says "missed" must read the FSRS
+    /// lapse count instead — otherwise a perfect record reads as a pile of misses.
+    private func missCount(of gap: GapItem) -> Int { gap.fsrs?.lapses ?? 0 }
+
     private func smartReason(for gap: GapItem, role: SelectedItemRole, target: Concept?, now: Date) -> String {
         if let partner = strongestConfusionPartner(of: gap) {
             return "You keep confusing this with “\(partner.frenchWord)”."
@@ -664,8 +670,9 @@ struct ConceptSelector {
         if let target, role == .target, target.newlyUnlocked {
             return "New skill you're ready for: \(target.name)."
         }
-        if gap.reviewCount >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
-            return "You've missed this \(gap.reviewCount)× — time to lock it in."
+        let misses = missCount(of: gap)
+        if misses >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
+            return "You've missed this \(misses)× — time to lock it in."
         }
         if let cid = gap.conceptId, let dep = store.dependents(of: cid).first {
             return "This unlocks \(dep.name)."
@@ -682,8 +689,9 @@ struct ConceptSelector {
         if let partner = strongestConfusionPartner(of: gap) {
             return "You keep confusing this with “\(partner.frenchWord)”."
         }
-        if gap.reviewCount >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
-            return "You've missed this \(gap.reviewCount)× — time to lock it in."
+        let misses = missCount(of: gap)
+        if misses >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
+            return "You've missed this \(misses)× — time to lock it in."
         }
         if gap.nextReviewAt <= now {
             return "Due for review."
@@ -703,7 +711,7 @@ struct ConceptSelector {
 
     private func smartHeadline(for target: Concept, now: Date) -> String {
         let conceptGaps = practicableSpine(of: target, now: now)
-        let missed = conceptGaps.map { $0.reviewCount }.reduce(0, +)
+        let missed = conceptGaps.map { missCount(of: $0) }.reduce(0, +)
         if target.newlyUnlocked {
             return "Today: \(target.name) — you're ready for this new skill."
         }

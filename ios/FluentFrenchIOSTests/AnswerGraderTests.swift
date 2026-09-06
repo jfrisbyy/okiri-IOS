@@ -121,10 +121,72 @@ struct AnswerGraderTests {
         #expect(AnswerGrader.grade(typed: "le pain", against: bread, expected: "pain", kind: .fillBlank) == .correct)
         #expect(AnswerGrader.acceptsHeadword(bread, expected: "pain"))
         #expect(!AnswerGrader.acceptsHeadword(eat, expected: "mange"))
-        // A content alternative is still accepted for an inflected blank.
-        let hands = gap("la main", en: "hand", ex: "Lave-toi les mains.", blank: "mains", alts: ["les mains"])
-        #expect(AnswerGrader.grade(typed: "les mains", against: hands, expected: "mains", kind: .fillBlank) == .correct)
+        // Article leniency stays one-directional for vocabulary.
+        let hands = gap("la main", en: "hand", ex: "Lave-toi les mains.", blank: "mains")
         #expect(AnswerGrader.grade(typed: "la main", against: hands, expected: "mains", kind: .fillBlank) == .incorrect)
+    }
+
+    /// An accent-stripped spelling in the content's `alts` is an accent slip, not a
+    /// second correct spelling: it grades `.closeAccents` (a `.hard` success that
+    /// says "check the accents") and is never advertised under "Also accepted",
+    /// where it would present "ou" as a spelling of "où".
+    @Test func accentStrippedAlternativesAreAccentSlipsNotSpellings() {
+        let where_ = gap("où", en: "where", alts: ["ou"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "ou", against: where_, expected: "où", kind: .translation)
+                == .closeAccents(expected: "où"))
+        #expect(AnswerGrader.acceptedForms(for: where_, expected: "où", kind: .translation).map { $0.normalized } == ["où"])
+
+        let mother = gap("mère", en: "mother", alts: ["mere"])
+        #expect(AnswerGrader.grade(typed: "mere", against: mother, expected: "mère", kind: .translation)
+                == .closeAccents(expected: "mère"))
+
+        // A real alternative — not the same word with its accents dropped — survives.
+        let please = gap("s'il vous plaît", en: "please", alts: ["svp", "s'il vous plait"], category: .phrasing)
+        let forms = AnswerGrader.acceptedForms(for: please, expected: "s'il vous plaît", kind: .translation).map { $0.normalized }
+        #expect(forms.contains("svp"))
+        #expect(!forms.contains("s'il vous plait"), "an accent variant is not a second spelling")
+        #expect(AnswerGrader.grade(typed: "svp", against: please, expected: "s'il vous plaît", kind: .translation) == .correct)
+    }
+
+    /// `alts` are authored for the translation format ("parle" for "je parle"):
+    /// dropping or adding a word the sentence around the blank already supplies
+    /// makes the filled sentence ungrammatical, so it is neither accepted in a
+    /// fill-blank nor listed as "Also accepted" there.
+    @Test func fillBlankAlternativesMustFitTheBlank() {
+        // "Au travail, _____ anglais." — "parle" alone leaves the subject out.
+        let speak = gap("je parle", en: "I speak", ex: "Au travail, je parle anglais.",
+                        blank: "je parle", alts: ["parle"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "parle", against: speak, expected: "je parle", kind: .fillBlank) == .incorrect)
+        #expect(AnswerGrader.acceptedForms(for: speak, expected: "je parle", kind: .fillBlank).map { $0.display } == ["je parle"])
+        #expect(AnswerGrader.grade(typed: "parle", against: speak, expected: "je parle", kind: .translation) == .correct,
+                "the same alternative is still right when the item asks for the headword")
+
+        // An elision counts as two words: "adore" is not "j'adore".
+        let adore = gap("j'adore", en: "I love", ex: "J'adore le café.", blank: "j'adore",
+                        alts: ["adore"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "adore", against: adore, expected: "j'adore", kind: .fillBlank) == .incorrect)
+
+        // A same-shape variant — the agreement the learner's own gender needs — stays.
+        let went = gap("je suis allé", en: "I went", ex: "Hier, je suis allé au marché.",
+                       blank: "suis allé", alts: ["suis allée", "je suis allée"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "suis allée", against: went, expected: "suis allé", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "je suis allée", against: went, expected: "suis allé", kind: .fillBlank) == .incorrect)
+        #expect(AnswerGrader.acceptedForms(for: went, expected: "suis allé", kind: .fillBlank).map { $0.display }
+                == ["suis allé", "suis allée"])
+
+        // The dictionary headword is not a filler for the form the item teaches.
+        let wash = gap("se laver", en: "to wash", ex: "Je me lave les mains.", blank: "me lave",
+                       alts: ["se laver"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "se laver", against: wash, expected: "me lave", kind: .fillBlank) == .incorrect)
+
+        // …and neither are its opening words.
+        let teeth = gap("se brosser les dents", en: "to brush one's teeth", ex: "Tu te brosses les dents ?",
+                        blank: "te brosses", alts: ["se brosser"], category: .phrasing)
+        #expect(AnswerGrader.grade(typed: "se brosser", against: teeth, expected: "te brosses", kind: .fillBlank) == .incorrect)
+        #expect(!AnswerGrader.fitsBlank("se brosser", gap: teeth, expected: "te brosses"))
+
+        #expect(AnswerGrader.wordCount("j'ai") == 2 && AnswerGrader.wordCount("suis allé") == 2)
+        #expect(AnswerGrader.wordCount("d'habitude,") == 2 && AnswerGrader.wordCount("") == 0)
     }
 
     /// Options are compared with their parenthetical tag: the tag is the whole

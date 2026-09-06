@@ -93,10 +93,12 @@ nonisolated enum HeuristicTagger {
         return max(0, score)
     }
 
-    /// Curated triggers plus the concept's own name tokens. Phrase keys match as a
-    /// substring of the haystack; single-word keys must equal a whole token, so
-    /// "un" never matches inside "lundi". Theme-vocabulary triggers are ignored
-    /// for multi-word captures (an idiom about bread is not food vocabulary).
+    /// Curated triggers plus the concept's own name tokens, matched against the
+    /// headword / base form / meaning only (never the explanation — see `Signals`).
+    /// Phrase keys match as a substring of the haystack; single-word keys must equal
+    /// a whole token, so "un" never matches inside "lundi", and are ignored entirely
+    /// for a multi-word capture. Theme-vocabulary triggers are ignored for multi-word
+    /// captures too (an idiom about bread is not food vocabulary).
     private static func keywordHits(_ concept: Concept, signals: Signals) -> Int {
         let themeVocabulary = concept.category == .vocabulary && concept.id != "savoir-vs-connaitre"
         if signals.isPhrase && themeVocabulary { return 0 }
@@ -116,6 +118,11 @@ nonisolated enum HeuristicTagger {
             } else if functionWords.contains(k) {
                 // Articles, pronouns, possessives: only when the capture IS that word.
                 if signals.word == k { hits += 1 }
+            } else if signals.isPhrase {
+                // A single word buried inside a captured phrase is not what the
+                // phrase is about ("avoir" in "avoir le bras long" is not the
+                // irregular-verb skill), so only phrase keys speak for a phrase.
+                continue
             } else if signals.tokens.contains(k) {
                 hits += 1
             }
@@ -272,7 +279,12 @@ nonisolated enum HeuristicTagger {
             registerMarked = !reg.isEmpty && reg != "neutral" && reg != "standard"
             category = gap.category
             level = gap.cefrLevel
-            let fields = [gap.frenchWord, gap.baseForm ?? "", gap.englishTranslation, gap.explanation]
+            // The headword, its base form and its meaning ONLY. The explanation is
+            // deliberately excluded: it is free LLM prose (and carries the learner's
+            // own note), so a gloss that happens to say "you need to know" or "a
+            // common expression" would otherwise tag the card `savoir-vs-connaitre`
+            // or `idioms` at full confidence.
+            let fields = [gap.frenchWord, gap.baseForm ?? "", gap.englishTranslation]
             let joined = fields.filter { !$0.isEmpty }.joined(separator: " ").replacingOccurrences(of: "’", with: "'")
             haystack = " " + SentenceExtractor.fold(joined) + " "
             tokens = Set(SentenceExtractor.tokens(in: joined))
@@ -354,9 +366,9 @@ nonisolated enum HeuristicTagger {
         "imparfait-vs-pc": ["imparfait vs", "vs passé composé", "description vs event"],
         "object-pronouns": ["object pronoun", "direct object", "indirect object", "lui", "leur"],
         "subjunctive-intro": ["subjunctive", "subjonctif", "il faut que", "que je", "qu'il"],
-        "savoir-vs-connaitre": ["savoir", "connaître", "connaitre", "know"],
+        "savoir-vs-connaitre": ["savoir", "connaître", "connaitre", "to know", "know how to"],
         "spoken-fillers": ["du coup", "quoi", "bref", "enfin", "bah", "ben", "euh", "filler", "discourse marker", "genre", "voilà"],
-        "idioms": ["idiom", "idiomatic", "expression", "figurative", "saying", "proverb"],
+        "idioms": ["idiom", "idiomatic", "figurative", "proverb", "fixed expression", "idiomatic expression", "set expression", "figure of speech"],
         "formal-register": ["formal", "informal", "register", "soutenu", "familier", "slang", "argot", "colloquial"],
     ]
 

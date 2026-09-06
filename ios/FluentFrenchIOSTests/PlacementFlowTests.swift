@@ -469,6 +469,77 @@ struct PlacementFlowTests {
         #expect(s.selectionRequest(for: .retention(.new), now: now).scopeName == "New")
     }
 
+    // MARK: firstrun-2-1 — a missed probe never becomes a cloze-stem card
+
+    @Test func aMissedContentProbeSeedsARealHeadwordNeverTheClozeStem() throws {
+        let store = EngineFixtures.store()
+        let concept = try #require(store.concepts.first { $0.id == "definite-articles" })
+        // The shape the shipped content really has: the prompt is a stem and the
+        // answer is the token that fills it.
+        let probe = FoundationProbeContent(fr: "___ gare", en: "la", ex: "La gare est fermée.",
+                                           exEn: "The station is closed.", options: ["le", "les", "un"])
+        let asked = try #require(AssessmentService.questions(fromProbes: [probe], for: concept).first)
+        #expect(asked.isProbe, "a content probe is marked as one")
+        #expect(asked.french == "___ gare" && asked.english == "la")
+
+        let item = FoundationItemContent(fr: "la gare", en: "the station", note: "feminine noun",
+                                         ex: "Je vais à la gare.", exEn: "I am going to the station.",
+                                         blank: "la gare")
+        let seeded = AssessmentService.gaps(forMissed: [asked], now: now,
+                                            items: { $0 == concept.id ? [item] : [] })
+        #expect(seeded.count == Tuning.placementMissSeedItems)
+        let gap = try #require(seeded.first)
+        #expect(gap.frenchWord == "la gare" && gap.englishTranslation == "the station",
+                "a card is a headword and its meaning, never the stem and its missing token")
+        #expect(!gap.frenchWord.contains("___"))
+        #expect(gap.conceptId == concept.id && gap.difficulty == .hard)
+        #expect(gap.nextReviewAt == now && gap.fsrs?.dueAt == now, "a missed item is due from day one")
+        #expect(gap.blankForm == "la gare" && gap.isTestable)
+        #expect(gap.id == "foundation-\(concept.id)-0", "the id the Foundation slice would give the same item")
+
+        // No content for the concept → nothing is seeded; a stem card is never the
+        // fallback. The concept is still in `missedConceptIds`, so Foundation teaches it.
+        #expect(AssessmentService.gaps(forMissed: [asked], now: now, items: { _ in [] }).isEmpty)
+        // Two missed probes on one concept seed it once, not twice.
+        #expect(AssessmentService.gaps(forMissed: [asked, asked], now: now,
+                                       items: { $0 == concept.id ? [item] : [] }).count == Tuning.placementMissSeedItems)
+
+        // A hand-bank item IS a headword pair and is still seeded as itself.
+        let hand = question(1, .vocabulary, "everyday-vocab", 0)
+        #expect(!hand.isProbe)
+        let handGaps = AssessmentService.gaps(forMissed: [hand], now: now, items: { _ in [] })
+        #expect(handGaps.count == 1 && handGaps[0].frenchWord == "everyday-vocab-fr0")
+    }
+
+    @Test func firstRunFromTheShippedBankSeedsOnlyRealHeadwords() throws {
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the shipped-seed check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let s = EngineFixtures.store()
+        s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
+        let bank = AssessmentService.placementBank(concepts: s.concepts,
+                                                   probes: { FoundationContentLoader.probes(for: $0, in: file) })
+        // A beginner who only holds the easiest material: they miss real probes.
+        var engine = PlacementEngine(bank: bank, seed: 7)
+        _ = run(&engine) { $0.band <= 1 }
+        #expect(engine.missed.contains { $0.isProbe }, "the staircase did miss at least one probe")
+        let result = engine.result(items: { FoundationContentLoader.items(for: $0, in: file) })
+        s.applyPlacement(result, isFirstRun: true, now: now)
+
+        let headwords = Set(file.skills.flatMap { $0.items.map { $0.fr } })
+        for gap in s.gaps {
+            #expect(!gap.frenchWord.contains("___"), "\(gap.frenchWord): a cloze stem reached the deck")
+            #expect(!gap.englishTranslation.contains("___"))
+            if gap.id.hasPrefix("foundation-") {
+                #expect(headwords.contains(gap.frenchWord), "\(gap.frenchWord) is not a content headword")
+            }
+        }
+        #expect(Set(s.gaps.map { $0.id }).count == s.gaps.count, "no item is seeded twice")
+        #expect(Set(s.gaps.map { FoundationSeeder.headwordKey($0.frenchWord) }).count == s.gaps.count)
+    }
+
     // MARK: D11 — weekly goal
 
     @Test func weeklyGoalCountsDaysWithACompletedLessonThisWeek() {

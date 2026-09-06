@@ -105,9 +105,21 @@ final class DialoguePlayer: NSObject {
         jump(to: max(0, state.currentIndex - 1))
     }
 
+    /// Transport jump (skip forward / back): keeps the paused-or-playing state —
+    /// a paused dialogue stays paused on the new line.
     func jump(to index: Int) {
         stopAudio()
         if state.jump(to: index) {
+            speakCurrent()
+        }
+    }
+
+    /// Jump to a line AND speak it, whether or not the dialogue was running.
+    /// Tapping a transcript line is a request to hear that line, so it must make
+    /// sound even from a paused player (talkmedia-2-4).
+    func jumpAndPlay(to index: Int) {
+        stopAudio()
+        if state.jumpAndPlay(to: index) {
             speakCurrent()
         }
     }
@@ -173,7 +185,7 @@ final class DialoguePlayer: NSObject {
     }
 
     private func playNatural(_ data: Data) -> Bool {
-        try? AVAudioSession.sharedInstance().setActive(true)
+        FrenchSpeech.activatePlaybackSession()
         do {
             let p = try AVAudioPlayer(data: data)
             p.delegate = self
@@ -189,7 +201,7 @@ final class DialoguePlayer: NSObject {
     }
 
     private func speakSynth(_ turn: ListeningTurn) {
-        try? AVAudioSession.sharedInstance().setActive(true)
+        FrenchSpeech.activatePlaybackSession()
         let utterance = AVSpeechUtterance(string: turn.french)
         utterance.voice = turn.speaker == "B" ? voiceB : voiceA
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * rate

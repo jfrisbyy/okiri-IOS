@@ -103,6 +103,25 @@ struct LessonAssemblerTests {
         #expect(lesson.conceptBlocks.first?.example?.conceptId == g.root)
     }
 
+    /// A blind-spot probe is a diagnosis, not teaching material: the skill it
+    /// probes gets no card, and no card takes its worked example from a probe.
+    /// Teaching a skill — with the probe's own sentence and its translation —
+    /// right before probing it makes the answer a memory of the last screen.
+    @Test func theProbedSkillIsNotTaughtBeforeItIsProbed() throws {
+        let g = EngineFixtures.smallGraph()
+        let output = ConceptSelector(store: g.store).select(.smart(now: EngineFixtures.now))
+        let probeItem = try #require(output.probeItem)
+        let lesson = try #require(LessonAssembler(store: g.store).assemble(output))
+
+        #expect(lesson.gaps.contains { $0.id == probeItem.gapId }, "the probe is still asked")
+        #expect(lesson.probeGapId == probeItem.gapId)
+        #expect(!lesson.conceptBlocks.contains { $0.concept.id == probeItem.conceptId },
+                "no skill card for a concept carried only by its probe")
+        #expect(lesson.conceptBlocks.allSatisfy { $0.example?.isProbe != true },
+                "no worked example is a probe item")
+        #expect(!lesson.conceptBlocks.isEmpty, "the lesson still teaches its target")
+    }
+
     @Test func capstoneIsAPureTestWithNoSkillCards() throws {
         let concept = EngineFixtures.learning("k", mastery: 0.7)
         let gaps = (0..<4).map {

@@ -86,11 +86,15 @@ struct LessonPracticeStage: View {
         HStack(spacing: 8) {
             Pill(text: q.gap.category.label, color: q.gap.category.color)
             if q.isRemedial { Pill(text: "Try again", color: Theme.warning) }
-            if q.isProbe { Pill(text: "Blind-spot check", color: Theme.purple) }
+            // A check-in that rides a probe item is a check-in: never both pills.
+            if q.isProbe && !q.isCheckIn { Pill(text: "Blind-spot check", color: Theme.purple) }
             if q.isCheckIn { Pill(text: "Check-in", color: Theme.secondary) }
             if q.isCapstone { Pill(text: "Capstone", color: Theme.secondary, filled: true) }
             Spacer()
-            if store.optionCount >= 5 && q.kind == .multipleChoice && !q.isProbe {
+            // Only when this question really carries the extra options: a probe —
+            // or a check-in riding a probe item — keeps the content's own four.
+            if store.optionCount >= 5 && q.kind == .multipleChoice && !q.isProbe
+                && q.options.count >= store.optionCount {
                 Pill(text: "Tuned to your level", color: Theme.secondary)
             }
         }
@@ -151,14 +155,18 @@ struct LessonPracticeBar: View {
         .padding(.horizontal, Space.xl).padding(.top, 10).padding(.bottom, 6)
     }
 
-    private var practicableCount: Int { model.gaps.filter { !$0.isProbe }.count }
+    /// The denominator is what the live schedule can still deliver (check-ins and
+    /// released concepts are asked once, so they were never masterable) — never
+    /// the lesson's whole item list, which a flawless lesson could not reach.
+    private var masterable: Int { model.session.masterableCount }
 
     private var trailingLabel: String {
         let total = model.session.schedule.count
         if model.isCapstone {
             return "\(min(total, model.session.position + 1)) of \(total)"
         }
-        return "\(model.session.masteredGapIds.count)/\(practicableCount) mastered"
+        let mastered = model.session.masteredGapIds.count
+        return masterable > 0 ? "\(mastered)/\(masterable) mastered" : "\(mastered) mastered"
     }
 
     /// "3/8 mastered" would be read out as "three slash eight"; spell it out.
@@ -167,7 +175,8 @@ struct LessonPracticeBar: View {
         if model.isCapstone {
             return "Question \(min(total, model.session.position + 1)) of \(total)"
         }
-        return "\(model.session.masteredGapIds.count) of \(practicableCount) mastered"
+        let mastered = model.session.masteredGapIds.count
+        return masterable > 0 ? "\(mastered) of \(masterable) mastered" : "\(mastered) mastered"
     }
 }
 

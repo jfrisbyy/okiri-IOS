@@ -151,6 +151,53 @@ struct MediaSurfaceTests {
         #expect(s.currentIndex == 0)
     }
 
+    /// talkmedia-2-4: tapping a transcript line promises "Plays from this line",
+    /// so it must make sound from a paused player too — `jump(to:)` keeps the
+    /// transport state (skip buttons), `jumpAndPlay(to:)` starts the line.
+    @Test func tappingALineStartsItEvenWhenThePlayerIsPaused() {
+        var paused = PlaybackState()
+        paused.load(turnCount: 3)
+        #expect(!paused.isPlaying, "a freshly loaded dialogue is paused")
+        let transportJump = paused.jump(to: 1)
+        #expect(!transportJump, "the transport jump does not start playback")
+        #expect(paused.currentIndex == 1)
+        #expect(!paused.isPlaying)
+        let tapped = paused.jumpAndPlay(to: 2)
+        #expect(tapped, "the tap asks for the line out loud")
+        #expect(paused.currentIndex == 2)
+        #expect(paused.isPlaying)
+
+        // After the end, a tap restarts from the tapped line rather than staying finished.
+        var finished = PlaybackState()
+        finished.load(turnCount: 2)
+        _ = finished.play()
+        _ = finished.turnFinished()
+        _ = finished.turnFinished()
+        #expect(finished.didFinish)
+        let restarted = finished.jumpAndPlay(to: 0)
+        #expect(restarted)
+        #expect(!finished.didFinish)
+        #expect(finished.isPlaying)
+        #expect(finished.currentIndex == 0)
+
+        // A clip in flight for the old line is invalidated, as with any jump.
+        var buffering = PlaybackState()
+        buffering.load(turnCount: 3)
+        _ = buffering.play()
+        let token = buffering.beginFetch()
+        let jumpedWhileBuffering = buffering.jumpAndPlay(to: 2)
+        #expect(jumpedWhileBuffering)
+        #expect(!buffering.isBuffering)
+        let stale = buffering.finishFetch(token: token)
+        #expect(!stale, "the stale clip is ignored")
+
+        var empty = PlaybackState()
+        empty.load(turnCount: 0)
+        let nothingToPlay = empty.jumpAndPlay(to: 0)
+        #expect(!nothingToPlay, "nothing to play")
+        #expect(!empty.isPlaying)
+    }
+
     @Test func aFetchThatLandsInTimePlaysOnlyWhileStillPlaying() {
         var s = PlaybackState()
         s.load(turnCount: 2)
@@ -551,6 +598,35 @@ struct MediaSurfaceTests {
         #expect(lines[0].text == "english 0" && lines[0].language == .english, "a line outside the batch is untouched")
         #expect(TranscriptTranslation.batches(of: lines, size: 4) == [[0, 1, 2, 3], [5]], "already-French lines are not re-sent")
         #expect(TranscriptTranslation.batches(of: [], size: 4).isEmpty)
+    }
+
+    /// talkmedia-2-3: the footnote's "Try again" resumes the pass over the lines
+    /// still in English instead of refetching the transcript — the work that
+    /// already succeeded is kept, and only the missing lines cost a call.
+    @Test func retryingAPartlyTranslatedTranscriptOnlyRetranslatesTheEnglishLines() async {
+        let calls = CallCounter()
+        let first = await TranscriptTranslation.run(
+            englishLines(30), batchSize: 10, maxBatches: 1, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: calls)
+        )
+        #expect(first.coverage == .partlyEnglish(englishLines: 20, stop: .outOfTime))
+        #expect(first.coverage.isRetryable, "the footnote offers Try again")
+        let firstCalls = await calls.count
+        #expect(firstCalls == 1)
+
+        // The retry starts from the lines on screen, not from a fresh fetch.
+        let resumed = await TranscriptTranslation.run(
+            first.segments, batchSize: 10, maxBatches: 10, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: calls)
+        )
+        #expect(resumed.coverage == .french)
+        #expect(resumed.segments.map(\.id) == first.segments.map(\.id), "the transcript itself is never re-fetched")
+        #expect(resumed.segments.prefix(10).map(\.text) == first.segments.prefix(10).map(\.text),
+                "lines translated by the first pass are kept as they were")
+        let resumedCalls = await calls.count
+        #expect(resumedCalls == 1 + 2, "only the two batches still in English were sent (\(resumedCalls))")
+        #expect(TranscriptCoverage.of(resumed.segments, finished: false, stop: nil) == .french,
+                "nothing is left to translate, so the panel shows no footnote")
     }
 }
 

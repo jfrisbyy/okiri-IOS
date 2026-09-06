@@ -20,6 +20,19 @@ nonisolated enum HomeCopy {
     static let dueNowLabel = "Due now"
     static let upcomingLabel = "Coming up"
 
+    /// The ONE label for a count of unmastered learner-facing gaps. Placement seeds
+    /// the whole Foundation slice, so on day one that number is hundreds of items the
+    /// learner has never been asked about: it describes the curriculum still ahead,
+    /// not weak spots the app diagnosed, and "Active gaps" claimed the latter.
+    static let toLearnLabel = "To learn"
+
+    /// The Learn card's stat line — what is queued, and how much of it the learner
+    /// has actually met. Before the first answer there is nothing to claim.
+    static func learnCardStat(toLearn: Int, practised: Int) -> String {
+        guard practised > 0 else { return "\(toLearn) to learn" }
+        return "\(toLearn) to learn · \(practised) practised"
+    }
+
     /// Time-of-day greeting (French, as the Expo original).
     static func greeting(hour: Int) -> String {
         switch hour {

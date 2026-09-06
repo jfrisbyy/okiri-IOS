@@ -362,6 +362,60 @@ struct LessonSessionTests {
         #expect(s.end == .finished && s.summary.releasedConceptIds == ["T"])
     }
 
+    /// The practice bar's denominator is what the LIVE schedule can still
+    /// deliver: a check-in is asked once, and a released concept's remaining
+    /// questions are dropped, so neither was ever masterable. A flawless lesson
+    /// must be able to reach the number the bar shows.
+    @Test func masteryDenominatorCountsOnlyGapsTheScheduleCanStillMaster() throws {
+        let streak = Tuning.conceptReleaseStreak
+        let targets = (1...streak).map { gap("t\($0)", concept: "T") }
+        let reviews = (1...2).map { gap("r\($0)", concept: "R") }
+        let check = gap("chk", concept: "K")
+        var roles: [String: SelectedItemRole] = ["chk": .checkIn]
+        for t in targets { roles[t.id] = .target }
+        for r in reviews { roles[r.id] = .review }
+        var s = session(for: lesson(targets + reviews + [check], roles: roles, target: "T"),
+                        config: config(hearts: 20))
+
+        #expect(!s.masterableGapIds.contains("chk"), "a check-in is asked once, so it can never be mastered")
+        #expect(s.masterableGapIds.count < s.lesson.gaps.filter { !$0.isProbe }.count)
+
+        while s.end == nil {
+            _ = try answerCorrectly(&s)
+            if !s.advance() { break }
+        }
+        #expect(s.end == .finished)
+        #expect(s.summary.accuracyPercent == 100)
+        #expect(s.masterableCount > 0)
+        #expect(s.masteredGapIds.count == s.masterableCount,
+                "a flawless lesson reaches the number the practice bar shows")
+        #expect(!s.masterableGapIds.contains(where: { id in targets.contains { $0.id == id } }),
+                "the released concept's remaining questions were dropped")
+    }
+
+    /// A check-in riding a probe item is a scored check-in: it counts toward the
+    /// lesson's accuracy, costs a heart when missed, is listed in the recap and
+    /// is remediated — none of the exemptions a blind-spot probe gets.
+    @Test func aCheckInRidingAProbeItemIsScoredLikeAnyCheckIn() throws {
+        var probe = gap("p", concept: "K")
+        probe.isProbe = true
+        probe.probeOptions = ["d1", "d2", "d3"]
+        let l = lesson([probe] + (0..<3).map { gap("f\($0)") }, roles: ["p": .checkIn])
+        var s = session(for: l, config: config(hearts: 5))
+
+        let q = try #require(s.current)
+        #expect(q.gap.id == "p" && q.isCheckIn && !q.isProbe)
+        let submitted = s.submit(.option("d1"))
+        let out = try #require(submitted)
+        #expect(!out.correct && out.heartLost, "a missed check-in costs a heart")
+        #expect(s.scored == 1 && s.scoredCorrect == 0, "it counts in the honest accuracy base")
+        #expect(out.evidence.first?.isCheckIn == true && out.evidence.first?.format != .probe)
+        #expect(s.summary.missed.contains { $0.gap.id == "p" }, "it reaches the recap")
+        #expect(out.remedialQueued)
+        let remedial = try #require(s.schedule.first { $0.isRemedial && $0.gap.id == "p" })
+        #expect(Set(remedial.options) == ["d1", "d2", "d3", "p-en"])
+    }
+
     // MARK: Option grading keeps tags
 
     /// Options that differ only in their parenthetical tag are different answers:

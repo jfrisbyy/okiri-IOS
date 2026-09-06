@@ -436,6 +436,64 @@ struct ConceptSelectorTests {
         }
     }
 
+    // MARK: Reason copy — "missed" counts misses, not reviews
+
+    /// `GapItem.reviewCount` is bumped on every answer, right or wrong, so any copy
+    /// that says "missed" / "slipped" must read the FSRS lapse count instead.
+    private func fsrs(lapses: Int, reps: Int, now: Date) -> FsrsState {
+        FsrsState(stability: 5, difficulty: 5, reps: reps, lapses: lapses,
+                  lastReviewAt: now.addingTimeInterval(-EngineFixtures.day),
+                  dueAt: now.addingTimeInterval(-2 * EngineFixtures.day))
+    }
+
+    @Test func missReasonCountsLapsesNotReviews() {
+        let now = EngineFixtures.now
+        let concept = EngineFixtures.learning("mixed", mastery: 0.5)
+        // Answered 12 times, never wrong: not a single miss to report.
+        var clean = EngineFixtures.gap("clean", concept: "mixed", due: now.addingTimeInterval(-2 * EngineFixtures.day),
+                                       consecutiveCorrect: 9, reviewCount: 12,
+                                       lastReviewed: now.addingTimeInterval(-EngineFixtures.day))
+        clean.fsrs = fsrs(lapses: 0, reps: 12, now: now)
+        // Answered 12 times, wrong 3 of them.
+        var slipped = EngineFixtures.gap("slipped", concept: "mixed", due: now.addingTimeInterval(-2 * EngineFixtures.day),
+                                         consecutiveCorrect: 1, reviewCount: 12,
+                                         lastReviewed: now.addingTimeInterval(-EngineFixtures.day))
+        slipped.fsrs = fsrs(lapses: 3, reps: 12, now: now)
+
+        let store = EngineFixtures.store(concepts: [concept], gaps: [clean, slipped])
+        let output = ConceptSelector(store: store).select(.scoped(["clean", "slipped"], name: "Mixed", now: now))
+        let reasons = Dictionary(uniqueKeysWithValues: output.items.map { ($0.gapId, $0.reason) })
+
+        #expect(reasons["clean"] == "Due for review.", "12 correct answers are not 12 misses")
+        #expect(reasons["slipped"] == "You've missed this 3× — time to lock it in.")
+        #expect(Tuning.repeatedMissReasonFloor == 2, "the floor gates on misses, not reviews")
+    }
+
+    @Test func smartHeadlineCountsLapsesNotReviews() {
+        let now = EngineFixtures.now
+        let concept = EngineFixtures.learning("focus", mastery: 0.4)
+        var gaps: [GapItem] = (0..<3).map {
+            var g = EngineFixtures.gap("focus-\($0)", concept: "focus", due: now.addingTimeInterval(-Double($0 + 1) * EngineFixtures.day),
+                                       consecutiveCorrect: 4, reviewCount: 9,
+                                       lastReviewed: now.addingTimeInterval(-EngineFixtures.day))
+            g.fsrs = fsrs(lapses: 0, reps: 9, now: now)
+            return g
+        }
+        let store = EngineFixtures.store(concepts: [concept], gaps: gaps)
+        store.sessionIndex = 1   // no probe this session
+
+        let clean = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(clean.targetConceptId == "focus")
+        #expect(clean.headline == "Today: Concept focus.", "27 correct answers must not read as 27 slips")
+
+        // Two real lapses across the spine now DO earn the line.
+        gaps[0].fsrs = fsrs(lapses: 1, reps: 9, now: now)
+        gaps[1].fsrs = fsrs(lapses: 1, reps: 9, now: now)
+        store.gaps = gaps
+        let slipped = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(slipped.headline == "Today: Concept focus — you've slipped on it 2 times.")
+    }
+
     // MARK: Capstone mode
 
     private func capstoneStore() -> AppStore {
@@ -480,8 +538,51 @@ struct ConceptSelectorTests {
         let trend = store.concept("trend")!, shaky = store.concept("shaky")!, solid = store.concept("solid")!
         #expect(selector.capstoneScore(trend, now: EngineFixtures.now) > selector.capstoneScore(shaky, now: EngineFixtures.now))
         #expect(selector.capstoneScore(shaky, now: EngineFixtures.now) > selector.capstoneScore(solid, now: EngineFixtures.now))
-        #expect(Tuning.capstoneLearningWeight > 3.1 && Tuning.capstoneTrendingWeight > 3.1,
-                "tier weights must exceed the ranker's maximum (urgency 1 + leverage 0.6 + frontier 0.8 + confusion 0.7)")
+        // The tiers must clear the shared score's FULL spread, not just its maximum:
+        // the score runs from -0.5 (repeatDamp at full penalty) to 4.8 (governor
+        // urgency 1.0x2 + leverage 0.6 + frontier 0 + confusion 0.7 + stall bonus 1.5).
+        #expect(Tuning.capstoneLearningWeight > 5.3 && Tuning.capstoneTrendingWeight > 5.3,
+                "tier weights must exceed the ranker's spread, stallPrerequisiteBonus and the governor multiplier included")
+    }
+
+    /// Regression: a non-trending learning concept can now reach the ranker's ceiling
+    /// (overdue + leverage + frontier + confusion + `stallPrerequisiteBonus`) while a
+    /// trending one sits at the floor (damped as just-taught). The trending tier must
+    /// still win, or the milestone quiz stops testing what is nearly mastered.
+    @Test func capstoneTrendingTierSurvivesTheStallBonusAtTheRankerCeiling() {
+        let now = EngineFixtures.now
+        let concepts = [
+            // Trending, but taught this very session → full repeatDamp penalty.
+            EngineFixtures.learning("trend", mastery: 0.7),
+            // Non-trending, overdue, high leverage, at the frontier level, confused,
+            // and the prerequisite of a stalled concept.
+            EngineFixtures.learning("boost", mastery: 0.3, level: .A2),
+            EngineFixtures.concept("stalled", level: .A2, prerequisites: ["boost"]),
+        ]
+        let link = ConfusionLink(partnerGapId: "trend-0", wrongPicks: 4, lastConfusedAt: now, strength: 1)
+        var gaps: [GapItem] = []
+        for i in 0..<3 {
+            gaps.append(EngineFixtures.gap("trend-\(i)", concept: "trend", due: now.addingTimeInterval(30 * EngineFixtures.day),
+                                           lastReviewed: now.addingTimeInterval(-EngineFixtures.day)))
+            gaps.append(EngineFixtures.gap("boost-\(i)", concept: "boost", level: .A2,
+                                           due: now.addingTimeInterval(-10 * EngineFixtures.day),
+                                           lastReviewed: now.addingTimeInterval(-EngineFixtures.day),
+                                           confusion: [link]))
+        }
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps)
+        store.sessionIndex = 4
+        store.concepts[0].lastTaughtSession = 4          // trend: taught this session
+        store.concepts[2].stallAttempts = Tuning.stallAttempts
+
+        let selector = ConceptSelector(store: store)
+        let trend = store.concept("trend")!, boost = store.concept("boost")!
+        #expect(selector.stallPrerequisiteBonus(boost) == Tuning.stallPrerequisiteBonus, "boost props up a stalled skill")
+        #expect(selector.score(boost, now: now) > selector.score(trend, now: now), "the shared score prefers boost")
+        #expect(selector.capstoneScore(trend, now: now) > selector.capstoneScore(boost, now: now),
+                "the trending tier still outranks it")
+
+        let output = selector.select(.capstone(now: now))
+        #expect(output.items.first?.conceptId == "trend")
     }
 
     @Test func capstoneRespectsTheRequestedSize() {

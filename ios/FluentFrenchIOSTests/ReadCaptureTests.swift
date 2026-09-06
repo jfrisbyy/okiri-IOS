@@ -115,17 +115,43 @@ struct ReadCaptureTests {
         #expect(Tuning.tagPartOfSpeechWeight + Tuning.tagCategoryWeight < Tuning.tagConfidenceFloor)
     }
 
-    @Test func idiomIsNotThemeVocabulary() {
-        // "bras" would be body vocabulary for a single word; inside an idiom it is not.
+    @Test func aWordInsideAPhraseDoesNotSpeakForThePhrase() {
+        // "bras" would be body vocabulary and "avoir" the irregular-verb skill for a
+        // single word; inside a captured idiom neither is what the phrase is about,
+        // so the phrase stays untagged (an untagged card is still practicable — a
+        // card filed under "être, avoir, aller, faire" teaches the wrong thing).
         let idiom = captured("Avoir le bras long", english: "to have connections", explanation: "An idiomatic expression.", pos: "phrase", category: .phrasing, level: .B1)
-        guard case .existing(let id, _) = HeuristicTagger.tag(gap: idiom, concepts: taxonomy) else {
-            Issue.record("expected the idioms concept"); return
+        let ranked = HeuristicTagger.rank(gap: idiom, concepts: taxonomy)
+        #expect(!ranked.contains { $0.conceptId == "body-vocab" || $0.conceptId == "present-irregular" })
+        #expect(HeuristicTagger.tag(gap: idiom, concepts: taxonomy) == .untagged(confidence: 0))
+        // A phrase key still speaks for a phrase.
+        let filler = captured("du coup", english: "so / as a result", pos: "phrase", category: .phrasing, level: .B1)
+        guard case .existing(let id, _) = HeuristicTagger.tag(gap: filler, concepts: taxonomy) else {
+            Issue.record("expected spoken-fillers"); return
         }
-        #expect(id == "idioms")
+        #expect(id == "spoken-fillers")
+    }
+
+    @Test func explanationProseNeverNamesAConcept() {
+        // The explanation is free LLM prose and carries the learner's own note, so a
+        // gloss that happens to say "know" or "expression" must not file the card
+        // under a B1 grammar contrast the learner never met.
+        let gap = captured("renseignement", english: "information",
+                           explanation: "Information you need to know. A common expression in the news.",
+                           pos: "noun", level: .B1)
+        let ranked = HeuristicTagger.rank(gap: gap, concepts: taxonomy)
+        #expect(!ranked.contains { $0.conceptId == "savoir-vs-connaitre" || $0.conceptId == "idioms" })
+        // The same trigger still fires when the MEANING says it.
+        let savoir = captured("savoir", english: "to know (a fact)", pos: "verb", level: .B1)
+        guard case .existing(let id, let confidence) = HeuristicTagger.tag(gap: savoir, concepts: taxonomy) else {
+            Issue.record("expected savoir-vs-connaitre"); return
+        }
+        #expect(id == "savoir-vs-connaitre")
+        #expect(confidence >= Tuning.tagConfidenceFloor)
     }
 
     @Test func functionWordsOnlyMatchWhenTheyAreTheCapture() {
-        // "la" inside the explanation must not tag a noun as definite articles.
+        // "la" in the gloss must not tag a noun as definite articles.
         let noun = captured("gare", english: "station", explanation: "la gare, a feminine noun", pos: "noun", level: .A1)
         guard case .existing(let id, _) = HeuristicTagger.tag(gap: noun, concepts: taxonomy) else {
             Issue.record("expected places-town-vocab"); return
@@ -305,6 +331,33 @@ struct ReadCaptureTests {
         #expect(loose.conceptId == nil)
     }
 
+    @Test func captureDedupeIgnoresTheTypographicApostrophe() {
+        let s = quietStore()
+        func save(_ word: String, _ english: String) -> CaptureOutcome {
+            s.capture(CaptureDraft(frenchWord: word, englishTranslation: english, sourceType: .reading, sourceTab: "read"), now: now)
+        }
+        guard case .saved = save("l'eau", "water") else { Issue.record("expected a save"); return }
+        // The same word tapped in a live headline, which writes U+2019.
+        let again = save("l\u{2019}eau", "water")
+        guard case .duplicate = again else { Issue.record("expected a duplicate, got \(again)"); return }
+        #expect(s.hasGap(forWord: "L\u{2019}EAU"), "the deck reports it as saved whichever apostrophe is used")
+        #expect(s.gaps.filter { $0.frenchWord.hasSuffix("eau") }.count == 1)
+        // Diacritics are NOT folded: ou and où are different words.
+        guard case .saved = save("o\u{f9}", "where") else { Issue.record("expected a save"); return }
+        guard case .saved = save("ou", "or") else { Issue.record("ou and où must stay separate cards"); return }
+    }
+
+    @Test func aTermWithNoLettersIsNeverSavedAsACard() {
+        let s = quietStore()
+        for junk in ["2030", "%", "€", "  "] {
+            #expect(s.capture(CaptureDraft(frenchWord: junk, englishTranslation: "x", sourceType: .reading, sourceTab: "read"), now: now) == .rejected,
+                    "\(junk) is text, not vocabulary")
+        }
+        guard case .saved = s.capture(CaptureDraft(frenchWord: "20 ans", englishTranslation: "20 years", sourceType: .reading, sourceTab: "read"), now: now) else {
+            Issue.record("a term with letters in it is still a word"); return
+        }
+    }
+
     // MARK: - E4 Pending translation retry
 
     @Test func pendingTranslationsResolveWhenAGlossSucceeds() async {
@@ -329,7 +382,7 @@ struct ReadCaptureTests {
         #expect(souri?.pronunciation == "p")
     }
 
-    @Test func pendingRetryStopsAtTheFirstFailureAndHonoursTheBatch() async {
+    @Test func pendingRetryStopsWhenOfflineAndHonoursTheBatch() async {
         let s = quietStore()
         for (i, w) in ["a", "b", "c"].enumerated() {
             s.capture(CaptureDraft(untranslated: w, sourceType: .reading, sourceTab: "read"), now: now.addingTimeInterval(Double(i)))
@@ -337,7 +390,7 @@ struct ReadCaptureTests {
         var calls = 0
         let offline = await s.resolvePendingTranslations(using: { _, _ in calls += 1; return .unavailable(.offline) })
         #expect(offline == 0)
-        #expect(calls == 1, "stops at the first failure — no spinner-storm while offline")
+        #expect(calls == 1, "offline ends the pass at once — no spinner-storm while offline")
         #expect(s.pendingTranslations.count == 3)
 
         calls = 0
@@ -354,6 +407,42 @@ struct ReadCaptureTests {
         })
         #expect(bogus == 0)
         #expect(s.pendingTranslations.map(\.frenchWord) == ["c"])
+    }
+
+    @Test func aTermTheServiceCannotParseDoesNotBlockEveryOtherSavedWord() async {
+        let s = quietStore()
+        for (i, w) in ["bloque", "suivant", "dernier"].enumerated() {
+            s.capture(CaptureDraft(untranslated: w, sourceType: .reading, sourceTab: "read"), now: now.addingTimeInterval(Double(i)))
+        }
+        var asked: [String] = []
+        func resolver(_ term: String, _ context: String) async -> GlossLookup {
+            asked.append(term)
+            if term == "bloque" { return .unavailable(.serviceError) }
+            return .gloss(WordGloss(term: term, translation: "m", explanation: "", example: "", exampleTranslation: ""))
+        }
+        let first = await s.resolvePendingTranslations(using: resolver)
+        #expect(first == 2, "the words behind the failing one are still translated")
+        #expect(asked == ["bloque", "suivant", "dernier"])
+        #expect(s.pendingTranslations.map(\.frenchWord) == ["bloque"])
+
+        // Next pass: the repeatedly failing term is tried last, not first.
+        s.capture(CaptureDraft(untranslated: "nouveau", sourceType: .reading, sourceTab: "read"), now: now.addingTimeInterval(10))
+        asked = []
+        _ = await s.resolvePendingTranslations(using: resolver)
+        #expect(asked == ["nouveau", "bloque"], "a term that keeps failing sinks to the back of the queue")
+        #expect(s.pendingTranslations.map(\.frenchWord) == ["bloque"])
+    }
+
+    @Test func aDeadServiceEndsThePassInsteadOfBeingAskedOncePerWord() async {
+        let s = quietStore()
+        for (i, w) in ["a", "b", "c", "d"].enumerated() {
+            s.capture(CaptureDraft(untranslated: w, sourceType: .reading, sourceTab: "read"), now: now.addingTimeInterval(Double(i)))
+        }
+        var calls = 0
+        let resolved = await s.resolvePendingTranslations(using: { _, _ in calls += 1; return .unavailable(.serviceError) })
+        #expect(resolved == 0)
+        #expect(calls == Tuning.pendingTranslationFailureStreak, "a service that is down is not asked once per pending word")
+        #expect(s.pendingTranslations.count == 4)
     }
 
     @Test func resolvedTranslationQueuesTagging() async {
@@ -468,5 +557,21 @@ struct ReadCaptureTests {
         let dense = "Les avancées technologiques récentes bouleversent profondément de nombreux secteurs économiques traditionnels, tandis que certaines entreprises françaises développent des outils particulièrement innovants qui simplifient considérablement le travail quotidien des salariés."
         #expect(ReadingShelf.rank(ReadingLevelEstimator.estimate(dense)) >= ReadingShelf.rank(.B2))
         #expect(ReadingLevelEstimator.estimate("") == .B1, "no text → the honest default, labelled as an estimate by the caller")
+    }
+
+    // MARK: - E22 A live article's region comes from its source
+
+    @Test func liveRegionIsDerivedFromTheSourceAndNeverGuessedAsEurope() {
+        #expect(ReadRegionGroup.forSource(name: "RFI Afrique", url: "https://www.rfi.fr/fr/afrique/x") == .africa)
+        #expect(ReadRegionGroup.forSource(name: "Seneweb", url: "https://www.seneweb.sn/news/x") == .africa)
+        #expect(ReadRegionGroup.forSource(name: "Radio-Canada", url: "https://ici.radio-canada.ca/x") == .canada)
+        #expect(ReadRegionGroup.forSource(name: "Le Devoir", url: nil) == .canada)
+        #expect(ReadRegionGroup.forSource(name: "Le Nouvelliste", url: "https://lenouvelliste.ht/x") == .caribbean)
+        #expect(ReadRegionGroup.forSource(name: "Le Monde", url: "https://www.lemonde.fr/x") == .europe)
+        #expect(ReadRegionGroup.forSource(name: "RTBF", url: "https://www.rtbf.be/x") == .europe)
+        // Nothing to go on → no region at all, so the card claims nothing and the
+        // story still shows under "All".
+        #expect(ReadRegionGroup.forSource(name: "Sports Daily", url: "https://example.com/x") == nil)
+        #expect(ReadRegionGroup.forSource(name: nil, url: nil) == nil)
     }
 }

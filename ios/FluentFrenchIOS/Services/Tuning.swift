@@ -31,12 +31,15 @@ nonisolated enum Tuning {
     static let capstoneRecencyDays: Double = 14
     /// A learning concept at or above this mastery is "trending toward mastered".
     static let capstoneTrendingMasteryFloor: Double = 0.6
-    /// Capstone tier bonus for any learning concept — sized above the ranker's
-    /// maximum score (≈3.1) so learning concepts always outrank mastered ones.
-    static let capstoneLearningWeight: Double = 4.0
+    /// Capstone tier bonus for any learning concept — sized above the ranker's full
+    /// score SPREAD so learning concepts always outrank mastered ones. The shared
+    /// score runs from -0.5 (repeatDamp 0.5 at full penalty) to 4.8 (governor
+    /// urgency 1.0x2 + leverage 0.6 + frontier 0 + confusion 0.7 + stall 1.5),
+    /// a spread of 5.3; 5.5 clears it.
+    static let capstoneLearningWeight: Double = 5.5
     /// Extra capstone tier bonus for learning concepts at/above the trending floor
     /// (same sizing rule, so trending concepts always come first).
-    static let capstoneTrendingWeight: Double = 4.0
+    static let capstoneTrendingWeight: Double = 5.5
 
     // MARK: Lesson shape (Pass 2 — request-level sizes)
     /// Items in a smart (Home "Learn") lesson.
@@ -56,7 +59,8 @@ nonisolated enum Tuning {
     static let probeEveryNSessions: Int = 3
     /// Cap on teaching skill cards shown before practice.
     static let maxConceptCards: Int = 4
-    /// Reviews an overdue item needs before its reason reads "you've missed this N×".
+    /// Misses (FSRS lapses — wrong answers, not reviews) an overdue item needs
+    /// before its reason reads "you've missed this N×".
     static let repeatedMissReasonFloor: Int = 2
 
     // MARK: Instrumentation (Pass 2)
@@ -76,6 +80,10 @@ nonisolated enum Tuning {
     static let activityHistoryDays: Int = 90
     /// Starting IRT ability before placement (θ ≈ A2 band; Home shows "Not placed" until placement).
     static let defaultAbilityTheta: Double = 0.2
+    /// Quiet period after the last local change before the cloud snapshot is uploaded.
+    /// Well above the gap between two answers, so a lesson uploads once at the end
+    /// (`AppStore.flushToCloud`) instead of re-sending the whole record per answer (store-2-2).
+    static let cloudPushDebounce: TimeInterval = 20
 
     // MARK: XP (Package A16 / C25)
     /// XP awarded per correct answer.
@@ -161,6 +169,10 @@ nonisolated enum Tuning {
     static let thetaGainOnCorrect: Double = 0.06
     /// IRT ability loss per miss, scaled by P(success).
     static let thetaLossOnMiss: Double = 0.05
+    /// How far above an ITEM's own IRT difficulty a correct answer on it may push ability.
+    /// Answering easy items forever is not evidence of a higher level, so the gain stops
+    /// at `item.irtDifficulty + this`; only harder material can carry the learner further.
+    static let thetaEvidenceCeiling: Double = 1.0
     /// Concept-evidence multiplier for an item tagged `.hard` at capture.
     static let hardItemEvidenceWeight: Double = 1.3
     /// Concept-evidence multiplier for an item tagged `.easy` at capture.
@@ -255,6 +267,9 @@ nonisolated enum Tuning {
     /// a cleared band but not fully probed). Kept below `minObservations` so it reads
     /// as `.learning` — a head start, never mastery.
     static let placementInferredAlpha: Double = 2
+    /// Real Foundation items seeded per concept the placement missed a probe on. The
+    /// probe itself is a cloze stem, never a headword, so it can't become a card.
+    static let placementMissSeedItems: Int = 1
 
     // MARK: Foundation pacing (Pass 3 F1 — Package B10)
     /// Short lessons the daily plan asks of a learner whose reading is still locked.
@@ -442,6 +457,10 @@ nonisolated extension Tuning {
     static let newsTimeoutSeconds: TimeInterval = 10
     /// Most offline captures the store re-translates in one pass after a gloss succeeds (E4).
     static let pendingTranslationBatch: Int = 5
+    /// Per-term failures in a row that end a pending-translation pass: one word the
+    /// service chokes on is skipped so the rest still get their meaning, but a
+    /// service that is evidently down is not asked five times over (E4).
+    static let pendingTranslationFailureStreak: Int = 2
     /// Entries kept in the on-device translation cache (LRU).
     static let translationCacheLocalLimit: Int = 600
     /// Sentences per body text (mean words/sentence) at or above which a text reads as B2 rather than B1.

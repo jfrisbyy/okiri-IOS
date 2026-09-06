@@ -283,6 +283,10 @@ private struct ConverseCallView: View {
     @State private var tutorThinking = false
     @State private var hintLoading = false
     @State private var hintNotice: String? = nil
+    /// A tutor suggestion held back because the learner had already typed
+    /// something: it is offered with an explicit "Use this" instead of silently
+    /// replacing their French (talkmedia-2-2).
+    @State private var hintSuggestion: String? = nil
     @State private var turnFailure: TalkServiceFailure? = nil
     @State private var micNotice: String? = nil
     @State private var showSettingsAlert = false
@@ -447,7 +451,7 @@ private struct ConverseCallView: View {
         VStack(spacing: 8) {
             if let failure = turnFailure { turnFailureBanner(failure) }
             if let correction = lastCorrection { correctionBanner(correction) }
-            if let hintNotice { noticeRow(icon: "lightbulb", text: hintNotice, color: Theme.warning) }
+            hintRow
             if let micNotice { noticeRow(icon: "mic.slash", text: micNotice, color: Theme.error) }
 
             HStack(spacing: 10) {
@@ -577,6 +581,51 @@ private struct ConverseCallView: View {
         .background(Theme.errorLight).clipShape(.rect(cornerRadius: 12))
     }
 
+    /// The hint line: the tutor's note, and — when the learner already had a
+    /// reply in progress — the suggested line with "Use this" / "Keep mine".
+    /// Nothing here ever overwrites the draft on its own (talkmedia-2-2).
+    @ViewBuilder
+    private var hintRow: some View {
+        if hintNotice != nil || hintSuggestion != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "lightbulb").font(.system(.footnote)).foregroundStyle(Theme.warning)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let hintNotice {
+                            Text(hintNotice).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let hintSuggestion {
+                            Text(hintSuggestion).font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let suggestion = hintSuggestion {
+                    HStack(spacing: 12) {
+                        Button { Haptics.tap(); useSuggestion(suggestion) } label: {
+                            Text("Use this").font(.system(.footnote, weight: .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 12).frame(minHeight: 44)
+                                .background(Theme.warning).clipShape(.capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Replaces what you have typed with the suggested line")
+                        Button { Haptics.tap(); dismissHint() } label: {
+                            Text("Keep mine").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                                .minimumHitTarget()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Dismisses the suggestion and keeps your reply")
+                    }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(Theme.warning.opacity(0.08)).clipShape(.rect(cornerRadius: 12))
+        }
+    }
+
     private func noticeRow(icon: String, text: String, color: Color) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon).font(.system(.footnote)).foregroundStyle(color)
@@ -671,6 +720,7 @@ private struct ConverseCallView: View {
         Haptics.tap()
         draft = ""
         hintNotice = nil
+        hintSuggestion = nil
         micNotice = nil
         turnFailure = nil
         inputFocused = false
@@ -719,10 +769,10 @@ private struct ConverseCallView: View {
     private func requestHint() {
         guard !hintLoading, !tutorThinking else { return }
         hintNotice = nil
+        hintSuggestion = nil
         guard ConverseService.hasKey else {
-            draft = scenario.starterPhraseFrench
-            hintNotice = "Hints from the tutor aren't available in this build — here's a starter phrase for this scene instead."
-            inputFocused = true
+            offer(suggestion: scenario.starterPhraseFrench,
+                  notice: "Hints from the tutor aren't available in this build — here's a starter phrase for this scene instead.")
             return
         }
         hintLoading = true
@@ -733,13 +783,45 @@ private struct ConverseCallView: View {
             hintLoading = false
             switch result {
             case .success(let hint):
-                draft = hint.french
+                offer(suggestion: hint.french, notice: nil)
             case .failure(let failure):
-                draft = scenario.starterPhraseFrench
-                hintNotice = "\(failure.message) Here's a starter phrase for this scene instead."
+                offer(suggestion: scenario.starterPhraseFrench,
+                      notice: "\(failure.message) Here's a starter phrase for this scene instead.")
             }
-            inputFocused = true
         }
+    }
+
+    /// Put a suggestion in front of the learner without ever destroying the reply
+    /// they were writing (talkmedia-2-2): an empty box is filled straight away, a
+    /// box with typed French keeps it and gets "Use this" in the hint row.
+    private func offer(suggestion text: String, notice: String?) {
+        let suggestion = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !suggestion.isEmpty else {
+            hintNotice = notice
+            return
+        }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft = suggestion
+            hintNotice = notice
+            inputFocused = true
+        } else {
+            hintSuggestion = suggestion
+            hintNotice = notice ?? "One way to say it — your reply is untouched."
+        }
+    }
+
+    /// "Use this": the learner asked for the suggestion, so it replaces the draft.
+    private func useSuggestion(_ text: String) {
+        draft = text
+        hintSuggestion = nil
+        hintNotice = nil
+        inputFocused = true
+    }
+
+    /// "Keep mine": drop the suggestion, leave the draft alone.
+    private func dismissHint() {
+        hintSuggestion = nil
+        hintNotice = nil
     }
 
     private func endCall() {

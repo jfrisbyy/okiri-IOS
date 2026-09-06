@@ -10,6 +10,10 @@
 import SwiftUI
 
 struct ScenariosView: View {
+    /// Saved guides are persisted through the store (never straight to
+    /// `UserDefaults`) so they are backed up with the rest of the record and a
+    /// reconcile cannot overwrite a guide the learner just saved (store-2-3).
+    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -660,13 +664,22 @@ struct ScenariosView: View {
             saved.insert(SavedScenario(id: UUID().uuidString, query: currentQuery, guide: merged, savedAt: Date()), at: 0)
             Haptics.success()
         }
-        ScenarioStore.save(saved)
+        persistSaved()
     }
 
     private func deleteSaved(_ item: SavedScenario) {
         Haptics.tap()
         saved.removeAll { $0.id == item.id }
-        ScenarioStore.save(saved)
+        persistSaved()
+    }
+
+    /// Hand the encoded guides to the store: it writes the blob, marks the record
+    /// dirty and queues the backup (store-2-3).
+    private func persistSaved() {
+        // Only ever write a blob we actually produced: handing the store nil here
+        // would clear the key and lose every saved guide.
+        guard let data = ScenarioStore.encoded(saved) else { return }
+        store.setSavedScenarios(data)
     }
 
     private func openSaved(_ item: SavedScenario) {

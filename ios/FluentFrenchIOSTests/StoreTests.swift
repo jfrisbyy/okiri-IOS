@@ -322,9 +322,9 @@ struct StoreTests {
         // skips Mar 8 entirely.
         #expect(store.currentStreak(now: local(2026, 3, 9, 0, 30)) == 3)
         #expect(store.currentStreak(now: local(2026, 3, 8, 23, 30)) == 3)
-        #expect(store.masteredOn(local(2026, 3, 8, 0, 10)))
-        #expect(store.masteredOn(local(2026, 3, 8, 23, 50)))
-        #expect(!store.masteredOn(local(2026, 3, 9, 0, 10)))
+        #expect(store.practisedOn(local(2026, 3, 8, 0, 10)))
+        #expect(store.practisedOn(local(2026, 3, 8, 23, 50)))
+        #expect(!store.practisedOn(local(2026, 3, 9, 0, 10)))
         #expect(store.dayKey(local(2026, 3, 8, 2, 30)) == "2026-03-08", "the skipped hour still belongs to Mar 8")
         #expect(store.longestStreak == 3)
 
@@ -658,6 +658,49 @@ struct StoreTests {
         #expect(store.journeyStartedAt == now.addingTimeInterval(-10 * day))
     }
 
+    // MARK: store-2-3 — saved scenario guides are part of the record
+
+    /// A guide the learner saves must look like a change to the record: written
+    /// to the shared key, dirty, sync clock moved, and carried in the next
+    /// snapshot. Writing the key straight from the view left the device looking
+    /// clean, so the guide was never uploaded and the next reconcile applied the
+    /// account's older blob over it.
+    @Test func savingScenarioGuidesMarksTheRecordDirtyAndTravelsInTheSnapshot() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.save()
+        store.flush()
+        let before = store.localUpdatedAt
+
+        let blob = Data("[{\"id\":\"guide-1\"}]".utf8)
+        store.setSavedScenarios(blob)
+
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == blob)
+        #expect(store.hasPendingWrite, "the guide marks the record dirty")
+        #expect(store.makeSnapshot().savedScenarios == blob, "and travels to the account")
+        if let before, let after = store.localUpdatedAt {
+            #expect(after >= before, "the sync clock moves, so the device is the newer side")
+        } else {
+            Issue.record("the guide should have set a sync clock")
+        }
+    }
+
+    /// The other half: a snapshot that carries guides replaces the device blob,
+    /// so a restore on a new device brings the saved guides back.
+    @Test func appliedSnapshotRestoresSavedScenarioGuides() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.setSavedScenarios(Data("[]".utf8))
+        store.flush()
+
+        var remote = store.makeSnapshot()
+        remote.savedScenarios = Data("[{\"id\":\"from-cloud\"}]".utf8)
+        remote.clientUpdatedAt = now
+        store.apply(snapshot: remote)
+
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == Data("[{\"id\":\"from-cloud\"}]".utf8))
+    }
+
     // MARK: Recovery — the sequence CloudSync.restoreFromAccount drives
 
     /// "Restore from my account": the gutted post-load state is replaced by the
@@ -973,6 +1016,73 @@ struct StoreTests {
         let slipped = try #require(s.recordConverseCorrection(originalFrench: "mot-n", correctedFrench: "mot-m", explanation: "",
                                                               conceptId: nil, now: now))
         #expect(slipped.id == "m" && !slipped.isMastered && slipped.consecutiveCorrect == 0)
+    }
+
+    // MARK: firstrun-2-2 — ability is bounded by the difficulty of the evidence
+
+    @Test func abilityStopsClimbingAboveTheDifficultyOfTheItemsBeingAnswered() {
+        let s = EngineFixtures.store()
+        s.abilityTheta = -0.8                              // where a fresh A1 placement lands
+        var easy = EngineFixtures.gap("easy", concept: "definite-articles")
+        easy.irtDifficulty = -1.1                          // an A1 Foundation item
+        s.gaps = [easy]
+        for _ in 0..<600 { s.recordReview(gapId: "easy", correct: true, now: now) }
+        let ceiling = -1.1 + Tuning.thetaEvidenceCeiling
+        #expect(s.abilityTheta <= ceiling + 1e-9, "θ = \(s.abilityTheta) climbed past its evidence")
+        #expect(s.learnerLevel.order <= CEFRLevel.A2.order,
+                "drilling A1 Foundation items must never display as B1 — read \(s.learnerLevel.rawValue)")
+
+        // Harder material DOES carry the learner further.
+        var hard = EngineFixtures.gap("hard", concept: "negation")
+        hard.irtDifficulty = 0.8
+        s.gaps.append(hard)
+        for _ in 0..<400 { s.recordReview(gapId: "hard", correct: true, now: now) }
+        #expect(s.abilityTheta > ceiling)
+        #expect(s.abilityTheta <= 0.8 + Tuning.thetaEvidenceCeiling + 1e-9)
+
+        // The ceiling bounds the GAIN only: a miss still lowers ability, and a
+        // learner already placed above the ceiling is never demoted by answering
+        // an easy item correctly.
+        let earned = s.abilityTheta
+        s.recordReview(gapId: "hard", correct: false, now: now)
+        #expect(s.abilityTheta < earned)
+        let afterMiss = s.abilityTheta
+        s.recordReview(gapId: "easy", correct: true, now: now)
+        #expect(s.abilityTheta == afterMiss, "an easy item below the ceiling neither raises nor lowers θ")
+    }
+
+    // MARK: firstrun-2-5 — seeded curriculum is not the learner's practice history
+
+    @Test func seededGapsCountAsCurriculumAheadNotAsPractisedWeakSpots() {
+        let s = EngineFixtures.store()
+        let negation = s.concepts.filter { $0.id == "negation" }
+        s.gaps = EngineFixtures.foundationGaps(for: negation, perConcept: 3, at: now)
+        #expect(s.activeGaps.count == 3)
+        #expect(s.practisedGaps.isEmpty, "day one: the learner has been asked about none of it")
+        #expect(s.newGaps.count == 3)
+        #expect(HomeCopy.learnCardStat(toLearn: 3, practised: 0) == "3 to learn")
+        #expect(HomeCopy.toLearnLabel == "To learn")
+
+        s.recordReview(gapId: s.gaps[0].id, correct: true, now: now)
+        #expect(s.activeGaps.count == 3 && s.practisedGaps.count == 1 && s.newGaps.count == 2)
+        #expect(HomeCopy.learnCardStat(toLearn: s.activeGaps.count, practised: s.practisedGaps.count)
+                == "3 to learn · 1 practised")
+    }
+
+    // MARK: firstrun-2-3 — the streak counts practice, and says so
+
+    @Test func theStreakCountsDaysPractisedNotDaysAWordWasMastered() {
+        let s = EngineFixtures.store()
+        s.gaps = EngineFixtures.foundationGaps(for: s.concepts.filter { $0.id == "negation" },
+                                               perConcept: 1, at: now)
+        let id = s.gaps[0].id
+        s.recordReview(gapId: id, correct: true, now: now)
+        #expect(s.practisedOn(now), "one correct answer marks the day")
+        #expect(s.currentStreak(now: now) == 1)
+        // …and that is NOT mastery, which needs `Tuning.gapMasteryStreak` in a row.
+        #expect(s.masteredGaps.isEmpty)
+        #expect(s.gaps[0].consecutiveCorrect < Tuning.gapMasteryStreak)
+        #expect(s.masteredThisWeek == 0)
     }
 }
 

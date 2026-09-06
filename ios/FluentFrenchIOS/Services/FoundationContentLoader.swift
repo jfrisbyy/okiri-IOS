@@ -258,42 +258,55 @@ nonisolated enum FoundationContentLoader {
             let category = GapCategory(rawValue: skill.category) ?? .vocabulary
             let level = levels[skill.id] ?? .A1
             for (idx, item) in skill.items.enumerated() {
-                let difficulty = GapDifficulty(rawValue: item.diff ?? "okay") ?? .okay
-                var gap = GapItem(
-                    id: "foundation-\(skill.id)-\(idx)",
-                    frenchWord: item.fr,
-                    englishTranslation: item.en,
-                    explanation: item.note,
-                    exampleSentence: item.ex,
-                    exampleTranslation: item.exEn,
-                    pronunciation: nil,
-                    sourceType: .foundation,
-                    category: category,
-                    difficulty: difficulty,
-                    reviewCount: 0,
-                    consecutiveCorrect: 0,
-                    lastReviewedAt: nil,
-                    nextReviewAt: now,
-                    masteredAt: nil,
-                    createdAt: now,
-                    cefrLevel: level,
-                    easeFactor: 2.5,
-                    currentInterval: 0,
-                    irtDifficulty: irtDifficulty(level: level, difficulty: difficulty),
-                    fsrs: nil,
-                    originalContext: nil,
-                    confusionLinks: [],
-                    conceptId: skill.id
-                )
-                gap.blankForm = item.verifiedBlank
-                gap.acceptedAnswers = item.alts
-                gap.isTestable = item.isTestable
-                gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
-                gap.fsrs?.dueAt = now
-                result.append(gap)
+                result.append(gap(from: item, conceptId: skill.id, index: idx,
+                                  category: category, level: level, now: now))
             }
         }
         return result
+    }
+
+    /// One seeded gap for one content item — the single construction path for
+    /// Foundation gaps, shared by the full seed above and by a placement miss that
+    /// has to seed a REAL headword instead of the probe's cloze stem
+    /// (`AssessmentService.gaps(forMissed:)`). `id` matches the full seed's id for
+    /// the same item, so the two can never both land in the record.
+    /// `difficulty` overrides the item's own tag (a missed item is seeded `.hard`).
+    static func gap(from item: FoundationItemContent, conceptId: String, index: Int,
+                    category: GapCategory, level: CEFRLevel,
+                    difficulty override: GapDifficulty? = nil, now: Date) -> GapItem {
+        let difficulty = override ?? (GapDifficulty(rawValue: item.diff ?? "okay") ?? .okay)
+        var gap = GapItem(
+            id: "foundation-\(conceptId)-\(index)",
+            frenchWord: item.fr,
+            englishTranslation: item.en,
+            explanation: item.note,
+            exampleSentence: item.ex,
+            exampleTranslation: item.exEn,
+            pronunciation: nil,
+            sourceType: .foundation,
+            category: category,
+            difficulty: difficulty,
+            reviewCount: 0,
+            consecutiveCorrect: 0,
+            lastReviewedAt: nil,
+            nextReviewAt: now,
+            masteredAt: nil,
+            createdAt: now,
+            cefrLevel: level,
+            easeFactor: 2.5,
+            currentInterval: 0,
+            irtDifficulty: irtDifficulty(level: level, difficulty: difficulty),
+            fsrs: nil,
+            originalContext: nil,
+            confusionLinks: [],
+            conceptId: conceptId
+        )
+        gap.blankForm = item.verifiedBlank
+        gap.acceptedAnswers = item.alts
+        gap.isTestable = item.isTestable
+        gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
+        gap.fsrs?.dueAt = now
+        return gap
     }
 
     /// Map a skill's level + an item's difficulty tag onto an IRT difficulty.

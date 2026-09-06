@@ -31,6 +31,17 @@ final class ReadModel {
         return false
     }
 
+    /// The region chips worth showing: only groups the loaded feed actually has,
+    /// and nothing at all unless there are at least two to choose between. A live
+    /// feed whose outlets name no region shows no strip rather than four chips
+    /// that can only ever come back empty.
+    var availableRegions: [ReadRegionGroup] {
+        let present = ReadRegionGroup.allCases.filter { group in
+            group != .all && articles.contains { $0.region == group }
+        }
+        return present.count > 1 ? [.all] + present : []
+    }
+
     /// Region-filtered, closest-to-level first, newest first within a level.
     var filtered: [NewsArticle] {
         let base = regionGroup == .all ? articles : articles.filter { $0.region == regionGroup }
@@ -59,6 +70,9 @@ final class ReadModel {
         guard token == loadToken else { return }
         result = fetched
         isLoading = false
+        // A region that this feed has no stories for must not stay selected, or
+        // the learner lands on an empty list they never asked for.
+        if !availableRegions.contains(regionGroup) { regionGroup = .all }
     }
 }
 
@@ -420,10 +434,18 @@ struct ReadView: View {
         .scrollIndicators(.hidden)
     }
 
+    @ViewBuilder
     private var regionStrip: some View {
+        let groups = model.availableRegions
+        if !groups.isEmpty {
+            regionChips(groups)
+        }
+    }
+
+    private func regionChips(_ groups: [ReadRegionGroup]) -> some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                ForEach(ReadRegionGroup.allCases) { group in
+                ForEach(groups) { group in
                     let active = model.regionGroup == group
                     Button {
                         Haptics.tap()
@@ -481,12 +503,15 @@ struct ReadView: View {
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(Color.white.opacity(0.22)).clipShape(.capsule)
                     Spacer()
-                    HStack(spacing: 4) {
-                        Text(article.region.emoji).scaledFont(11)
-                        Text(article.region.label).scaledFont(10, weight: .semibold).foregroundStyle(.white)
+                    // Only when the source actually says where the story is from.
+                    if let region = article.region {
+                        HStack(spacing: 4) {
+                            Text(region.emoji).scaledFont(11)
+                            Text(region.label).scaledFont(10, weight: .semibold).foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.black.opacity(0.3)).clipShape(.capsule)
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.black.opacity(0.3)).clipShape(.capsule)
                 }
                 .padding(12)
             }

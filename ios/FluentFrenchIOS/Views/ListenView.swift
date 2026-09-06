@@ -349,7 +349,7 @@ private struct ListenPlayerView: View {
                 .clipShape(.rect(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(isCurrent ? accent.opacity(0.3) : .clear, lineWidth: 1))
                 .contentShape(Rectangle())
-                .onTapGesture { player.jump(to: idx) }
+                .onTapGesture { player.jumpAndPlay(to: idx) }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Line \(idx + 1)\(turn.speaker == "narrator" ? "" : ", speaker \(turn.speaker)"): \(turn.french). \(turn.english)")
                 .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : [.isButton])

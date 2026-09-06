@@ -107,7 +107,7 @@ struct GapsView: View {
 
     private var overviewCard: some View {
         HStack(spacing: 12) {
-            overviewStat(value: "\(totalActive)", label: "Active gaps", tint: Theme.primary, icon: "target")
+            overviewStat(value: "\(totalActive)", label: HomeCopy.toLearnLabel, tint: Theme.primary, icon: "target")
             Rectangle().fill(Theme.border).frame(width: 1, height: 44)
             overviewStat(value: "\(totalMastered)", label: "Mastered", tint: Theme.success, icon: "checkmark.seal.fill")
             Rectangle().fill(Theme.border).frame(width: 1, height: 44)

@@ -368,6 +368,10 @@ export type Database = {
       //      is only the fallback when a server timestamp is missing on either
       //      side or both sides changed; newest wins, the row wins ties.
       // Fetch errors are never treated as "no row".
+      // The device-side markers rule 2 depends on (last synced `updated_at` +
+      // local clock) are only cleared on a sign-out the learner asked for; a
+      // launch before the session has restored, or a session that expired on its
+      // own, keeps them, so rule 2 stays live instead of degrading to rule 3.
       ios_progress_snapshots: {
         Row: {
           client_updated_at: string

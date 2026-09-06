@@ -520,18 +520,21 @@ struct RetentionCard: View {
 
     var body: some View {
         let buckets = store.retention
+        // No reviews yet → "—", never 100% over data that does not exist. Home
+        // (HomeView) and Gaps show the same statistic behind the same guard.
+        let hasEvidence = store.hasRetentionEvidence
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Image(systemName: "waveform.path.ecg").foregroundStyle(Theme.secondary)
                     .accessibilityHidden(true)
                 Text("Retention").scaledSerifDisplay(19, weight: .semibold).foregroundStyle(Theme.text)
                 Spacer()
-                Text("\(store.overallRetention)%")
+                Text(hasEvidence ? "\(store.overallRetention)%" : "—")
                     .scaledFont(20, weight: .heavy).foregroundStyle(Theme.secondary)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Retention")
-            .accessibilityValue("\(store.overallRetention) percent")
+            .accessibilityValue(hasEvidence ? "\(store.overallRetention) percent" : "No reviews yet")
             .accessibilityAddTraits(.isHeader)
             // Curve bar
             GeometryReader { geo in

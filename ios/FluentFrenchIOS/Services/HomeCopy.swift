@@ -45,7 +45,15 @@ nonisolated enum HomeCopy {
             return "Day \(streak) — a lesson today keeps it going."
         }
         if lessonsToday > 0 { return "Good start today — tomorrow makes it a streak." }
-        if dueNow > 0 { return "\(dueNow) due now — a short lesson clears them." }
+        if dueNow > 0 {
+            // One lesson is `Tuning.lessonSize` items, so it only clears a queue
+            // that small. On day one the staggered Foundation seed leaves far more
+            // than that due and the card below reads "Lesson 1 of 3 today" — the
+            // greeting points at the day's lessons, not at one of them.
+            return dueNow <= Tuning.lessonSize
+                ? "\(dueNow) due now — a short lesson clears them."
+                : "\(dueNow) due now — today's lessons work through them."
+        }
         return "No streak yet — one lesson starts it."
     }
 

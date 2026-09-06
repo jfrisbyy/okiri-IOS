@@ -24,8 +24,6 @@ import UIKit
 
 struct WatchPlayerView: View {
     let video: YTVideo
-    /// false = "French Content" (native French), true = "Learn with Subtitles".
-    let learnMode: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
@@ -47,9 +45,8 @@ struct WatchPlayerView: View {
 
     private let speeds: [Double] = [0.75, 1.0, 1.25]
 
-    init(video: YTVideo, learnMode: Bool) {
+    init(video: YTVideo) {
         self.video = video
-        self.learnMode = learnMode
         _controller = State(initialValue: YouTubePlayerController(videoId: video.videoId))
     }
 
@@ -156,6 +153,7 @@ struct WatchPlayerView: View {
                         text: seg.text,
                         savedWords: savedWords,
                         fontSize: 15,
+                        lookupEnabled: seg.allowsWordLookup,
                         onWordTap: { word in openWord(word, context: seg.text) }
                     )
                     .padding(.horizontal, 12)
@@ -337,7 +335,7 @@ struct WatchPlayerView: View {
                 text: seg.text,
                 isActive: isActive,
                 savedWords: savedWords,
-                lookupEnabled: seg.language == .french,
+                lookupEnabled: seg.allowsWordLookup,
                 onWordTap: { word in openWord(word, context: seg.text) }
             )
         }
@@ -360,7 +358,7 @@ struct WatchPlayerView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "text.bubble.fill").font(.footnote).foregroundStyle(Theme.primary.opacity(0.7)).accessibilityHidden(true)
-                Text(learnMode ? "Preparing French subtitles…" : "Fetching transcript…")
+                Text("Loading the transcript…")
                     .font(.footnote.weight(.medium)).foregroundStyle(.white.opacity(0.55))
                 Spacer()
             }
@@ -453,7 +451,7 @@ struct WatchPlayerView: View {
     private func loadTranscript() async {
         transcript = .loading
         activeIndex = -1
-        let result = await TranscriptService.fetch(videoId: video.videoId, nativeFrench: !learnMode)
+        let result = await TranscriptService.fetch(videoId: video.videoId)
         switch result {
         case .segments(let lines, let language):
             guard !lines.isEmpty else { transcript = .noCaptions; return }
@@ -614,7 +612,7 @@ private struct FullscreenPlayerView: View {
                         text: seg.text,
                         savedWords: savedWords,
                         fontSize: 20,
-                        lookupEnabled: seg.language == .french,
+                        lookupEnabled: seg.allowsWordLookup,
                         onWordTap: { word in openWord(word, context: seg.text) }
                     )
                     .padding(.horizontal, 40)

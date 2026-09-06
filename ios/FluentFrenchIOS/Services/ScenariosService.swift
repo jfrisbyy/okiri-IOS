@@ -105,8 +105,11 @@ nonisolated enum ScenariosService {
 
 // MARK: - Persistence
 
+/// Device-side storage for saved guides. The key itself is `ScenarioStorage`
+/// (Models) so `AppStore` can clear it between learners and back it up with the
+/// rest of the record; this type owns only the encoding.
 nonisolated enum ScenarioStore {
-    private static let key = "ff.savedScenarios.v1"
+    private static let key = ScenarioStorage.defaultsKey
 
     static func load() -> [SavedScenario] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }

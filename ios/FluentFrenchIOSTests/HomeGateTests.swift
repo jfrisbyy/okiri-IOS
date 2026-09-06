@@ -255,6 +255,13 @@ struct HomeGateTests {
         #expect(zero == "No streak yet — one lesson starts it.")
         #expect(!zero.contains("0-day") && !zero.lowercased().contains("amazing"))
         #expect(HomeCopy.subtitle(streak: 0, dueNow: 4, lessonsToday: 0, placed: true) == "4 due now — a short lesson clears them.")
+        // More due than one lesson holds → the day's lessons, not "a short lesson"
+        // (the Foundation card right below reads "Lesson 1 of 3 today").
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: Tuning.lessonSize, lessonsToday: 0, placed: true)
+                == "\(Tuning.lessonSize) due now — a short lesson clears them.")
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: Tuning.lessonSize + 1, lessonsToday: 0, placed: true)
+                == "\(Tuning.lessonSize + 1) due now — today's lessons work through them.")
+        #expect(!HomeCopy.subtitle(streak: 0, dueNow: 24, lessonsToday: 0, placed: true).contains("a short lesson clears"))
         #expect(HomeCopy.subtitle(streak: 0, dueNow: 4, lessonsToday: 1, placed: true) == "Good start today — tomorrow makes it a streak.")
         #expect(HomeCopy.subtitle(streak: 0, dueNow: 9, lessonsToday: 0, placed: false) == "Take the short placement to start your plan.")
         #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: 0, placed: true) == "Day 1 — a lesson today keeps it going.")

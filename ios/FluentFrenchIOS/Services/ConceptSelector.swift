@@ -100,9 +100,12 @@ struct ConceptSelector {
         }
     }
 
-    /// At least one non-probe gap of the concept can be practiced right now.
+    /// At least one non-probe gap of the concept can be practiced right now. Uses
+    /// the selector's own eligibility (E4: a gap still waiting for its meaning can
+    /// never carry a lesson), not the bare item schedule — otherwise a concept
+    /// could become eligible on gaps no lesson is allowed to ask.
     func hasPracticableGap(_ concept: Concept, now: Date) -> Bool {
-        store.gaps(forConcept: concept.id).contains { !$0.isProbe && $0.isPracticable(at: now) }
+        store.gaps(forConcept: concept.id).contains { !$0.isProbe && isPracticable($0, at: now) }
     }
 
     func isFrontier(_ concept: Concept) -> Bool {
@@ -162,8 +165,10 @@ struct ConceptSelector {
 
     /// The item a check-in rides on: the weakest reviewed gap, else the weakest
     /// gap of any kind, else a fresh content probe when the concept has probe content.
+    /// A gap still waiting for its meaning (E4) can carry nothing — its answer is the
+    /// empty string — so it is never a vehicle either.
     func checkInVehicle(for concept: Concept, now: Date, excluding chosen: Set<String> = []) -> (gapId: String, isProbe: Bool)? {
-        let gaps = store.gaps(forConcept: concept.id).filter { !chosen.contains($0.id) }
+        let gaps = store.gaps(forConcept: concept.id).filter { !chosen.contains($0.id) && !$0.needsTranslation }
         let reviewed = gaps.filter { !$0.isProbe && !$0.isNew }.sorted(by: Self.weakestFirst(now: now))
         if let gap = reviewed.first { return (gap.id, false) }
         let any = gaps.filter { !$0.isProbe }.sorted(by: Self.weakestFirst(now: now))
@@ -362,7 +367,7 @@ struct ConceptSelector {
     /// as spine, review or filler.
     private func practicableSpine(of concept: Concept, now: Date) -> [GapItem] {
         store.gaps(forConcept: concept.id)
-            .filter { !$0.isProbe && $0.isPracticable(at: now) }
+            .filter { !$0.isProbe && isPracticable($0, at: now) }
             .sorted(by: Self.weakestFirst(now: now))
     }
 
@@ -399,9 +404,16 @@ struct ConceptSelector {
                                       reason: smartReason(for: gap, role: role, target: target, now: now)))
         }
 
-        // 1. Spine — the target concept's practicable gaps, weakest first.
+        // 1. Spine — the target concept's practicable gaps, weakest first. The
+        //    spine takes `config.targetRatio` of the lesson but never the slots
+        //    reserved for check-ins and interleaved review: at full size those
+        //    three together used to add up to exactly `size`, so steps 3 and 4
+        //    never ran and a steady-state lesson was blocked practice on one
+        //    concept while hundreds of other gaps stayed overdue.
         if target != nil {
-            let spineCount = max(1, Int((Double(size) * config.targetRatio).rounded()))
+            let reserved = Tuning.checkInsPerLesson + config.reviewSlots
+            let byRatio = Int((Double(size) * config.targetRatio).rounded())
+            let spineCount = max(1, min(byRatio, size - reserved))
             for gap in spine.prefix(spineCount) { take(gap, role: .target) }
         }
 

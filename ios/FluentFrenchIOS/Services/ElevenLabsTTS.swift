@@ -172,10 +172,19 @@ final class NaturalVoice: NSObject {
     /// The voice that spoke (or is speaking) the last utterance.
     private(set) var source: VoiceSource = ElevenLabsTTS.hasKey ? .natural : .system(.noKey)
 
+    /// True while an utterance is actually producing sound (natural clip or the
+    /// built-in fallback voice). Cleared when it finishes, so a surface can drop
+    /// its "playing" highlight instead of leaving it lit forever.
+    private(set) var isSpeaking = false
+
     private var player: AVAudioPlayer?
     private var token = 0
 
     var isLoading: Bool { loadingKey != nil }
+
+    /// True from the moment `speak` is called until the sound has stopped —
+    /// fetching included, so a caller can set a highlight synchronously.
+    var isBusy: Bool { isLoading || isSpeaking }
 
     /// Speaks `text` with a natural voice.
     /// - Parameters:
@@ -200,6 +209,8 @@ final class NaturalVoice: NSObject {
             case .audio(let data)?:
                 if play(data, rate: rate) {
                     source = .natural
+                    isSpeaking = true
+                    watchPlayback(for: current)
                     return
                 }
                 source = .system(.serviceError)
@@ -209,6 +220,24 @@ final class NaturalVoice: NSObject {
                 source = .system(.serviceError)
             }
             FrenchSpeech.shared.speakAny(clean, language: fallbackLanguage, rate: synthRate(for: rate))
+            isSpeaking = true
+            watchPlayback(for: current)
+        }
+    }
+
+    /// Polls until the utterance `watched` started has stopped making sound, then
+    /// clears `isSpeaking`. A newer utterance (or `stop()`) bumps the token and
+    /// this watcher retires without touching the flag it no longer owns.
+    private func watchPlayback(for watched: Int) {
+        Task {
+            while token == watched {
+                try? await Task.sleep(nanoseconds: UInt64(Tuning.voicePlaybackPollInterval * 1_000_000_000))
+                guard token == watched else { return }
+                if player?.isPlaying == true { continue }
+                if FrenchSpeech.shared.isSpeaking { continue }
+                isSpeaking = false
+                return
+            }
         }
     }
 
@@ -218,6 +247,7 @@ final class NaturalVoice: NSObject {
         player?.stop()
         player = nil
         loadingKey = nil
+        isSpeaking = false
         FrenchSpeech.shared.stop()
     }
 

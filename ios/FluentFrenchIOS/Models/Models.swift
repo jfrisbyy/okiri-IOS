@@ -296,3 +296,13 @@ nonisolated struct FailableDecodable<Element: Decodable>: Decodable {
 nonisolated extension CEFRLevel {
     var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 }
+
+// MARK: - Scenario guide storage
+
+/// Where learner-saved scenario guides live on the device. The key is declared
+/// here, next to the models, rather than inside `ScenarioStore`, so `AppStore`
+/// can clear it when a different learner signs in and carry it in the cloud
+/// snapshot without depending on the scenario service (store-1-4).
+nonisolated enum ScenarioStorage {
+    static let defaultsKey = "ff.savedScenarios.v1"
+}

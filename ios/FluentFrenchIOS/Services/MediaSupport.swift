@@ -236,6 +236,11 @@ nonisolated struct TranscriptSegment: Identifiable, Hashable, Sendable {
     let duration: Double
     var language: TranscriptLanguage = .french
 
+    /// Word lookup is offered on French lines only — tapping a word in an
+    /// English caption must never save it to the deck as French (EM-2). Every
+    /// transcript surface asks this instead of re-deriving the rule.
+    var allowsWordLookup: Bool { language == .french }
+
     /// The same line with new French text.
     func translated(_ french: String) -> TranscriptSegment {
         TranscriptSegment(id: id, text: french, start: start, duration: duration, language: .french)

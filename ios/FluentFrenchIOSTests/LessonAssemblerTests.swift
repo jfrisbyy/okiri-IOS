@@ -31,7 +31,7 @@ struct LessonAssemblerTests {
         let output = ConceptSelector(store: g.store).select(.smart(now: EngineFixtures.now))
         let lesson = try #require(LessonAssembler(store: g.store).assemble(output))
 
-        let spineCount = Int((Double(Tuning.lessonSize) * Tuning.targetRatio).rounded())
+        let spineCount = Tuning.lessonSize - Tuning.checkInsPerLesson - Tuning.reviewSlotsPerLesson
         let ids = lesson.gaps.map { $0.id }
         #expect(Array(ids.prefix(spineCount)) == Array(g.rootGapIds.prefix(spineCount)), "target spine leads, in the selector's weakest-first order")
         #expect(Array(ids.dropFirst(spineCount).prefix(2)) == ["done-0", "frontier-0"], "then the check-in, then review")

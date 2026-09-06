@@ -100,6 +100,47 @@ struct AnswerGraderTests {
         }
     }
 
+    /// The headword is accepted for a blank only when it IS the answer (article
+    /// leniency). When the item's blank is an inflected form — the conjugation or
+    /// agreement the item exists to teach — the dictionary form is wrong.
+    @Test func inflectedBlanksDoNotAcceptTheHeadword() {
+        let eat = gap("manger", en: "to eat", ex: "On mange à midi.", blank: "mange")
+        #expect(AnswerGrader.grade(typed: "mange", against: eat, expected: "mange", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "manger", against: eat, expected: "mange", kind: .fillBlank) == .incorrect,
+                "the infinitive is not the conjugated blank")
+        #expect(AnswerGrader.grade(typed: "manger", against: eat, expected: "manger", kind: .translation) == .correct,
+                "the headword is still the answer when the headword is asked for")
+
+        let green = gap("vert", en: "green", ex: "La pomme est verte.", blank: "verte")
+        #expect(AnswerGrader.grade(typed: "vert", against: green, expected: "verte", kind: .fillBlank) == .incorrect,
+                "the masculine form is not the feminine agreement")
+        #expect(AnswerGrader.grade(typed: "verte", against: green, expected: "verte", kind: .fillBlank) == .correct)
+
+        // Article leniency survives: the blank IS the article-stripped headword.
+        let bread = gap("le pain", en: "bread", ex: "Je veux du pain.", blank: "pain")
+        #expect(AnswerGrader.grade(typed: "le pain", against: bread, expected: "pain", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.acceptsHeadword(bread, expected: "pain"))
+        #expect(!AnswerGrader.acceptsHeadword(eat, expected: "mange"))
+        // A content alternative is still accepted for an inflected blank.
+        let hands = gap("la main", en: "hand", ex: "Lave-toi les mains.", blank: "mains", alts: ["les mains"])
+        #expect(AnswerGrader.grade(typed: "les mains", against: hands, expected: "mains", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "la main", against: hands, expected: "mains", kind: .fillBlank) == .incorrect)
+    }
+
+    /// Options are compared with their parenthetical tag: the tag is the whole
+    /// point of "the (masculine singular)" vs "the (feminine singular)".
+    @Test func optionMatchingKeepsParentheticalTags() {
+        #expect(AnswerGrader.optionMatches("the (masculine singular)", "the (masculine singular)"))
+        #expect(AnswerGrader.optionMatches("  THE (masculine singular) ", "the (masculine singular)"))
+        #expect(!AnswerGrader.optionMatches("the (feminine singular)", "the (masculine singular)"))
+        #expect(!AnswerGrader.optionMatches("the (plural)", "the (masculine singular)"))
+        #expect(!AnswerGrader.optionMatches("the", "the (masculine singular)"))
+        #expect(AnswerGrader.optionMatches("bread", "bread"), "an untagged gloss still matches")
+        #expect(!AnswerGrader.optionMatches("", "bread"))
+        #expect(AnswerGrader.normalize("the (masculine singular)", keepingTags: true) == "the (masculine singular)")
+        #expect(AnswerGrader.normalize("the (masculine singular)") == "the", "typed grading still strips tags")
+    }
+
     @Test func accentSlipCountsAsCorrectButGradesHard() {
         let verdict = AnswerVerdict.closeAccents(expected: "élève")
         #expect(verdict.countsAsCorrect && !verdict.isExact)

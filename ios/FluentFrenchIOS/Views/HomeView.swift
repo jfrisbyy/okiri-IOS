@@ -778,7 +778,12 @@ struct HomeView: View {
                         .accessibilityLabel("\(m.label), locked")
                     }
                 }
-                if let condition = store.unlockCondition(for: .reading) {
+                // The condition has to describe the chips above it. Reading's own
+                // note ("Almost there — short pieces at your level for now.") only
+                // belongs here while Reading is one of the locked chips; once the
+                // bridge opens Reading, the row shows the higher modalities' real
+                // condition instead.
+                if let next = locked.first, let condition = store.unlockCondition(for: next) {
                     Text(condition)
                         .font(.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

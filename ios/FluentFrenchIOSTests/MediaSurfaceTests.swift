@@ -422,6 +422,12 @@ struct MediaSurfaceTests {
         #expect(language == .english)
         #expect(got.allSatisfy { $0.language == .english })
         #expect(TranscriptSegment(id: "x", text: "x", start: 0, duration: 1).language == .french, "lines default to French")
+        // EM-2: an English line offers no word lookup, so a caption word can
+        // never be captured as a French deck card — the rule every transcript
+        // surface (list row, portrait subtitle, fullscreen subtitle) asks.
+        #expect(got.allSatisfy { !$0.allowsWordLookup }, "English lines are inert")
+        #expect(got[0].translated("bonjour").allowsWordLookup, "a translated line is French again")
+        #expect(TranscriptSegment(id: "x", text: "x", start: 0, duration: 1).allowsWordLookup)
         #expect(got[0].translated("bonjour").language == .french)
         #expect(got[0].translated("bonjour").id == "e0" && got[0].translated("bonjour").start == 0)
         #expect(TranscriptCoverage.of(got, finished: true, stop: .failed(.noKey)) == .english(.failed(.noKey)))

@@ -2,12 +2,12 @@
 //  WatchView.swift
 //  FluentFrenchIOS
 //
-//  French YouTube browser: a dark cinematic header with a content/subtitles
-//  toggle and a search bar, trending videos grouped into themed carousels, and
-//  a suggested-searches grid. Every state is explicit (E26): live results, the
-//  curated shelf with the reason live results are missing (no key, offline,
-//  service error), an honest empty category, and a search that says when it
-//  cannot run. Loads are bounded by `Tuning.videoFeedTimeout`.
+//  French YouTube browser: a dark cinematic header with a search bar, trending
+//  videos grouped into themed carousels, and a suggested-searches grid. Every
+//  state is explicit (E26): live results, the curated shelf with the reason
+//  live results are missing (no key, offline, service error), an honest empty
+//  category, and a search that says when it cannot run. Loads are bounded by
+//  `Tuning.videoFeedTimeout`.
 //
 
 import Foundation
@@ -64,12 +64,11 @@ final class WatchModel {
 struct WatchView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// The header carries the screen title, the mode chips and the search field,
-    /// so it grows with the learner's text size instead of clipping them.
-    @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 210
+    /// The header carries the screen title and the search field, so it grows
+    /// with the learner's text size instead of clipping them.
+    @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 152
     @State private var model = WatchModel()
     @State private var reachability = NetworkReachability.shared
-    @State private var nativeMode = false
     @State private var searching = false
     @State private var searchText = ""
     @State private var search: SearchState = .idle
@@ -101,7 +100,7 @@ struct WatchView: View {
             .refreshable { await model.load() }
         }
         .fullScreenCover(item: $playingVideo) { video in
-            WatchPlayerView(video: video, learnMode: nativeMode)
+            WatchPlayerView(video: video)
                 .environment(store)
         }
         .task {
@@ -128,12 +127,6 @@ struct WatchView: View {
                             .accessibilityHidden(true)
                     }
 
-                    HStack(spacing: 10) {
-                        chip("French Content", active: !nativeMode, icon: nil, emoji: "🇫🇷") { nativeMode = false }
-                        chip("Learn with Subtitles", active: nativeMode, icon: "captions.bubble.fill", emoji: nil) { nativeMode = true }
-                        Spacer()
-                    }
-
                     Button {
                         Haptics.tap()
                         withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching.toggle() }
@@ -156,24 +149,6 @@ struct WatchView: View {
                 }
                 .padding(.horizontal, 20).padding(.bottom, 16)
             }
-    }
-
-    private func chip(_ title: String, active: Bool, icon: String?, emoji: String?, action: @escaping () -> Void) -> some View {
-        Button {
-            Haptics.tap(); action()
-        } label: {
-            HStack(spacing: 6) {
-                if let emoji { Text(emoji).font(.footnote).accessibilityHidden(true) }
-                if let icon { Image(systemName: icon).font(.caption).foregroundStyle(active ? .white : .white.opacity(0.5)).accessibilityHidden(true) }
-                Text(title).font(.footnote.weight(.semibold)).foregroundStyle(active ? .white : .white.opacity(0.5))
-            }
-            .padding(.horizontal, 14).frame(minHeight: 44)
-            .background(active ? Theme.primary : .clear)
-            .clipShape(.capsule)
-            .overlay(Capsule().stroke(active ? .clear : Color.white.opacity(0.25), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     // MARK: - Search

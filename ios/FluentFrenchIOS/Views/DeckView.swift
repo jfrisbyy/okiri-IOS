@@ -277,10 +277,32 @@ struct DeckView: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 40)
                 .accessibilityElement(children: .combine)
             } else {
-                VStack(spacing: 10) {
-                    ForEach(displayedGaps.prefix(12)) { gap in
+                LazyVStack(spacing: 10) {
+                    ForEach(displayedGaps.prefix(Tuning.deckPreviewCount)) { gap in
                         GapCardView(gap: gap)
                     }
+                }
+                // The header counts the whole filter, so the rest of the deck has
+                // to be reachable — the preview is never the only way in.
+                if displayedGaps.count > Tuning.deckPreviewCount {
+                    NavigationLink {
+                        AllGapsView(category: selectedCategory)
+                    } label: {
+                        HStack {
+                            Text("See all \(displayedGaps.count)")
+                                .scaledFont(14, weight: .semibold).foregroundStyle(Theme.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .scaledFont(13).foregroundStyle(Theme.primary)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: Theme.minimumHitTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("See all \(displayedGaps.count) gaps")
+                    .accessibilityHint("Opens the full list")
                 }
             }
         }
@@ -333,5 +355,36 @@ struct DeckView: View {
         .clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.5), lineWidth: 0.5))
         .softLift(radius: 10, y: 3, strength: 0.6)
+    }
+}
+
+// MARK: - Full gap list
+
+/// The whole deck behind the "See all" row: every gap in the current filter,
+/// built lazily so a Foundation learner's several-hundred-card deck scrolls
+/// instead of being constructed up front. Reads the store live so a card that is
+/// answered or mastered elsewhere disappears from here too.
+struct AllGapsView: View {
+    @Environment(AppStore.self) private var store
+    /// nil = the unfiltered deck.
+    let category: GapCategory?
+
+    private var gaps: [GapItem] {
+        if let category { return store.gaps(in: category) }
+        return store.visibleGaps
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(gaps) { gap in
+                    GapCardView(gap: gap)
+                }
+            }
+            .padding(20)
+        }
+        .background(Theme.background)
+        .navigationTitle(category?.label ?? "All Gaps")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

@@ -288,7 +288,10 @@ struct StoreTests {
         store.applyPlacement(result, isFirstRun: true, now: now)
 
         #expect(store.hasCompletedAssessment)
-        #expect(store.assessedLevel == .A2, "the assessment the learner just took still updates the level")
+        // D8: a retake only adds evidence — the level and ability the learner
+        // already earned (B2 / theta 1.7) are never lowered by a weaker result.
+        #expect(store.assessedLevel == .B2, "a retake never demotes the earned level")
+        #expect(store.abilityTheta == 1.7, "practice-grown ability survives a weaker retake")
         #expect(store.xp == 100, "XP is not wiped")
         #expect(store.masteryDays == ["2026-01-01", "2026-01-02"], "the streak is not wiped")
         #expect(store.personalBests == bestsBefore)
@@ -970,5 +973,156 @@ struct StoreTests {
         let slipped = try #require(s.recordConverseCorrection(originalFrench: "mot-n", correctedFrench: "mot-m", explanation: "",
                                                               conceptId: nil, now: now))
         #expect(slipped.id == "m" && !slipped.isMastered && slipped.consecutiveCorrect == 0)
+    }
+}
+
+// MARK: - Session, lesson and low-stakes-corruption safety (audit round 1)
+
+/// The store side of the sign-in / sign-out / mid-lesson rules the coordinator
+/// (ContentView + CloudSync) drives: an involuntary sign-out must not destroy
+/// unsynced work, a different learner must not inherit the previous one's data
+/// (including saved scenario guides), a lost plan preference must not block the
+/// app, and a lesson in flight must be visible to the reconcile scheduler.
+@MainActor
+struct StoreSessionSafetyTests {
+    private func encoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }
+
+    // MARK: store-1-2 — only a different learner wipes the device record
+
+    @Test func firstSignInKeepsThePreLoginRecordForMigration() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.gaps = [EngineFixtures.gap("pre-login", concept: nil)]
+        store.save()
+        store.flush()
+
+        #expect(store.beginSession(userId: "user-1") == false, "nothing to clear on a first sign-in")
+        #expect(store.gaps.map { $0.id } == ["pre-login"], "the record is migrated, not wiped")
+        #expect(store.lastSignedInUserId == "user-1")
+    }
+
+    @Test func sameLearnerSigningBackInKeepsUnsyncedProgress() {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.beginSession(userId: "user-1")
+        first.gaps = [EngineFixtures.gap("answered-offline", concept: nil)]
+        first.save()
+        first.flush()
+
+        // Relaunch after the session expired on its own: nothing was signed out.
+        let relaunched = AppStore(persistence: scratch.defaults)
+        #expect(relaunched.lastSignedInUserId == "user-1", "the account is remembered across launches")
+        #expect(relaunched.beginSession(userId: "user-1") == false)
+        #expect(relaunched.gaps.map { $0.id } == ["answered-offline"],
+                "work done since the last upload survives an involuntary sign-out")
+    }
+
+    @Test func aDifferentLearnerStartsFromACleanRecord() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        store.gaps = [EngineFixtures.gap("theirs", concept: nil)]
+        store.xp = 120
+        store.save()
+        store.flush()
+        scratch.defaults.set(Data("[]".utf8), forKey: ScenarioStorage.defaultsKey)
+
+        #expect(store.beginSession(userId: "user-2"), "a new learner clears the device")
+        #expect(store.gaps.isEmpty)
+        #expect(store.xp == 0)
+        #expect(store.lastSignedInUserId == "user-2")
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == nil,
+                "saved scenario guides do not bleed to the next learner")
+        #expect(AppStore(persistence: scratch.defaults).gaps.isEmpty, "the wipe is persisted")
+    }
+
+    @Test func explicitSignOutForgetsTheAccountAndTheGuides() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        scratch.defaults.set(Data("[]".utf8), forKey: ScenarioStorage.defaultsKey)
+
+        store.clearForSignOut()
+        #expect(store.lastSignedInUserId == nil)
+        #expect(scratch.defaults.string(forKey: "ff.lastSignedInUserId.v1") == nil)
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == nil)
+        #expect(AppStore(persistence: scratch.defaults).lastSignedInUserId == nil)
+    }
+
+    // MARK: store-1-4 — saved scenario guides travel with the account
+
+    @Test func savedScenarioGuidesAreBackedUpAndRestored() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        let guides = Data(#"[{"id":"s1"}]"#.utf8)
+        scratch.defaults.set(guides, forKey: ScenarioStorage.defaultsKey)
+
+        #expect(store.makeSnapshot().savedScenarios == guides, "guides ride along in the cloud snapshot")
+
+        scratch.defaults.removeObject(forKey: ScenarioStorage.defaultsKey)
+        var snapshot = store.makeSnapshot()
+        snapshot.savedScenarios = guides
+        store.apply(snapshot: snapshot)
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == guides,
+                "a restore brings the saved guides back")
+
+        var older = store.makeSnapshot()
+        older.savedScenarios = nil
+        store.apply(snapshot: older)
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == guides,
+                "a row written before the field existed never deletes them")
+    }
+
+    // MARK: store-1-5 — a low-stakes blob never blocks the app
+
+    @Test func unreadablePreferencesRaiseANoticeInsteadOfBlockingTheApp() throws {
+        let scratch = ScratchDefaults()
+        let keep = [EngineFixtures.gap("keep", concept: nil)]
+        scratch.defaults.set(try encoder().encode(keep), forKey: "ff.gaps.v1")
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.preferences.v1")
+        scratch.defaults.set(garbage, forKey: "ff.activityProgress.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == nil, "the app is not held behind a cloud restore")
+        #expect(store.canPushToCloud, "and the learner's real record can still sync")
+        #expect(store.loadNotices == [.corruptPreferences, .corruptActivityProgress])
+        #expect(store.loadNoticeMessage?.isEmpty == false)
+        #expect(store.gaps.map { $0.id } == ["keep"], "learner data is untouched")
+        #expect(store.preferences == nil)
+        #expect(store.activityProgress.isEmpty)
+        #expect(store.corruptBlob(for: .corruptPreferences) == garbage, "the unreadable copy is preserved")
+
+        store.acknowledgeLoadNotices()
+        #expect(store.loadNoticeMessage == nil)
+        #expect(store.corruptBlob(for: .corruptPreferences) == garbage, "dismissing the notice keeps the copy")
+    }
+
+    @Test func unreadableLearnerDataStillBlocks() {
+        let scratch = ScratchDefaults()
+        scratch.defaults.set(Data("not json".utf8), forKey: "ff.concepts.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptConcepts)
+        #expect(store.canPushToCloud == false)
+        #expect(StoreLoadError.corruptConcepts.isBlocking)
+        #expect(StoreLoadError.corruptPreferences.isBlocking == false)
+    }
+
+    // MARK: store-1-3 — a lesson in flight is visible to the reconcile scheduler
+
+    @Test func lessonInProgressBracketsTheLesson() {
+        let store = AppStore(persistence: nil)
+        #expect(store.isLessonInProgress == false)
+        store.beginLesson()
+        #expect(store.isLessonInProgress)
+        store.endLesson()
+        #expect(store.isLessonInProgress == false)
+        store.beginLesson()
+        store.clearForSignOut()
+        #expect(store.isLessonInProgress == false, "a reset never leaves the flag stuck")
     }
 }

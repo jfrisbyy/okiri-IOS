@@ -8,10 +8,13 @@
 
 import SwiftUI
 
-/// Why a persisted blob could not be read at launch. While one of these is set the
-/// store keeps the raw blob under "<key>.corrupt", refuses to write or push (so a
-/// bad read never overwrites the learner's data), and the UI shows a recovery state
-/// until `AppStore.acknowledgeLoadError(discard:)` is called.
+/// Why a persisted blob could not be read at launch. The raw blob is always kept
+/// under "<key>.corrupt" so nothing is lost. A BLOCKING error (learner progress:
+/// gaps, skills, mistakes) also stops every write and push and puts the UI in a
+/// recovery state until `AppStore.acknowledgeLoadError(discard:)` is called. A
+/// non-blocking one (preferences, practice history) only starts that blob over
+/// from defaults and surfaces a dismissible notice — a lost plan preference must
+/// never force a cloud restore that discards real learning (store-1-5).
 nonisolated enum StoreLoadError: Error, Equatable {
     case corruptGaps
     case corruptConcepts
@@ -27,6 +30,16 @@ nonisolated enum StoreLoadError: Error, Equatable {
         case .corruptErrors: return "Your mistake history couldn't be read from this device."
         case .corruptPreferences: return "Your plan preferences couldn't be read from this device."
         case .corruptActivityProgress: return "Your practice history couldn't be read from this device."
+        }
+    }
+
+    /// True when the unreadable blob holds the learner's actual record, so the app
+    /// must not continue on a gutted copy. Preferences and practice history are
+    /// low-stakes: they start over from defaults behind a notice.
+    var isBlocking: Bool {
+        switch self {
+        case .corruptGaps, .corruptConcepts, .corruptErrors: return true
+        case .corruptPreferences, .corruptActivityProgress: return false
         }
     }
 }
@@ -90,11 +103,33 @@ final class AppStore {
     var dailyPlanOfRecord: DailyPlan? = nil
     var dailyPlanDayKey: String? = nil
 
-    /// Set when a persisted blob could not be read at launch (see `StoreLoadError`).
-    /// While non-nil, `save()`/`flush()` refuse to write and nothing is pushed to the cloud.
+    /// Set when a persisted blob holding the learner's record could not be read at
+    /// launch (see `StoreLoadError.isBlocking`). While non-nil, `save()`/`flush()`
+    /// refuse to write and nothing is pushed to the cloud.
     var loadError: StoreLoadError? = nil
+    /// Low-stakes blobs that could not be read at launch (preferences, practice
+    /// history). They start over from defaults, the app keeps working, and the UI
+    /// shows a dismissible notice; the unreadable copy is preserved either way.
+    private(set) var loadNotices: [StoreLoadError] = []
+    /// One learner-facing sentence for `loadNotices`, or nil when there is nothing to say.
+    var loadNoticeMessage: String? {
+        guard !loadNotices.isEmpty else { return nil }
+        return loadNotices.map { $0.message }.joined(separator: " ")
+            + " Your words, skills and mistake history are unaffected."
+    }
     /// True when the store may be serialized and pushed (no unresolved load error).
     var canPushToCloud: Bool { loadError == nil }
+
+    /// True while the learner is inside a lesson. The foreground reconcile checks
+    /// this: replacing `gaps`/`concepts` mid-lesson would silently discard every
+    /// answer already recorded and make the rest of the lesson no-op (store-1-3).
+    private(set) var isLessonInProgress = false
+
+    /// The account whose record is on this device, remembered across launches.
+    /// A wipe only happens when a DIFFERENT learner signs in — an involuntary
+    /// sign-out (expired/revoked refresh token) must never destroy unsynced
+    /// progress (store-1-2).
+    private(set) var lastSignedInUserId: String? = nil
 
     /// Timestamp of the last real, user-driven mutation. Drives newest-wins cloud
     /// reconciliation. Nil until the learner has actually changed something.
@@ -186,6 +221,7 @@ final class AppStore {
     private let unlockedModalitiesKey = "ff.unlockedModalities.v1"
     private let metricsLogKey = "ff.metricsLog.v1"
     private let journeyStartedAtKey = "ff.journeyStartedAt.v1"
+    private let lastSignedInUserKey = "ff.lastSignedInUserId.v1"
     /// Suffix under which an unreadable blob is preserved (never overwritten).
     private let corruptSuffix = ".corrupt"
 
@@ -1477,7 +1513,15 @@ final class AppStore {
         }
         let decoder = Self.makeDecoder()
         var firstError: StoreLoadError? = nil
-        func fail(_ error: StoreLoadError) { if firstError == nil { firstError = error } }
+        var notices: [StoreLoadError] = []
+        /// Blocking errors stop the app; low-stakes ones only raise a notice.
+        func fail(_ error: StoreLoadError) {
+            if error.isBlocking {
+                if firstError == nil { firstError = error }
+            } else if !notices.contains(error) {
+                notices.append(error)
+            }
+        }
 
         switch decodeArray(GapItem.self, key: gapsKey, defaults: defaults, decoder: decoder) {
         case .absent: gaps = []
@@ -1551,10 +1595,12 @@ final class AppStore {
         if let ts = defaults.object(forKey: journeyStartedAtKey) as? Double {
             journeyStartedAt = Date(timeIntervalSince1970: ts)
         }
+        lastSignedInUserId = defaults.string(forKey: lastSignedInUserKey)
 
         reconcileLifetimeMinutes()
         pruneHistory()
         loadError = firstError
+        loadNotices = notices
         refreshUnlocks()
     }
 
@@ -1575,10 +1621,17 @@ final class AppStore {
     /// recovery/support while the app proceeds with the state it has now. Either way
     /// the learner has made the call — the store never overwrites silently.
     func acknowledgeLoadError(discard: Bool) {
-        guard loadError != nil else { return }
+        guard loadError != nil || !loadNotices.isEmpty else { return }
         if discard { removeCorruptBlobs() }
         loadError = nil
+        loadNotices = []
         if isDirty { scheduleWrite() }
+    }
+
+    /// Dismiss the non-blocking load notice. The preserved ".corrupt" copies stay
+    /// on the device for support; only the message goes away.
+    func acknowledgeLoadNotices() {
+        loadNotices = []
     }
 
     private func removeCorruptBlobs() {
@@ -1628,8 +1681,25 @@ final class AppStore {
             lessonsCompletedByDay: lessonsCompletedByDay,
             checkInHistory: checkInHistory,
             unlockedModalities: Array(unlockedModalities).sorted(),
-            journeyStartedAt: journeyStartedAt
+            journeyStartedAt: journeyStartedAt,
+            savedScenarios: savedScenariosData
         )
+    }
+
+    /// Learner-saved scenario guides, written by `ScenarioStore` under the shared
+    /// key. The store carries them as an opaque blob so they survive a reinstall
+    /// and reach a second device without the snapshot depending on the scenario
+    /// models (store-1-4).
+    private var savedScenariosData: Data? {
+        get { persistence?.data(forKey: ScenarioStorage.defaultsKey) }
+        set {
+            guard let defaults = persistence else { return }
+            if let newValue {
+                defaults.set(newValue, forKey: ScenarioStorage.defaultsKey)
+            } else {
+                defaults.removeObject(forKey: ScenarioStorage.defaultsKey)
+            }
+        }
     }
 
     /// Apply a snapshot pulled from the cloud, replacing local state. Persists
@@ -1664,6 +1734,7 @@ final class AppStore {
         if let history = snapshot.checkInHistory { checkInHistory = Array(history.suffix(Tuning.governorWindow)) }
         if let unlocked = snapshot.unlockedModalities { unlockedModalities = Set(unlocked) }
         if let started = snapshot.journeyStartedAt { journeyStartedAt = started }
+        if let scenarios = snapshot.savedScenarios { savedScenariosData = scenarios }
         appendMissingSeedConcepts()
         reconcileLifetimeMinutes()
         pruneHistory()
@@ -1708,17 +1779,58 @@ final class AppStore {
         metricsLog = MetricsLog()
         journeyStartedAt = nil
         localUpdatedAt = nil
+        isLessonInProgress = false
+        // Saved scenario guides live outside the store's own blobs but are just as
+        // personal (they include the learner's free-text queries), so they go too
+        // (store-1-4).
+        persistence?.removeObject(forKey: ScenarioStorage.defaultsKey)
         removeCorruptBlobs()
         loadError = nil
+        loadNotices = []
     }
 
     /// Reset to a clean signed-out state so the next account starts fresh and no
     /// data bleeds between users on a shared device. Writes immediately and never
-    /// pushes (the account that owned this state is gone).
+    /// pushes (the account that owned this state is gone). Only ever called for a
+    /// sign-out the learner asked for — see `beginSession(userId:)` for the
+    /// involuntary case.
     func clearForSignOut() {
+        resetAllState()
+        lastSignedInUserId = nil
+        persistence?.removeObject(forKey: lastSignedInUserKey)
+        save(pushToCloud: false)
+        flush()
+    }
+
+    /// A session was established for `userId`. The device record is wiped ONLY when
+    /// it belongs to a different learner; the same learner signing back in (after an
+    /// expired token, say) keeps everything that had not been uploaded yet, and a
+    /// first-ever sign-in keeps the pre-login record so it can be migrated up.
+    /// Returns true when another learner's record was cleared.
+    @discardableResult
+    func beginSession(userId: String) -> Bool {
+        defer {
+            lastSignedInUserId = userId
+            persistence?.set(userId, forKey: lastSignedInUserKey)
+        }
+        guard let previous = lastSignedInUserId, previous != userId else { return false }
         resetAllState()
         save(pushToCloud: false)
         flush()
+        return true
+    }
+
+    // MARK: - Lesson lifecycle
+
+    /// A lesson opened. While this holds, a foreground cloud reconcile is deferred
+    /// so the lesson's evidence can never be replaced underneath it (store-1-3).
+    func beginLesson() {
+        isLessonInProgress = true
+    }
+
+    /// The lesson cover closed (finished, quit or dismissed). Idempotent.
+    func endLesson() {
+        isLessonInProgress = false
     }
 
     // MARK: - Placement assessment
@@ -1792,8 +1904,19 @@ final class AppStore {
         // state over the account — so the result is applied as a retake instead.
         let isFirstRun = isFirstRun && !hasCompletedAssessment
 
-        assessedLevel = result.estimatedLevel
-        abilityTheta = theta(for: result.estimatedLevel)
+        if isFirstRun {
+            assessedLevel = result.estimatedLevel
+            abilityTheta = theta(for: result.estimatedLevel)
+        } else {
+            // D8: a retake only ADDS evidence. The assessment intro and results
+            // screens promise it "never lowers what you've earned", so ability
+            // grown through practice and the level already displayed are only ever
+            // raised — a bad day cannot demote a learner from B1 back to A1.
+            abilityTheta = max(abilityTheta, theta(for: result.estimatedLevel))
+            if result.estimatedLevel.order > assessedLevel.order {
+                assessedLevel = result.estimatedLevel
+            }
+        }
 
         let missedConcepts = Set(result.missedConceptIds)
         // Two tiers (B9): fully probed → provisional mastery; band-inferred → learning.

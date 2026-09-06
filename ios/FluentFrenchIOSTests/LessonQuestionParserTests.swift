@@ -27,7 +27,7 @@ struct LessonQuestionParserTests {
       {"kind":"multipleChoice","answer":"y-en","options":["y-en","x-en","z-en"]},
       {"wordIndex":1,"kind":"trueFalse","statement":"“y-fr” means “x-en”.","answer":"maybe"},
       {"wordIndex":1,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"y-fr"},
-      {"wordIndex":1,"kind":"translation","statement":"I am here","answer":"y-fr ici"},
+      {"wordIndex":1,"kind":"translation","statement":"I am here","answer":"y-fr"},
       {"wordIndex":9,"kind":"multipleChoice","answer":"a","options":["a","b","c"]},
       {"wordIndex":0,"kind":"arrange","answer":"x-fr ici"}
     ]}
@@ -59,7 +59,52 @@ struct LessonQuestionParserTests {
         #expect(fill.explanation == "Je y-fr ici.")
 
         let tr = try #require(batch.questions.first { $0.gap.id == "y" && $0.kind == .translation })
-        #expect(tr.statement == "I am here" && tr.correctAnswer == "y-fr ici" && tr.hint == nil)
+        #expect(tr.statement == "I am here" && tr.correctAnswer == "y-fr" && tr.hint == nil)
+    }
+
+    /// The model writes questions, never the truth: an answer that is not the
+    /// gap's own meaning (or one of its own French forms) is rejected, and the
+    /// gap keeps its validated local question.
+    @Test func answersThatDoNotMatchTheGapAreRejected() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","answer":"a completely different meaning","options":["a completely different meaning","x-en","a","b"]},
+          {"wordIndex":0,"kind":"translation","statement":"x-en","answer":"invente"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"invente"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","a","b"]}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [gap("x")], optionCount: 4, seed: 5)
+        #expect(batch.rejected == 3, "the invented gloss, the invented French, the invented blank answer")
+        #expect(batch.countsByGap == ["x": 2])
+        #expect(batch.questions.allSatisfy { $0.correctAnswer == "x-en" || $0.correctAnswer == "x-fr" })
+
+        #expect(LessonQuestionParser.matchesGloss("X-EN", of: gap("x")))
+        #expect(!LessonQuestionParser.matchesGloss("something else", of: gap("x")))
+        #expect(!LessonQuestionParser.matchesGloss("", of: gap("x")))
+        #expect(LessonQuestionParser.isContentForm("x-fr", of: gap("x"), kind: .translation))
+        #expect(!LessonQuestionParser.isContentForm("x-fr ici", of: gap("x"), kind: .translation))
+    }
+
+    /// A tagged gloss is only the answer with its tag: the model cannot turn
+    /// "the (masculine singular)" into a question whose answer is any "the".
+    @Test func taggedGlossesMustMatchWithTheirTag() throws {
+        var article = gap("le")
+        article.frenchWord = "le"
+        article.englishTranslation = "the (masculine singular)"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","answer":"the","options":["the","a","b"]},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"the (masculine singular)","options":["the (masculine singular)","the (feminine singular)","the (plural)"]}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [article], optionCount: 4, seed: 6)
+        #expect(batch.rejected == 1 && batch.questions.count == 1)
+        let q = try #require(batch.questions.first)
+        #expect(q.correctAnswer == "the (masculine singular)")
+        #expect(q.options.contains("the (feminine singular)"), "a tagged sibling stays a distractor")
+        #expect(q.options.filter { LessonSession.grade(.option($0), for: q).correct }.count == 1)
     }
 
     @Test func trueFalseWhitelist() {

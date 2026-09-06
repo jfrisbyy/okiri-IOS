@@ -236,15 +236,11 @@ struct DailyPlanEngine {
             final[m] = (1 - config.uniformFloor) * (tilted[m] ?? 0) + config.uniformFloor * uniform
         }
 
-        // Scale to budget, round into meaningful 5-minute blocks (min 5 each).
-        var items: [DailyPlanItem] = []
-        for m in chosen {
-            let share = final[m] ?? 0
-            let rawMin = share * Double(budget)
-            let rounded = max(5, Int((rawMin / 5).rounded()) * 5)
-            items.append(DailyPlanItem(modality: m, targetMinutes: rounded))
-        }
-        items.sort { $0.targetMinutes > $1.targetMinutes }
+        // Scale to budget in whole `Tuning.planMinuteBlock` blocks. The plan never
+        // asks for more time than the learner chose, so a budget too small to give
+        // every activity a block drops the lowest-share activities instead of
+        // floor-inflating the day past the budget.
+        let items = allocate(budget: budget, chosen: chosen, shares: final)
 
         return DailyPlan(items: [spine] + items,
                          rationale: governorRationale ?? rationale(for: items, ranked: ranked),
@@ -322,10 +318,75 @@ struct DailyPlanEngine {
 
     // MARK: - Helpers
 
+    /// Cold start: the same minutes for every activity that fits inside the budget.
+    /// Whole `Tuning.planMinuteBlock` blocks, and the total never exceeds the
+    /// budget — a "~10 min" day that cannot seat four activities seats the two it
+    /// can rather than prescribing 20 minutes.
     private func evenSplit(chosen: [LearningModality], budget: Int, spine: DailyPlanItem, rationale: String) -> DailyPlan {
-        let per = max(5, Int((Double(budget) / Double(chosen.count) / 5).rounded()) * 5)
-        let items = chosen.map { DailyPlanItem(modality: $0, targetMinutes: per) }
+        let block = Tuning.planMinuteBlock
+        let blocks = block > 0 ? budget / block : 0
+        guard blocks > 0, !chosen.isEmpty else {
+            return DailyPlan(items: [spine], rationale: rationale, isColdStart: true)
+        }
+        let each = blocks / chosen.count
+        let kept = each > 0 ? chosen : Array(chosen.prefix(blocks))
+        let per = max(1, each) * block
+        let items = kept.map { DailyPlanItem(modality: $0, targetMinutes: per) }
         return DailyPlan(items: [spine] + items, rationale: rationale, isColdStart: true)
+    }
+
+    /// Split `budget` minutes across `chosen` in whole `Tuning.planMinuteBlock`
+    /// blocks, weighted by `shares`, so that the plan's total is never more than
+    /// the budget the learner picked (Preferences and Profile both quote that
+    /// number, and the Home header quotes the plan's total — they have to agree).
+    /// Every activity that gets a row gets at least one block; when there are more
+    /// activities than blocks the lowest-share ones are left out of today.
+    private func allocate(budget: Int, chosen: [LearningModality],
+                          shares: [LearningModality: Double]) -> [DailyPlanItem] {
+        let block = Tuning.planMinuteBlock
+        guard block > 0, !chosen.isEmpty else { return [] }
+        let blocks = budget / block
+        guard blocks > 0 else { return [] }
+
+        // Biggest share first; ties keep the stable `chosen` order so the plan is
+        // deterministic for the same inputs.
+        let ordered = chosen.enumerated().sorted { a, b in
+            let sa = max(0, shares[a.element] ?? 0), sb = max(0, shares[b.element] ?? 0)
+            return sa == sb ? a.offset < b.offset : sa > sb
+        }.map { $0.element }
+        let kept = Array(ordered.prefix(min(ordered.count, blocks)))
+
+        var counts: [LearningModality: Int] = [:]
+        for m in kept { counts[m] = 1 }
+        var remaining = blocks - kept.count
+        if remaining > 0 {
+            let total = kept.reduce(0.0) { $0 + max(0, shares[$1] ?? 0) }
+            let exact: [(LearningModality, Double)] = kept.map { m in
+                let weight = total > 0 ? max(0, shares[m] ?? 0) / total : 1 / Double(kept.count)
+                return (m, weight * Double(remaining))
+            }
+            for (m, value) in exact {
+                let whole = max(0, Int(value))
+                counts[m, default: 0] += whole
+                remaining -= whole
+            }
+            // Whatever rounding left over goes to the largest fractional remainders.
+            let byRemainder = exact.enumerated().sorted { a, b in
+                let ra = a.element.1 - Double(Int(a.element.1)), rb = b.element.1 - Double(Int(b.element.1))
+                return ra == rb ? a.offset < b.offset : ra > rb
+            }.map { $0.element.0 }
+            var i = 0
+            while remaining > 0 && !byRemainder.isEmpty {
+                counts[byRemainder[i % byRemainder.count], default: 0] += 1
+                remaining -= 1
+                i += 1
+            }
+        }
+
+        return kept.enumerated()
+            .map { (offset: $0.offset, item: DailyPlanItem(modality: $0.element, targetMinutes: (counts[$0.element] ?? 1) * block)) }
+            .sorted { $0.item.targetMinutes == $1.item.targetMinutes ? $0.offset < $1.offset : $0.item.targetMinutes > $1.item.targetMinutes }
+            .map { $0.item }
     }
 
     private func rationale(for items: [DailyPlanItem], ranked: [ScoredConcept]) -> String {

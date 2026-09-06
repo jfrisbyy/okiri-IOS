@@ -101,6 +101,47 @@ struct DailyPlanEngineTests {
         #expect(plan.totalMinutes == 0)
     }
 
+    // MARK: The plan never asks for more time than the learner chose
+
+    @Test func planTotalNeverExceedsTheTimeBudget() throws {
+        let store = planStore()
+        let engine = DailyPlanEngine(store: store)
+        let gram = try #require(store.concept("gram"))
+        let choices: [Set<LearningModality>] = [[.reading], [.reading, .speaking],
+                                                [.reading, .speaking, .listening],
+                                                Set(LearningModality.allCases)]
+        for budget in TimeBudget.allCases {
+            for chosen in choices {
+                store.preferences = UserPreferences(modalities: chosen, timeBudget: budget, daysPerWeekGoal: nil)
+                let tilted = engine.makePlan(from: output(store, ranked: [ScoredConcept(concept: gram, score: 1, isFrontier: false)]))
+                let cold = engine.makePlan(from: output(store, ranked: []))
+                #expect(tilted.totalMinutes <= budget.minutes, "tilted plan fits \(budget.label)")
+                #expect(cold.totalMinutes <= budget.minutes, "cold-start plan fits \(budget.label)")
+                #expect(tilted.totalMinutes > 0 && cold.totalMinutes > 0, "a budget always buys at least one row")
+                #expect(tilted.minuteItems.allSatisfy { $0.targetMinutes >= Tuning.planMinuteBlock })
+                #expect(cold.minuteItems.allSatisfy { $0.targetMinutes >= Tuning.planMinuteBlock })
+                #expect(Set(cold.minuteItems.map { $0.targetMinutes }).count <= 1, "the cold-start split stays even")
+            }
+        }
+    }
+
+    /// The regression: "~10 min" with all four activities chosen used to floor
+    /// every row at five minutes and prescribe twenty — twice what Preferences and
+    /// the Profile quote.
+    @Test func lightBudgetWithEveryActivityStaysInsideTenMinutes() throws {
+        let store = planStore()
+        store.preferences = UserPreferences(modalities: Set(LearningModality.allCases), timeBudget: .light, daysPerWeekGoal: nil)
+        let gram = try #require(store.concept("gram"))
+        let engine = DailyPlanEngine(store: store)
+        let plan = engine.makePlan(from: output(store, ranked: [ScoredConcept(concept: gram, score: 1, isFrontier: false)]))
+        #expect(plan.totalMinutes == TimeBudget.light.minutes)
+        #expect(plan.minuteItems.count == 2, "ten minutes seats two five-minute rows, not four")
+        #expect(plan.minuteItems.first?.modality == .reading, "the highest-share activities are the ones kept")
+
+        let cold = engine.makePlan(from: output(store, ranked: []))
+        #expect(cold.totalMinutes == TimeBudget.light.minutes && cold.minuteItems.count == 2)
+    }
+
     // MARK: D2 — every chosen activity locked → an explicit unlock item
 
     /// Real taxonomy with nothing mastered (coverage 0) but Reading recorded as

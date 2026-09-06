@@ -9,6 +9,8 @@
 //  apostrophes and quotes to ASCII, drop French thin spaces before ! ? : ;,
 //  strip trailing . ! ? …, strip parenthetical tags like "(m)" / "(formal)",
 //  case-insensitive. A match that only differs in diacritics is `.closeAccents`.
+//  Multiple-choice options are compared with `optionMatches`, which keeps the
+//  tag: "the (masculine singular)" is not "the (feminine singular)".
 //
 
 import Foundation
@@ -61,12 +63,13 @@ nonisolated enum AnswerGrader {
     }
 
     /// The forms accepted for a gap: the expected answer, content-v2 `acceptedAnswers`,
-    /// either side of an "a / b" gloss, and for vocabulary the headword itself.
+    /// either side of an "a / b" gloss, and for vocabulary the headword itself —
+    /// but only when the headword IS the expected answer (see `acceptsHeadword`).
     /// Display forms keep their original spelling (minus tags) for feedback.
     static func acceptedForms(for gap: GapItem, expected: String, kind: QuestionKind) -> [(display: String, normalized: String)] {
         var raw: [String] = [expected]
         raw.append(contentsOf: gap.acceptedAnswers ?? [])
-        if kind.isTyped, gap.category == .vocabulary {
+        if kind.isTyped, gap.category == .vocabulary, acceptsHeadword(gap, expected: expected) {
             raw.append(gap.frenchWord)
         }
         // "a / b" glosses: either side is a valid answer.
@@ -83,6 +86,23 @@ nonisolated enum AnswerGrader {
             out.append((display: display.isEmpty ? form : display, normalized: norm))
         }
         return out
+    }
+
+    /// Whether the dictionary headword is itself an accepted typed answer.
+    ///
+    /// Article leniency only: "le pain" is accepted when the blank expects "pain".
+    /// When the item's blank is a DIFFERENT surface form — "mange" for the headword
+    /// "manger", "verte" for "vert" — the headword is wrong, and accepting it would
+    /// mark the very conjugation or agreement the item teaches as correct.
+    static func acceptsHeadword(_ gap: GapItem, expected: String) -> Bool {
+        let expectedNorm = normalize(expected)
+        guard !expectedNorm.isEmpty else { return false }
+        let headword = normalize(gap.frenchWord)
+        if headword.isEmpty { return false }
+        if headword == expectedNorm { return true }
+        if let bare = strippingArticle(headword), bare == expectedNorm { return true }
+        if let expectedBare = strippingArticle(expectedNorm), expectedBare == headword { return true }
+        return false
     }
 
     // MARK: - Normalisation
@@ -105,9 +125,25 @@ nonisolated enum AnswerGrader {
     /// Canonical comparison form: NFC, ASCII apostrophes/quotes, no tags, no
     /// trailing punctuation, single spaces, lowercase.
     static func normalize(_ s: String) -> String {
+        normalize(s, keepingTags: false)
+    }
+
+    /// Whether two multiple-choice options are the same answer. Unlike `normalize`,
+    /// the parenthetical tag is KEPT: "the (masculine singular)" and
+    /// "the (feminine singular)" are the distinction the question is asking about,
+    /// so they must never both grade as correct.
+    static func optionMatches(_ option: String, _ correctAnswer: String) -> Bool {
+        let a = normalize(option, keepingTags: true)
+        guard !a.isEmpty else { return false }
+        return a == normalize(correctAnswer, keepingTags: true)
+    }
+
+    /// Canonical comparison form; `keepingTags` retains parenthetical tags for
+    /// option comparison, where the tag is part of the answer.
+    static func normalize(_ s: String, keepingTags: Bool) -> String {
         var t = s.precomposedStringWithCanonicalMapping
         t = foldQuotes(t)
-        t = stripTags(t)
+        if !keepingTags { t = stripTags(t) }
         // French thin / no-break spaces → plain spaces, then no space before high punctuation.
         t = t.replacingOccurrences(of: "\u{00A0}", with: " ")
              .replacingOccurrences(of: "\u{202F}", with: " ")

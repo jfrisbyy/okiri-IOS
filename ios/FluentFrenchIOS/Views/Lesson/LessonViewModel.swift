@@ -260,8 +260,12 @@ final class LessonViewModel {
     }
 
     func selectMatchRight(_ gapId: String, store: AppStore) {
-        guard !revealed, let left = matchSelectedLeft,
-              let outcome = session.matchPair(left: left, right: gapId) else { return }
+        guard !revealed, let left = matchSelectedLeft else { return }
+        guard let outcome = session.matchPair(left: left, right: gapId) else {
+            // A pair already tried this round: flash it again, but record nothing.
+            if left != gapId, !session.matchedIds.contains(gapId) { flashWrongRight(gapId) }
+            return
+        }
         if outcome.correct {
             matchSelectedLeft = nil
         } else {

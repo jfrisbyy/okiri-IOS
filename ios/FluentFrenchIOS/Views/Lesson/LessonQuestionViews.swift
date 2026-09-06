@@ -38,7 +38,9 @@ struct LessonQuestionBody: View {
     }
 
     private func state(for option: String) -> LessonOptionState {
-        let isCorrect = AnswerGrader.normalize(option) == AnswerGrader.normalize(question.correctAnswer)
+        // The same tag-preserving comparison the session grades with, so exactly one
+        // row is marked correct even when two options share a gloss ("the (…)").
+        let isCorrect = AnswerGrader.optionMatches(option, question.correctAnswer)
         let isSelected = model.selectedOption == option
         if model.revealed {
             if isCorrect { return .correct }

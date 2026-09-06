@@ -58,6 +58,10 @@ nonisolated struct ProgressSnapshot: Codable, Sendable {
     var unlockedModalities: [String]? = nil
     /// When the learner's record started.
     var journeyStartedAt: Date? = nil
+    /// Saved scenario guides, as the JSON `ScenarioStore` writes on the device.
+    /// Opaque here on purpose: the snapshot does not depend on the scenario models
+    /// (store-1-4).
+    var savedScenarios: Data? = nil
 }
 
 /// Observable backup status, rendered on the profile "Backed up" card.
@@ -148,6 +152,11 @@ final class CloudSync {
     /// Bumped on every sign-out so a pass that started under a previous user
     /// can recognise it is stale after its network read returns.
     @ObservationIgnored private var userGeneration = 0
+    /// Set when the learner left the local-data recovery screen without a restore
+    /// (the account was unreachable). The device record is knowingly incomplete,
+    /// so every later pass runs as a recovery pass — the account copy wins — until
+    /// one actually reads the row (store-1-6).
+    @ObservationIgnored private var pendingRemoteRestore = false
 
     // Sync markers: what this device last agreed with the cloud row on. They
     // are what makes the server-timestamp rule in SnapshotReconciler possible.
@@ -177,7 +186,13 @@ final class CloudSync {
     /// also cancels any reconcile still in flight for the previous user and
     /// bumps the user generation so a late-finishing pass can never enable
     /// pushes (or apply a row) for an account that is no longer signed in.
-    func setUser(_ id: String?) {
+    /// `keepMarkers: true` disables uploads WITHOUT forgetting what this device
+    /// last agreed with the cloud row on. Used when the session ended on its own
+    /// and the local record is kept: the markers are what makes the server
+    /// timestamp the primary tiebreak when the learner signs back in (store-1-1).
+    /// A learner-initiated sign-out clears them, because the record they describe
+    /// is wiped with it.
+    func setUser(_ id: String?, keepMarkers: Bool = false) {
         userId = id
         if id == nil {
             userGeneration += 1
@@ -189,7 +204,12 @@ final class CloudSync {
             reconciledUserId = nil
             needsAccountBeforeContinuing = false
             lastReconcileAt = nil
-            clearMarkers()
+            // The record the markers (and a deferred restore) describe survives
+            // only when the local record does.
+            if !keepMarkers {
+                pendingRemoteRestore = false
+                clearMarkers()
+            }
             syncState = .localOnly
         }
     }
@@ -239,6 +259,17 @@ final class CloudSync {
         return store.loadError == nil
     }
 
+    /// Escape from the recovery screen when the account cannot be reached at all
+    /// (offline): the learner keeps using the device with whatever was readable.
+    /// The unreadable copy is preserved, uploads stay disabled until a pass
+    /// succeeds, and that pass is a recovery pass — the account copy replaces this
+    /// device's, so the incomplete record can never be pushed over it (store-1-6).
+    func continueWithLocalCopy(store: AppStore, userId uid: String) async {
+        pendingRemoteRestore = true
+        store.acknowledgeLoadError(discard: false)
+        await run(store: store, userId: uid, initial: true, mode: .takeRemote(discardUnreadableCopy: false))
+    }
+
     /// Serialises reconcile passes: waits for the in-flight pass (cancelling it
     /// first when it belongs to another user), then runs this one as a tracked
     /// task so `setUser(nil)` can cancel it.
@@ -258,7 +289,13 @@ final class CloudSync {
         await task.value
     }
 
-    private func perform(store: AppStore, userId uid: String, initial: Bool, mode: ReconcileMode) async {
+    private func perform(store: AppStore, userId uid: String, initial: Bool, mode requestedMode: ReconcileMode) async {
+        // A deferred restore (store-1-6) turns every ordinary pass into a recovery
+        // pass until the account row has actually been read.
+        var mode = requestedMode
+        if pendingRemoteRestore, case .compare = mode {
+            mode = .takeRemote(discardUnreadableCopy: false)
+        }
         defer {
             reconcileInFlight = false
             if initial { isReconciling = false }
@@ -311,7 +348,12 @@ final class CloudSync {
                 // Do NOT enable pushes: local state must not overwrite an
                 // account we could not read. With nothing local there is
                 // nothing safe to show either.
-                needsAccountBeforeContinuing = (store.localUpdatedAt == nil)
+                // ...unless the learner explicitly chose to carry on locally
+                // from the recovery screen: re-blocking them there is exactly
+                // what that choice opts out of. `pendingRemoteRestore` keeps the
+                // deferred recovery pending, so uploads stay disabled and the
+                // next successful pass still applies the account copy.
+                needsAccountBeforeContinuing = !pendingRemoteRestore && (store.localUpdatedAt == nil)
                 reconciledUserId = uid
             }
             lastReconcileAt = Date()
@@ -325,6 +367,7 @@ final class CloudSync {
             guard stillCurrent() else { return }
             lastReconcileAt = Date()
             // The account is empty, so later uploads cannot clobber anything.
+            pendingRemoteRestore = false
             markReconciled(userId: uid, pushSucceeded: ok)
 
         case .snapshot(let remote, let serverUpdatedAt):
@@ -345,6 +388,7 @@ final class CloudSync {
             }
             switch decision {
             case .applyRemote:
+                pendingRemoteRestore = false
                 store.apply(snapshot: remote)
                 saveMarkers(userId: uid, localUpdatedAt: store.localUpdatedAt, serverUpdatedAt: serverUpdatedAt)
                 hasPendingChange = changeDuringReconcile

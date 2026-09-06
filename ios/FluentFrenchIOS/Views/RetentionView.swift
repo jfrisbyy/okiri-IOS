@@ -45,8 +45,6 @@ struct RetentionView: View {
         }
     }
 
-    private var items: [GapItem] { bucketItems(tab, in: store.retention) }
-
     private var tint: Color {
         switch tab {
         case .atRisk: return Theme.error
@@ -69,12 +67,16 @@ struct RetentionView: View {
     }
 
     var body: some View {
-        ScrollView {
+        // `store.retention` walks every gap, so the whole screen — the five tab
+        // counts and the visible list — is derived from ONE bucketing per render.
+        let buckets = store.retention
+        let items = bucketItems(tab, in: buckets)
+        return ScrollView {
             VStack(spacing: 16) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Tab.allCases) { t in
-                            let count = countFor(t)
+                            let count = bucketItems(t, in: buckets).count
                             Button {
                                 withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { tab = t }
                             } label: {
@@ -101,7 +103,9 @@ struct RetentionView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 32).padding(.vertical, 40)
                 } else {
-                    VStack(spacing: 10) {
+                    // Lazy: on day one "New" is every seeded Foundation card, and a
+                    // plain VStack would build all of them before the screen appears.
+                    LazyVStack(spacing: 10) {
                         ForEach(items) { gap in
                             retentionRow(gap)
                         }
@@ -173,10 +177,6 @@ struct RetentionView: View {
         .buttonStyle(.plain)
         .accessibilityHint("Starts a review of the \(tab.rawValue.lowercased()) words")
         .padding(.horizontal, 20)
-    }
-
-    private func countFor(_ t: Tab) -> Int {
-        bucketItems(t, in: store.retention).count
     }
 
     private func retentionRow(_ gap: GapItem) -> some View {

@@ -17,8 +17,9 @@
 //    • A miss queues one stepped-down remedial from the scheduler (C6), capped per
 //      gap, `remedialSpacing` questions later, never behind the trailing probes.
 //    • A match round is ONE question: a wrong pair is a miss for the tapped left
-//      gap (evidence + error), costs one heart once per round, and the round
-//      scores as correct only when no pair was wrong (C4 / B6).
+//      gap (evidence + error) recorded once per left row, costs one heart once per
+//      round, and the round scores as correct only when no pair was wrong (C4 / B6).
+//      Re-tapping a pair already tried in the round does nothing.
 //    • In-session release (B11): once the target concept's streak of first-try
 //      correct answers reaches the selection's `conceptReleaseStreak`, its remaining
 //      questions are dropped and backfilled by the scheduler.
@@ -201,6 +202,9 @@ nonisolated struct LessonSession {
     private var remedialsByGap: [String: Int] = [:]
     private var releaseTracker = ConceptReleaseTracker()
     private var wrongLefts: Set<String> = []
+    /// "<left>|<right>" pairs already tried in the current match round: tapping the
+    /// same wrong pair again is not new evidence.
+    private var triedPairs: Set<String> = []
     private var roundHadWrong = false
 
     init(lesson: AssembledLesson, isCapstone: Bool, config: LessonSessionConfig = .tuning) {
@@ -301,19 +305,29 @@ nonisolated struct LessonSession {
 
     /// One pair in the current match round: `left` and `right` are gap ids (rows are
     /// keyed by gap id, so duplicate translations can never collide — C4). Nil when
-    /// there is no match round, the ids are not in it, or the left row is already matched.
+    /// there is no match round, the ids are not in it, the left row is already
+    /// matched, or this exact pair was already tried in this round.
+    ///
+    /// A left row costs at most one miss per round however many wrong meanings are
+    /// tapped for it: guessing down the right column must not stack lapses on one word.
     mutating func matchPair(left leftId: String, right rightId: String) -> LessonAnswerOutcome? {
         guard end == nil, !currentAnswered, let q = current, q.kind == .match,
               let leftGap = q.matchGaps.first(where: { $0.id == leftId }),
               let rightGap = q.matchGaps.first(where: { $0.id == rightId }),
-              !matchedIds.contains(leftId) else { return nil }
+              !matchedIds.contains(leftId),
+              triedPairs.insert("\(leftId)|\(rightId)").inserted else { return nil }
         let matched = leftId == rightId
         let firstTry = !wrongLefts.contains(leftId) && (missCountByGap[leftId] ?? 0) == 0
+        // The first wrong meaning tapped for a left row is the evidence; the ones
+        // after it are the same miss, and are recorded once.
+        let counts = matched || wrongLefts.insert(leftId).inserted
         var outcome = LessonAnswerOutcome(correct: matched, firstTry: firstTry, roundComplete: false)
-        outcome.evidence = [evidence(for: leftGap, role: role(for: leftGap, in: q), correct: matched,
-                                     format: .match, firstTry: firstTry, grade: nil,
-                                     loggedAnswer: matched ? nil : rightGap.englishTranslation,
-                                     correctAnswer: leftGap.englishTranslation)]
+        if counts {
+            outcome.evidence = [evidence(for: leftGap, role: role(for: leftGap, in: q), correct: matched,
+                                         format: .match, firstTry: firstTry, grade: nil,
+                                         loggedAnswer: matched ? nil : rightGap.englishTranslation,
+                                         correctAnswer: leftGap.englishTranslation)]
+        }
         if matched {
             matchedIds.insert(leftId)
             if matchedIds.count == q.matchGaps.count {
@@ -331,16 +345,17 @@ nonisolated struct LessonSession {
                 outcome.feedback = Self.matchFeedback(for: q, wrongLefts: wrongLefts, combo: combo)
             }
         } else {
-            missCountByGap[leftId, default: 0] += 1
-            wrongLefts.insert(leftId)
-            noteMissed(leftGap, correctAnswer: leftGap.englishTranslation, kind: .match)
+            if counts {
+                missCountByGap[leftId, default: 0] += 1
+                noteMissed(leftGap, correctAnswer: leftGap.englishTranslation, kind: .match)
+            }
             if !roundHadWrong {
                 roundHadWrong = true
                 combo = 0
                 outcome.heartLost = loseHeart()
                 outcome.endedByHearts = end == .outOfHearts
             }
-            if end == nil {
+            if counts, end == nil {
                 // Remediate the missed gap, not the round's first pair.
                 var missedQuestion = LessonQuestion(gap: leftGap, kind: .match, prompt: q.prompt,
                                                     correctAnswer: leftGap.englishTranslation)
@@ -373,7 +388,9 @@ nonisolated struct LessonSession {
     static func grade(_ answer: LessonAnswer, for q: LessonQuestion) -> (correct: Bool, verdict: AnswerVerdict?, given: String) {
         switch answer {
         case .option(let option):
-            let correct = AnswerGrader.normalize(option) == AnswerGrader.normalize(q.correctAnswer)
+            // Tag-preserving: options that differ only in "(masculine singular)" /
+            // "(feminine singular)" are different answers, and only one is correct.
+            let correct = AnswerGrader.optionMatches(option, q.correctAnswer)
             return (correct, nil, option)
         case .typed(let text):
             let verdict = AnswerGrader.grade(typed: text, against: q.gap, expected: q.correctAnswer, kind: q.kind)
@@ -397,16 +414,21 @@ nonisolated struct LessonSession {
         var outcome = LessonAnswerOutcome(correct: correct, firstTry: firstTry)
         var grade: ReviewGrade? = nil
         if let verdict, case .closeAccents = verdict { grade = .hard }
+        // A probe miss is a diagnosis of material never taught, not a mistake to
+        // log: it is already out of `scored`, out of `missed` and free of hearts.
+        let logsError = !correct && !revealed && !q.isProbe
         outcome.evidence = [evidence(for: q.gap, role: role(for: q.gap, in: q), correct: correct,
                                      format: q.answerFormat, firstTry: firstTry, grade: grade,
-                                     loggedAnswer: (!correct && !revealed) ? given : nil,
+                                     loggedAnswer: logsError ? given : nil,
                                      correctAnswer: q.correctAnswer)]
         if isCapstone {
             if correct { held.append(q.gap) } else { slipped.append(q.gap) }
         }
         if correct {
             outcome.xp = registerCorrect()
-            if !isCapstone && !q.isProbe {
+            // Only unaided answers count toward "Mastered!": the first remedial shows
+            // the answer before the pick (C6), so it cannot be evidence of mastery.
+            if !isCapstone && !q.isProbe && !q.isRemedial {
                 let n = (correctByGap[q.gap.id] ?? 0) + 1
                 correctByGap[q.gap.id] = n
                 if n >= config.masteryTarget && masteredGapIds.insert(q.gap.id).inserted {
@@ -490,6 +512,7 @@ nonisolated struct LessonSession {
         currentAnswered = false
         matchedIds = []
         wrongLefts = []
+        triedPairs = []
         roundHadWrong = false
     }
 

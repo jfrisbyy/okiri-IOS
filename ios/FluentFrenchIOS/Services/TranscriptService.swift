@@ -46,10 +46,9 @@ nonisolated enum TranscriptService {
 
     /// Fetch a transcript for a video: French when any French captions exist,
     /// otherwise the English captions tagged `.english` for `translateToFrench`.
-    /// `nativeFrench` only nudges the ordering — the full waterfall runs either
-    /// way so a mistagged video still resolves. Retries the whole chain once
-    /// when the first pass found nothing.
-    static func fetch(videoId: String, nativeFrench: Bool) async -> TranscriptResult {
+    /// The full waterfall runs for every video, so a mistagged one still
+    /// resolves. Retries the whole chain once when the first pass found nothing.
+    static func fetch(videoId: String) async -> TranscriptResult {
         guard isConfigured else { return .unavailable(.noKey) }
         let bounded = await Deadline.run(seconds: Tuning.transcriptTotalTimeout) {
             await runWithRetry(videoId: videoId)

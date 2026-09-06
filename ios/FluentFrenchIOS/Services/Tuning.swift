@@ -47,6 +47,9 @@ nonisolated enum Tuning {
     static let scopedLessonSize: Int = 8
     /// Share of smart-lesson slots reserved for the target concept's own gaps.
     static let targetRatio: Double = 0.65
+    /// Slots a smart lesson holds back for interleaved review of OTHER concepts, so
+    /// spine + check-ins can never consume the whole lesson (blocked practice only).
+    static let reviewSlotsPerLesson: Int = 2
     /// How far ahead (days) a gap still counts as "due" for interleaved review.
     static let dueWindowDays: Double = 3.0
     /// Blind-spot probe cadence in sessions (0 disables probes).
@@ -304,6 +307,7 @@ nonisolated struct ConceptSelectionWeights {
 nonisolated struct LessonAssemblyConfig {
     var lessonSize: Int = Tuning.lessonSize
     var targetRatio: Double = Tuning.targetRatio
+    var reviewSlots: Int = Tuning.reviewSlotsPerLesson
     var dueWindowDays: Double = Tuning.dueWindowDays
     var probeEveryNSessions: Int = Tuning.probeEveryNSessions
     var maxConceptCards: Int = Tuning.maxConceptCards
@@ -380,6 +384,9 @@ nonisolated extension Tuning {
     static let streakMomentumDays: Int = 3
     /// Streak length the Home greeting calls a strong run.
     static let streakStrongDays: Int = 7
+    /// Granularity the daily plan prescribes minutes in: rows are whole blocks of
+    /// this many minutes, and the plan's total never exceeds the learner's budget.
+    static let planMinuteBlock: Int = 5
     /// Seconds a Home toast (empty-lesson headline, capture summary) stays on screen.
     static let homeToastSeconds: Double = 2.6
 }
@@ -393,6 +400,10 @@ nonisolated extension Tuning {
     static let foundationSeedBatch: Int = 20
     /// Days-per-week goals the preferences screen offers (D11).
     static let weeklyGoalChoices: [Int] = [3, 4, 5, 6, 7]
+    /// Gap cards the deck previews inline before it offers "See all N" (the full
+    /// list is pushed and built lazily, so a Foundation deck of several hundred
+    /// cards never renders behind the sections below it).
+    static let deckPreviewCount: Int = 12
     /// Consecutive lowest-band misses in ONE category (vocabulary or grammar) before the
     /// placement stops asking that category; the learner is a true beginner only when
     /// every category has bottomed out — a weak grammar never hides a strong vocabulary (D6/B9).
@@ -481,6 +492,8 @@ nonisolated extension Tuning {
     static let ttsFetchTimeout: TimeInterval = 12
     /// Natural-voice clips kept on disk before the least-recently-used are trimmed.
     static let ttsDiskCacheFiles: Int = 400
+    /// Seconds between checks of whether the one-shot voice is still producing sound, so a "playing" highlight clears when the audio ends.
+    static let voicePlaybackPollInterval: TimeInterval = 0.2
     /// Seconds a trending-feed or search request may take before the Watch feed shows an explicit error.
     static let videoFeedTimeout: TimeInterval = 10
     /// Seconds one transcript request (captions, translation, backend) may take before it counts as failed.

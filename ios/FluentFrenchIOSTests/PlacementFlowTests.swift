@@ -375,6 +375,46 @@ struct PlacementFlowTests {
         #expect(!s.candidateGapIds(for: .mixed, now: now).isEmpty, "Deck entry points have candidates")
     }
 
+    /// D8 — the assessment screens promise a retake "never lowers what you've
+    /// earned": ability and the displayed level are only ever raised by one.
+    @Test func retakeOnlyEverRaisesAbilityAndLevel() {
+        let s = EngineFixtures.store()
+        let strong = PlacementResult(vocabBand: 3, grammarBand: 3, estimatedLevel: .B1, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [], askedCount: 8, correctCount: 8)
+        s.applyPlacement(strong, isFirstRun: true, now: now)
+        #expect(s.assessedLevel == .B1)
+        #expect(s.abilityTheta > 0)
+
+        // Practice grows ability past the placement estimate…
+        s.abilityTheta += 0.5
+        let earned = s.abilityTheta
+
+        // …and a bad-day retake that places A1 takes none of it away.
+        let weak = PlacementResult(vocabBand: 0, grammarBand: 0, estimatedLevel: .A1, isTrueBeginner: false,
+                                   masteredConceptIds: [], missedGaps: [], askedCount: 8, correctCount: 2)
+        s.applyPlacement(weak, isFirstRun: false, now: now.addingTimeInterval(day))
+        #expect(s.abilityTheta == earned, "practice-grown ability survives a weaker retake")
+        #expect(s.assessedLevel == .B1, "the displayed level is never demoted by a retake")
+
+        // A stronger retake still raises both.
+        let stronger = PlacementResult(vocabBand: 4, grammarBand: 4, estimatedLevel: .B2, isTrueBeginner: false,
+                                       masteredConceptIds: [], missedGaps: [], askedCount: 8, correctCount: 8)
+        s.applyPlacement(stronger, isFirstRun: false, now: now.addingTimeInterval(2 * day))
+        #expect(s.assessedLevel == .B2)
+        #expect(s.abilityTheta > earned)
+    }
+
+    /// A first run is still authoritative in both directions — it is the only
+    /// estimate there is.
+    @Test func firstPlacementSetsTheLevelItMeasured() {
+        let s = EngineFixtures.store()
+        s.abilityTheta = 2.0
+        let weak = PlacementResult(vocabBand: 0, grammarBand: 0, estimatedLevel: .A1, isTrueBeginner: true,
+                                   masteredConceptIds: [], missedGaps: [], askedCount: 0, correctCount: 0)
+        s.applyPlacement(weak, isFirstRun: true, now: now)
+        #expect(s.assessedLevel == .A1 && s.abilityTheta < 0)
+    }
+
     // MARK: D13 — due now / coming up
 
     @Test func dueNowAndUpcomingAreDisjointAndExcludeProbes() {

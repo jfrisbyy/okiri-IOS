@@ -65,8 +65,15 @@ struct LessonView: View {
         .onChange(of: scenePhase) { _, phase in
             model.scenePhaseChanged(phase)
         }
+        .onAppear {
+            // While a lesson is open the coordinator defers the foreground cloud
+            // reconcile, so an applied remote snapshot can never replace the gaps
+            // this lesson is recording answers against (store-1-3).
+            store.beginLesson()
+        }
         .onDisappear {
             model.cancelPending()
+            store.endLesson()
         }
     }
 

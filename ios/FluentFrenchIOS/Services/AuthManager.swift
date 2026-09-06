@@ -31,6 +31,11 @@ final class AuthManager {
     var isSigningIn = false
     /// True while a sign-out (including its backup upload) is in flight.
     var isSigningOut = false
+    /// True when the learner asked to sign out on this device. A session that ends
+    /// on its own (revoked or expired refresh token) leaves this false, and the
+    /// coordinator then KEEPS the local record instead of wiping unsynced progress
+    /// (store-1-2). Cleared as soon as a session is established again.
+    private(set) var didSignOutExplicitly = false
     var showError = false
     var errorMessage = ""
     /// Non-nil when the build has no Supabase configuration; sign-in is impossible.
@@ -74,7 +79,10 @@ final class AuthManager {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated:
             if let session {
                 user = Self.mapUser(session.user)
+                didSignOutExplicitly = false
             } else {
+                // No session on a refresh/update event means the session ended on
+                // its own — never a learner-initiated sign-out.
                 user = nil
             }
         case .signedOut:
@@ -151,6 +159,9 @@ final class AuthManager {
         if !backedUp && !force {
             throw SignOutBlocked()
         }
+        // From here the sign-out is going through, and it is the learner's own
+        // decision: the coordinator may clear the device record.
+        didSignOutExplicitly = true
         do {
             try await client?.auth.signOut()
         } catch {

@@ -311,7 +311,7 @@ struct AssessmentView: View {
                             .frame(width: ring, height: ring)
                             .softLift(radius: 20, y: 10, strength: 2)
                         VStack(spacing: 0) {
-                            Text(result.estimatedLevel.rawValue).scaledFont(40, weight: .heavy).foregroundStyle(.white)
+                            Text(displayedLevel(result).rawValue).scaledFont(40, weight: .heavy).foregroundStyle(.white)
                                 .lineLimit(1).minimumScaleFactor(0.6)
                             Text("placed at").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
                                 .lineLimit(1).minimumScaleFactor(0.6)
@@ -320,7 +320,7 @@ struct AssessmentView: View {
                         .frame(maxWidth: ring)
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Placed at \(result.estimatedLevel.rawValue)")
+                    .accessibilityLabel("Placed at \(displayedLevel(result).rawValue)")
                     Text(headline(result)).scaledSerifDisplay(26, weight: .bold).foregroundStyle(Theme.text)
                         .multilineTextAlignment(.center)
                     Text(blurb(result)).scaledFont(15).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
@@ -344,18 +344,22 @@ struct AssessmentView: View {
             Text("YOUR PROFILE").scaledFont(11, weight: .bold).foregroundStyle(Theme.textSecondary).tracking(0.5)
             scoreRow("textformat", "Vocabulary", result.vocabBand, Self.accent)
             scoreRow("curlybraces", "Grammar", result.grammarBand, Theme.secondary)
-            HStack(spacing: 12) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(Theme.success)
-                    .frame(width: 28 * Theme.chromeScale(typeScale))
-                    .accessibilityHidden(true)
-                Text("Answered correctly").scaledFont(14).foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Text("\(result.correctCount)/\(max(result.askedCount, 1))")
-                    .scaledFont(15, weight: .bold).foregroundStyle(Theme.text)
+            // Nothing was asked (the "I'm a complete beginner" shortcut), so there
+            // is no score to report — an invented "0/1" would read as a failed test.
+            if result.askedCount > 0 {
+                HStack(spacing: 12) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Theme.success)
+                        .frame(width: 28 * Theme.chromeScale(typeScale))
+                        .accessibilityHidden(true)
+                    Text("Answered correctly").scaledFont(14).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text("\(result.correctCount)/\(result.askedCount)")
+                        .scaledFont(15, weight: .bold).foregroundStyle(Theme.text)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Answered correctly")
+                .accessibilityValue("\(result.correctCount) of \(result.askedCount)")
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Answered correctly")
-            .accessibilityValue("\(result.correctCount) of \(max(result.askedCount, 1))")
         }
         .padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card)).softLift()
@@ -424,9 +428,19 @@ struct AssessmentView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// The level the results screen reports. A retake only ever ADDS evidence
+    /// (AppStore.applyPlacement), so it shows the level the learner keeps — never
+    /// a lower one than they walked in with.
+    private func displayedLevel(_ result: PlacementResult) -> CEFRLevel {
+        if isFirstRun { return result.estimatedLevel }
+        return result.estimatedLevel.order >= store.assessedLevel.order
+            ? result.estimatedLevel
+            : store.assessedLevel
+    }
+
     private func headline(_ result: PlacementResult) -> String {
         if result.isTrueBeginner { return "Starting fresh" }
-        switch result.estimatedLevel {
+        switch displayedLevel(result) {
         case .A1: return "Just getting started"
         case .A2: return "Building your basics"
         case .B1: return "Solid intermediate"

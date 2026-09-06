@@ -12,6 +12,11 @@
 //  choice options are matched case-insensitively and the correct option is
 //  always kept when the list is trimmed to `optionCount`.
 //
+//  The model never writes the truth: a question is only accepted when its answer
+//  is the gap's OWN meaning (multiple choice) or one of the gap's own accepted
+//  French forms (fill-blank / translation). Anything else is rejected and the gap
+//  falls back to its validated, content-derived local question.
+//
 
 import Foundation
 
@@ -43,6 +48,26 @@ nonisolated enum LessonQuestionParser {
         case "false", "faux": return false
         default: return nil
         }
+    }
+
+    /// Whether an AI-written English answer is the gap's own meaning: the same
+    /// gloss, or one side of an "a / b" gloss. Parenthetical tags are kept, so
+    /// "the" is not accepted for "the (masculine singular)".
+    static func matchesGloss(_ answer: String, of gap: GapItem) -> Bool {
+        let given = LessonScheduler.distractorSides(of: answer)
+        guard !given.isEmpty else { return false }
+        return !given.isDisjoint(with: LessonScheduler.distractorSides(of: gap.englishTranslation))
+    }
+
+    /// Whether an AI-written French answer is a form the content already carries:
+    /// the headword, the blank form, or a content `acceptedAnswers` alternative.
+    /// The model may write a new sentence, never a new answer.
+    static func isContentForm(_ answer: String, of gap: GapItem, kind: QuestionKind) -> Bool {
+        let target = AnswerGrader.normalize(answer)
+        guard !target.isEmpty else { return false }
+        let forms = AnswerGrader.acceptedForms(for: gap, expected: gap.frenchWord, kind: kind)
+            + AnswerGrader.acceptedForms(for: gap, expected: AnswerGrader.blankForm(for: gap), kind: kind)
+        return forms.contains { $0.normalized == target }
     }
 
     /// The JSON object inside a possibly chatty reply: a fenced ```json block
@@ -108,16 +133,20 @@ nonisolated enum LessonQuestionParser {
         switch (q.kind ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "multiplechoice", "multiple_choice", "mc":
             let correct = answer.isEmpty ? gap.englishTranslation : answer
+            // The graded truth is the content's meaning, not the model's.
+            guard matchesGloss(correct, of: gap) else { return nil }
             var options = (q.options ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             // Case-insensitive containment; the option's own spelling is the answer.
+            // Tags are part of an option ("the (masculine singular)"), so two options
+            // that differ only in their tag stay distinct and only one is correct.
             var correctOption = correct
             var others: [String] = []
             var seen = Set<String>()
             var found = false
             for option in options {
-                let key = AnswerGrader.normalize(option)
+                let key = AnswerGrader.normalize(option, keepingTags: true)
                 guard !key.isEmpty, seen.insert(key).inserted else { continue }
-                if !found, key == AnswerGrader.normalize(correct) {
+                if !found, AnswerGrader.optionMatches(option, correct) {
                     correctOption = option
                     found = true
                 } else {
@@ -147,6 +176,7 @@ nonisolated enum LessonQuestionParser {
             let blank = AnswerGrader.blankToken
             if prompt.contains(blank) {
                 let expected = answer.isEmpty ? AnswerGrader.blankForm(for: gap) : answer
+                guard isContentForm(expected, of: gap, kind: .fillBlank) else { return nil }
                 let completed = prompt.replacingOccurrences(of: blank, with: expected)
                 return LessonQuestion(gap: gap, kind: .fillBlank, prompt: prompt, correctAnswer: expected,
                                       hint: gap.exampleTranslation.isEmpty ? nil : gap.exampleTranslation,
@@ -173,6 +203,7 @@ nonisolated enum LessonQuestionParser {
         case "translation", "translate":
             guard gap.isTestable else { return nil }
             let expected = answer.isEmpty ? gap.frenchWord : answer
+            guard isContentForm(expected, of: gap, kind: .translation) else { return nil }
             let english = statement.isEmpty ? gap.englishTranslation : statement
             var explanation = "\(expected) — \(english)"
             if let note { explanation += "\n\(note)" }

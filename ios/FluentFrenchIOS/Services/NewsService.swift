@@ -27,6 +27,14 @@ nonisolated struct NewsArticle: Identifiable, Hashable {
     var level: CEFRLevel = .B1
     /// True when `level` was estimated from the text rather than authored.
     var isLevelEstimated: Bool = false
+    /// True when `body` is the opening excerpt the news service hands out
+    /// rather than the whole piece — live articles always are, curated ones
+    /// never are. The reader says so and offers the source (E26).
+    var isExcerpt: Bool = false
+
+    /// The summary to show as a context box, or nil when it would only repeat
+    /// the body's opening.
+    var contextSummary: String? { ArticleText.contextSummary(summary: summary, body: body) }
 
     var timeAgo: String {
         let diff = Date().timeIntervalSince(publishedAt)
@@ -249,9 +257,9 @@ nonisolated struct NewsAPIArticle: Decodable {
         guard let title, !title.isEmpty, title != "[Removed]" else { return nil }
         let formatter = ISO8601DateFormatter()
         let date = formatter.date(from: publishedAt ?? "") ?? Date()
-        let summary = description ?? ""
-        let body = content?.replacingOccurrences(of: #"\[\+\d+ chars\]"#, with: "", options: .regularExpression) ?? summary
-        let text = body.isEmpty ? summary : body
+        let summary = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // No readable text means a blank reader — drop the headline instead (E22).
+        guard let text = ArticleText.body(content: content, description: description) else { return nil }
         return NewsArticle(
             id: NewsArticle.id(url: url, title: title, source: source?.name),
             title: title,
@@ -264,7 +272,8 @@ nonisolated struct NewsAPIArticle: Decodable {
             body: text,
             url: url,
             level: ReadingLevelEstimator.estimate([title, summary, text].joined(separator: " ")),
-            isLevelEstimated: true
+            isLevelEstimated: true,
+            isExcerpt: true
         )
     }
 }

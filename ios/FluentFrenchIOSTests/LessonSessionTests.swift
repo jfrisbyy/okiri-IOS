@@ -362,7 +362,82 @@ struct LessonSessionTests {
         #expect(s.end == .finished && s.summary.releasedConceptIds == ["T"])
     }
 
+    // MARK: Option grading keeps tags
+
+    /// Options that differ only in their parenthetical tag are different answers:
+    /// exactly one of "the (masculine singular)" / "the (feminine singular)" is right.
+    @Test func taggedOptionsAreGradedApart() throws {
+        var article = gap("le", concept: "definite-articles", category: .grammar)
+        article.englishTranslation = "the (masculine singular)"
+        let q = LessonQuestion(gap: article, kind: .multipleChoice,
+                               prompt: "What does “le” mean?",
+                               correctAnswer: article.englishTranslation,
+                               options: ["the (masculine singular)", "the (feminine singular)", "the (plural)"])
+        #expect(LessonSession.grade(.option("the (masculine singular)"), for: q).correct)
+        #expect(!LessonSession.grade(.option("the (feminine singular)"), for: q).correct)
+        #expect(!LessonSession.grade(.option("the (plural)"), for: q).correct)
+        #expect(!LessonSession.grade(.option("the"), for: q).correct)
+
+        var s = LessonSession(lesson: lesson([article]), isCapstone: false, config: config())
+        s.start(with: [q])
+        let submitted = s.submit(.option("the (feminine singular)"))
+        let out = try #require(submitted)
+        #expect(!out.correct && out.xp == 0 && out.heartLost)
+        #expect(out.evidence.first?.loggedAnswer == "the (feminine singular)")
+    }
+
+    // MARK: Mastery is earned unaided
+
+    /// A remedial shows the answer before the pick (C6), so it can never be the
+    /// evidence that flashes "Mastered!".
+    @Test func remedialCorrectDoesNotCountTowardMastery() throws {
+        var s = session(for: lesson([gap("g1"), gap("g2")]), config: config(hearts: 20, masteryTarget: 2))
+        let first = try #require(s.current)
+        _ = try answerWrongly(&s)
+        #expect(s.masteredGapIds.isEmpty)
+        var remedialsAnswered = 0
+        var flashes: [String] = []
+        while s.advance() {
+            let q = try #require(s.current)
+            let out = try answerCorrectly(&s)
+            if q.isRemedial { remedialsAnswered += 1 }
+            if let word = out.masteredWord { flashes.append(word) }
+        }
+        #expect(remedialsAnswered > 0, "the miss queued a remedial")
+        #expect(!s.masteredGapIds.contains(first.gap.id), "the missed word was handed its answer, not mastered")
+        #expect(!flashes.contains(first.gap.frenchWord))
+    }
+
     // MARK: C4 / B6 — match rounds
+
+    /// Guessing down the right column must not stack lapses: one miss per left
+    /// row per round, and a pair already tried does nothing at all.
+    @Test func repeatedWrongPairsRecordOneMissPerRow() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 20))
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+
+        let first = s.matchPair(left: "g1", right: "g2")
+        let wrong = try #require(first)
+        #expect(!wrong.correct && wrong.evidence.count == 1 && wrong.remedialQueued)
+        let remedialsAfterFirst = s.schedule.filter { $0.isRemedial }.count
+
+        let repeated = s.matchPair(left: "g1", right: "g2")
+        #expect(repeated == nil, "the same pair again is not a new answer")
+
+        let other = s.matchPair(left: "g1", right: "g3")
+        let second = try #require(other)
+        #expect(!second.correct, "still wrong, so the row still flashes")
+        #expect(second.evidence.isEmpty, "one miss per left row per round")
+        #expect(!second.remedialQueued && s.schedule.filter { $0.isRemedial }.count == remedialsAfterFirst)
+        #expect(!second.heartLost && s.hearts == 19, "the round's one heart was already spent")
+
+        var last: LessonAnswerOutcome? = nil
+        for g in gaps { last = s.matchPair(left: g.id, right: g.id) }
+        let done = try #require(last)
+        #expect(done.roundComplete && !done.correct)
+        #expect(s.summary.missed.map { $0.id } == ["g1"], "only g1 was missed, once")
+    }
 
     @Test func matchRoundIsOneQuestionWithEvidencePerPair() throws {
         let gaps = (1...4).map { gap("g\($0)") }
@@ -460,6 +535,7 @@ struct LessonSessionTests {
         let out = try answerWrongly(&s)
         #expect(!out.heartLost && s.hearts == Tuning.lessonHearts && !out.remedialQueued)
         #expect(out.evidence.first?.format == .probe && out.evidence.first?.correct == false)
+        #expect(out.evidence.first?.loggedAnswer == nil, "a probe miss is a diagnosis, not a mistake to log")
         #expect(!s.summary.missedGapIds.contains("p") && s.summary.scored == scoredBefore)
         let advanced = s.advance()
         #expect(!advanced && s.end == .finished)

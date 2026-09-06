@@ -407,6 +407,16 @@ struct SimulatedRun {
             lines.append(parts.joined(separator: " "))
         }
         var footer = "unlock day: \(unlockDay.map(String.init) ?? "never")  first verified: \(firstVerifiedDay.map(String.init) ?? "never")  reading toggles: \(readingToggles)  governor days: \(governorDays)"
+        // Role mix over the whole run: how much of the learner's practice was the
+        // day's target concept, and how much was interleaved review of everything
+        // else (the shape `Tuning.reviewSlotsPerLesson` reserves).
+        let entries = driver.store.selectionLog.entries
+        let itemCount = entries.reduce(0) { $0 + $1.items.count }
+        if itemCount > 0 {
+            func tally(_ role: SelectedItemRole) -> Int { entries.reduce(0) { $0 + $1.count(of: role) } }
+            let reviewConcepts = Set(entries.flatMap { $0.items.filter { $0.role == .review }.compactMap { $0.conceptId } })
+            footer += "\nrole mix over \(entries.count) lessons / \(itemCount) items: target \(tally(.target)), check-in \(tally(.checkIn)), review \(tally(.review)), probe \(tally(.probe)) — review spanned \(reviewConcepts.count) concepts"
+        }
         if let placement {
             footer += "  placement: level \(placement.result.estimatedLevel.rawValue), seeds \(placement.seededConceptIds.count), inferred \(placement.inferredConceptIds.count), asked \(placement.result.askedCount)"
         }

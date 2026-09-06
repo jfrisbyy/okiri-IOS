@@ -18,28 +18,40 @@ struct LessonPracticeStage: View {
     /// the explanation is the point of the loop, and it lands below the answer
     /// area where focus would otherwise never reach it.
     @AccessibilityFocusState private var feedbackFocused: Bool
+    /// Scroll anchor for the same box: with five or six options and a long prompt
+    /// the explanation renders below the fold, and "Continue" is always visible,
+    /// so a sighted learner would tap past it without ever seeing it.
+    private let feedbackAnchor = "lesson.feedback"
 
     var body: some View {
         VStack(spacing: 0) {
             LessonPracticeBar(model: model, onClose: onClose)
             if let question = model.current {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Space.xl) {
-                        header(question)
-                        LessonQuestionBody(model: model, question: question)
-                        if model.revealed, let feedback = model.feedback {
-                            LessonFeedbackBox(feedback: feedback)
-                                .accessibilityFocused($feedbackFocused)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Space.xl) {
+                            header(question)
+                            LessonQuestionBody(model: model, question: question)
+                            if model.revealed, let feedback = model.feedback {
+                                LessonFeedbackBox(feedback: feedback)
+                                    .id(feedbackAnchor)
+                                    .accessibilityFocused($feedbackFocused)
+                            }
+                            if let note = model.releaseNote {
+                                LessonReleaseNote(text: note)
+                            }
                         }
-                        if let note = model.releaseNote {
-                            LessonReleaseNote(text: note)
-                        }
+                        .padding(Space.xl)
+                        .id(question.id) // slide each question in fresh
+                        .transition(questionTransition)
                     }
-                    .padding(Space.xl)
-                    .id(question.id) // slide each question in fresh
-                    .transition(questionTransition)
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: model.revealed) { _, isRevealed in
+                        guard isRevealed else { return }
+                        feedbackFocused = true
+                        scrollToFeedback(proxy)
+                    }
                 }
-                .scrollDismissesKeyboard(.interactively)
                 LessonBottomBar(model: model, question: question)
             } else {
                 Spacer()
@@ -47,8 +59,17 @@ struct LessonPracticeStage: View {
                 Spacer()
             }
         }
-        .onChange(of: model.revealed) { _, isRevealed in
-            if isRevealed { feedbackFocused = true }
+    }
+
+    /// Bring the explanation into view once an answer is checked; Reduce Motion
+    /// jumps instead of scrolling.
+    private func scrollToFeedback(_ proxy: ScrollViewProxy) {
+        if reduceMotion {
+            proxy.scrollTo(feedbackAnchor, anchor: .bottom)
+        } else {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(feedbackAnchor, anchor: .bottom)
+            }
         }
     }
 

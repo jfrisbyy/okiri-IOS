@@ -42,9 +42,12 @@ struct ArticleReaderView: View {
             regionLabel: article.region.label,
             regionEmoji: article.region.emoji,
             imageUrl: article.imageUrl,
-            summary: article.summary,
+            summary: article.contextSummary,
             text: article.body,
-            sourceTab: "read"
+            sourceTab: "read",
+            sourceUrl: article.url,
+            sourceName: article.source,
+            isExcerpt: article.isExcerpt
         )
     }
 }
@@ -102,6 +105,13 @@ struct WordReader: View {
     var summary: String? = nil
     let text: String
     let sourceTab: String
+    /// The story's web address, when there is one to send the reader to.
+    var sourceUrl: String? = nil
+    /// Who published it — named in the excerpt note and the source link.
+    var sourceName: String? = nil
+    /// True when `text` is the opening excerpt a news service hands out rather
+    /// than the whole piece; the reader says so instead of implying it is all.
+    var isExcerpt: Bool = false
 
     // Selection state
     @State private var target: GlossTarget? = nil
@@ -126,9 +136,14 @@ struct WordReader: View {
                     VStack(alignment: .leading, spacing: Space.lg) {
                         meta
                         if let summary, !summary.isEmpty { contextBox(summary) }
-                        hintRow
-                        articleBody
-                        keyVocabSection
+                        if blocks.isEmpty {
+                            emptyBody
+                        } else {
+                            hintRow
+                            articleBody
+                            if isExcerpt { excerptNote }
+                            keyVocabSection
+                        }
                         if !savedTerms.isEmpty { savedFooter }
                         Color.clear.frame(height: 24)
                     }
@@ -162,7 +177,7 @@ struct WordReader: View {
     // MARK: Hero
 
     private var hero: some View {
-        Color(Theme.backgroundTertiary)
+        Theme.backgroundTertiary
             .frame(height: 300 * heroScale)
             .overlay {
                 if let imageUrl, let url = URL(string: imageUrl) {
@@ -245,8 +260,11 @@ struct WordReader: View {
             .accessibilityLabel("Back")
             .accessibilityHint("Returns to the previous screen")
             Spacer()
-            SpeakButton(text: text, size: 38)
-                .background(.black.opacity(0.32), in: .circle)
+            // Nothing to read aloud when the story arrived without text.
+            if !blocks.isEmpty {
+                SpeakButton(text: text, size: 38)
+                    .background(.black.opacity(0.32), in: .circle)
+            }
         }
         .padding(.horizontal, Space.lg)
         .padding(.top, 8)
@@ -288,6 +306,66 @@ struct WordReader: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Source
+
+    /// A way out to the original story. Nothing at all when there is no URL —
+    /// curated pieces are complete and have no "elsewhere" to point at.
+    @ViewBuilder
+    private var sourceLink: some View {
+        if let sourceUrl, let url = URL(string: sourceUrl) {
+            Link(destination: url) {
+                HStack(spacing: 6) {
+                    Text("Read the full story").scaledFont(14, weight: .semibold)
+                    Image(systemName: "arrow.up.right").scaledFont(11, weight: .bold)
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(tint)
+                .padding(.horizontal, Space.lg)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .background(tint.opacity(0.1))
+                .clipShape(.capsule)
+            }
+            .accessibilityLabel(sourceName.map { "Read the full story at \($0)" } ?? "Read the full story")
+            .accessibilityHint("Opens the original article outside the app")
+        }
+    }
+
+    /// Says plainly that the text above stops early, so a reader does not take
+    /// a mid-sentence cut for the end of the piece.
+    private var excerptNote: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Label(
+                "This is the opening excerpt \(sourceName ?? "the news service") shares — the story continues on their site.",
+                systemImage: "text.append"
+            )
+            .scaledFont(13, weight: .medium).foregroundStyle(Theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            sourceLink
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Space.lg)
+        .background(Theme.backgroundSecondary)
+        .clipShape(.rect(cornerRadius: Radius.card))
+    }
+
+    /// A story whose text never arrived. Rare — the feed drops textless
+    /// headlines — but a reader must never meet a blank page with no reason.
+    private var emptyBody: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Label("No text available for this story", systemImage: "doc.text.magnifyingglass")
+                .scaledFont(15, weight: .bold).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The news service didn't send anything to read here, so there are no words to tap.")
+                .scaledFont(14).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            sourceLink
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Space.lg)
+        .background(Theme.backgroundSecondary)
+        .clipShape(.rect(cornerRadius: Radius.card))
     }
 
     // MARK: Body

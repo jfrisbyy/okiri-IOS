@@ -43,11 +43,21 @@ final class ReadModel {
     }
     var displayed: [NewsArticle] { Array(filtered.prefix(displayLimit)) }
 
+    /// Rises with every load started. Two loads can be in flight at once (tap
+    /// one category chip, then another), and whichever answers last would
+    /// otherwise win — so a fetch only publishes while it is still the
+    /// current one, and a superseded fetch also leaves `isLoading` alone.
+    @ObservationIgnored private var loadToken = 0
+
     func load(level: CEFRLevel, reset: Bool = true) async {
+        loadToken &+= 1
+        let token = loadToken
         if reset { displayLimit = 8 }
         sortLevel = level
         isLoading = true
-        result = await NewsService.fetch(category: category)
+        let fetched = await NewsService.fetch(category: category)
+        guard token == loadToken else { return }
+        result = fetched
         isLoading = false
     }
 }
@@ -441,7 +451,7 @@ struct ReadView: View {
 
     private func feedCard(_ article: NewsArticle, hero: Bool) -> some View {
         let height: CGFloat = (hero ? 230 : 150) * cardScale
-        return Color(Theme.backgroundTertiary)
+        return Theme.backgroundTertiary
             .frame(height: height)
             .overlay {
                 if let urlStr = article.imageUrl, let url = URL(string: urlStr) {

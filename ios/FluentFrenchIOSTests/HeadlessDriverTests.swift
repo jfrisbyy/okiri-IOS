@@ -64,9 +64,9 @@ struct HeadlessDriverTests {
 
         let smart = try #require(log.entries(in: .smart).first)
         #expect(smart.targetConceptId == g.root)
-        #expect(smart.count(of: .target) == Int((Double(Tuning.lessonSize) * Tuning.targetRatio).rounded()))
+        #expect(smart.count(of: .target) == Tuning.lessonSize - Tuning.checkInsPerLesson - Tuning.reviewSlotsPerLesson)
         #expect(smart.count(of: .checkIn) == 1, "the mastered concept comes back as ONE check-in (B7)")
-        #expect(smart.count(of: .review) == 1)
+        #expect(smart.count(of: .review) == 3, "the slots the spine no longer takes go to interleaved review")
         #expect(smart.count(of: .probe) == 1)
         #expect(smart.at == EngineFixtures.now)
         #expect(smart.governorActive == false)
@@ -139,9 +139,10 @@ struct HeadlessDriverTests {
             #expect(gap.retrievability(at: now) == 1.0)
             #expect(gap.nextReviewAt > now)
         }
-        // So the next spine leads with the one root gap that was NOT answered.
+        // So the next spine leads with the weakest root gap that was NOT answered
+        // (root-3 …-5 sat out this lesson: the spine takes three of the six).
         let next = driver.select(.smart)
-        #expect(next.items.first?.gapId == "root-5")
+        #expect(next.items.first?.gapId == "root-3")
 
         // Ten days later every answered item has decayed on its FSRS curve — below
         // root-5's fallback estimate (0.95) — and is overdue again.
@@ -156,21 +157,21 @@ struct HeadlessDriverTests {
         // The ranking moved with the clock too. Root is still the target (its gaps
         // are the most overdue and it carries the leverage; frontier was observed
         // through frontier-0 in lesson 1, so it no longer earns the frontier bonus),
-        // but its spine is now the five DECAYED items answered ten days ago —
-        // weakest first — rather than the never-answered root-5 (fallback 0.95).
+        // but its spine is now the DECAYED items answered ten days ago — weakest
+        // first — rather than the never-answered root-3…5 (fallback 0.76 … 0.95).
         // The mastered concept returns as a check-in: its first check-in fell due a
-        // week after lesson 1, carried by its weakest reviewed gap. Review takes the
-        // most overdue practicable gap of an unmastered concept — and nothing
-        // prerequisite-blocked rides in at either instant.
+        // week after lesson 1, carried by its weakest reviewed gap. Review fills its
+        // reserved slots with the most overdue practicable gaps of unmastered
+        // concepts — and nothing prerequisite-blocked rides in at either instant.
         let later = driver.select(.smart)
         #expect(later.targetConceptId == g.root)
         let laterSpine = later.items.filter { $0.role == .target }.map { $0.gapId }
-        #expect(laterSpine == ["root-0", "root-1", "root-2", "root-3", "root-4"])
+        #expect(laterSpine == ["root-0", "root-1", "root-2"])
         #expect(Set(laterSpine).isSubset(of: answered), "the decayed items are due again and lead the spine")
         #expect(!later.gapIds.contains("root-5"), "the fresh gap now ranks behind the decayed ones")
         #expect(later.checkInItems.map { $0.gapId } == ["done-1"], "check-in on the mastered concept's weakest reviewed gap")
         let laterReview = later.items.filter { $0.role == .review }.map { $0.gapId }
-        #expect(laterReview == ["frontier-1"], "review: the most overdue practicable gap of an unmastered concept")
+        #expect(laterReview == g.frontierGapIds, "review: the most overdue practicable gaps of an unmastered concept")
         #expect(later.items.count == Tuning.lessonSize)
         #expect(!later.gapIds.contains { g.blockedGapIds.contains($0) })
     }
@@ -436,6 +437,21 @@ struct HeadlessDriverTests {
         #expect(run.placement?.seededConceptIds.isEmpty == true, "a declared beginner is seeded nothing")
         #expect(run.placement?.inferredConceptIds.isEmpty == true)
         expectNoGhostsInTheFinalWeek(run, label: "true beginner")
+
+        // Interleaved review is a real share of the run, not a rounding error: with
+        // check-in and review slots reserved (engine-1-2) a steady-state lesson is
+        // no longer blocked practice on one concept, and overdue material from OTHER
+        // concepts is touched on days that concept is not the target.
+        let entries = run.driver.store.selectionLog.entries
+        let items = entries.reduce(0) { $0 + $1.items.count }
+        let reviewItems = entries.reduce(0) { $0 + $1.count(of: .review) }
+        let reviewConcepts = Set(entries.flatMap { $0.items.filter { $0.role == .review }.compactMap { $0.conceptId } })
+        #expect(items > 0)
+        #expect(Double(reviewItems) / Double(items) > 0.15,
+                "interleaved review was \(reviewItems)/\(items) items")
+        #expect(reviewConcepts.count >= 20,
+                "review spread across \(reviewConcepts.count) concepts, not a handful")
+
         let unlock = run.unlockDay ?? Int.max
         #expect(unlock <= 42, "reading unlocked on day \(run.unlockDay.map(String.init) ?? "never"); the target is 4–6 weeks (≤ 42)")
         #expect(run.readingToggles <= 1, "the gate never flip-flops")

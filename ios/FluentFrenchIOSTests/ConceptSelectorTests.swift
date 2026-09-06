@@ -59,9 +59,12 @@ struct ConceptSelectorTests {
         #expect(output.mode == .smart)
         #expect(output.targetConceptId == g.root)
         let spine = output.items.filter { $0.role == .target }.map { $0.gapId }
-        let spineCount = Int((Double(Tuning.lessonSize) * Tuning.targetRatio).rounded())
+        // targetRatio would take 5 of 7, but check-in and review slots are reserved
+        // first, so the spine is capped at 7 − 2 − 2 = 3.
+        let spineCount = Tuning.lessonSize - Tuning.checkInsPerLesson - Tuning.reviewSlotsPerLesson
+        #expect(spineCount < Int((Double(Tuning.lessonSize) * Tuning.targetRatio).rounded()))
         #expect(spine.count == spineCount)
-        #expect(spine == Array(g.rootGapIds.prefix(spineCount)), "weakest first: root-0 (r=0.40) … root-4 (r=0.88)")
+        #expect(spine == Array(g.rootGapIds.prefix(spineCount)), "weakest first: root-0 (r=0.40) … root-2 (r=0.64)")
         #expect(output.items.count >= Tuning.lessonSize)
         #expect(output.headline.hasPrefix("Today: Concept root"))
         #expect(output.rankedConcepts.first?.concept.id == g.root)
@@ -82,7 +85,9 @@ struct ConceptSelectorTests {
         // its weakest reviewed gap (B7) — never through the review pool.
         #expect(output.checkInItems.map { $0.gapId } == ["done-0"])
         let review = output.items.filter { $0.role == .review }.map { $0.gapId }
-        #expect(review == ["frontier-0"], "review interleaves the most overdue practicable gap of an unmastered concept")
+        #expect(review == g.frontierGapIds,
+                "review interleaves the most overdue practicable gaps of other unmastered concepts")
+        #expect(review.count >= Tuning.reviewSlotsPerLesson, "the reserved review slots are actually filled")
         #expect(!ids.contains("done-1"), "the mastered concept's other gap does not ride in as review")
         for item in output.items where item.role == .review || item.role == .checkIn {
             #expect(!item.reason.isEmpty)
@@ -227,12 +232,111 @@ struct ConceptSelectorTests {
         #expect(selector.select(.smart(now: now)).isEmpty)
     }
 
+    // MARK: E4 — a gap with no meaning yet can never carry a lesson
+
+    /// A capture whose lookup failed (offline reading, a tutor correction with no
+    /// English) is stored with an empty meaning and `needsTranslation`. Its answer
+    /// is the empty string, so it must never become the spine, a review item or a
+    /// check-in vehicle — the learner would be asked to pick a blank option.
+    @Test func aGapWithNoMeaningYetNeverBecomesTheSpineReviewOrACheckIn() {
+        let now = EngineFixtures.now
+        func pending(_ id: String, concept: String) -> GapItem {
+            var g = EngineFixtures.gap(id, concept: concept, sourceType: .reading)
+            g.englishTranslation = ""
+            g.needsTranslation = true
+            return g
+        }
+
+        // 1. A blank capture does not make its never-observed concept eligible.
+        let blankOnly = EngineFixtures.store(concepts: [EngineFixtures.concept("cap")],
+                                             gaps: [pending("cap-0", concept: "cap")])
+        blankOnly.sessionIndex = 1   // not a probe session
+        let selector = ConceptSelector(store: blankOnly)
+        let cap = blankOnly.concept("cap")!
+        #expect(blankOnly.gaps[0].isPracticable(at: now), "the item's own schedule offers it…")
+        #expect(!selector.isPracticable(blankOnly.gaps[0], at: now), "…but the selector's eligibility does not")
+        #expect(!selector.hasPracticableGap(cap, now: now))
+        let none = selector.select(.smart(now: now))
+        #expect(none.targetConceptId == nil && none.isEmpty, "no lesson is built around a blank answer")
+
+        // 2. A learning concept keeps its blank capture out of the spine and the
+        //    top-up; its real gap carries the lesson instead.
+        let mixed = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.5)],
+                                         gaps: [pending("c-blank", concept: "c"), EngineFixtures.gap("c-0", concept: "c")])
+        mixed.sessionIndex = 1
+        let lesson = ConceptSelector(store: mixed).select(.smart(now: now))
+        #expect(lesson.targetConceptId == "c")
+        #expect(lesson.gapIds == ["c-0"], "the blank capture rides in neither spine, review nor top-up")
+
+        // 3. A mastered concept is never checked in on a blank capture either.
+        let checkIn = EngineFixtures.store(concepts: [EngineFixtures.mastered("done")],
+                                           gaps: [pending("done-blank", concept: "done")])
+        checkIn.sessionIndex = 1
+        checkIn.probeContent = { _ in [] }   // no probe to fall back on
+        let checkInSelector = ConceptSelector(store: checkIn)
+        #expect(checkInSelector.isCheckInDue(checkIn.concept("done")!, now: now))
+        #expect(checkInSelector.checkInVehicle(for: checkIn.concept("done")!, now: now) == nil,
+                "a blank capture cannot carry a check-in")
+        #expect(checkInSelector.select(.smart(now: now)).isEmpty)
+    }
+
+    // MARK: Lesson shape — review is reserved, not whatever is left over
+
+    /// `targetRatio` alone would take 5 of 7 slots and the two check-ins the other
+    /// 2, so interleaved review never ran: a steady-state lesson was blocked
+    /// practice on one concept while every other concept's overdue gaps waited for
+    /// the day it became the target.
+    @Test func aSmartLessonAlwaysLeavesRoomForInterleavedReview() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let concepts = [
+            EngineFixtures.learning("target", mastery: 0.5),
+            EngineFixtures.learning("other", mastery: 0.4, category: .vocabulary),
+            EngineFixtures.mastered("m1", category: .register),
+            EngineFixtures.mastered("m2", category: .phrasing),
+        ]
+        var gaps: [GapItem] = []
+        for i in 0..<6 {
+            gaps.append(EngineFixtures.gap("target-\(i)", concept: "target", due: now.addingTimeInterval(-Double(i) * day)))
+            gaps.append(EngineFixtures.gap("other-\(i)", concept: "other", category: .vocabulary,
+                                           due: now.addingTimeInterval(-3 * day)))
+        }
+        for id in ["m1", "m2"] {
+            gaps.append(EngineFixtures.gap("\(id)-0", concept: id, category: id == "m1" ? .register : .phrasing,
+                                           due: now.addingTimeInterval(-day), consecutiveCorrect: 2, reviewCount: 4))
+        }
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps)
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        let review = output.items.filter { $0.role == .review }
+
+        #expect(output.targetConceptId == "target", "the most overdue learning concept leads")
+        #expect(output.items.count == Tuning.lessonSize)
+        #expect(output.items.filter { $0.role == .target }.count
+                == Tuning.lessonSize - Tuning.checkInsPerLesson - Tuning.reviewSlotsPerLesson)
+        #expect(output.checkInItems.count == Tuning.checkInsPerLesson)
+        #expect(review.count == Tuning.reviewSlotsPerLesson, "the reserved review slots survive the spine and the check-ins")
+        #expect(review.allSatisfy { $0.conceptId == "other" }, "review interleaves OTHER concepts' overdue gaps")
+
+        // With nothing else due the spine still fills the lesson: the reservation is
+        // a floor for review, not a cap on teaching.
+        store.concepts = [concepts[0]]
+        store.gaps = gaps.filter { $0.conceptId == "target" }
+        let alone = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(alone.items.count == Tuning.lessonSize - 1, "all six of the target's gaps, nothing invented")
+        #expect(alone.items.allSatisfy { $0.role == .target })
+    }
+
     @Test func smartHonoursTheRequestedLessonSize() {
         let g = EngineFixtures.smallGraph()
         g.store.sessionIndex = 1
         let output = ConceptSelector(store: g.store).select(SelectionRequest(mode: .smart, lessonSize: 4, now: EngineFixtures.now))
         #expect(output.items.count == 4)
-        #expect(output.items.filter { $0.role == .target }.count == Int((4 * Tuning.targetRatio).rounded()))
+        // 4 slots cannot hold ratio-spine + check-ins + review: the spine keeps at
+        // least one item and the rest of the lesson still interleaves.
+        #expect(output.items.filter { $0.role == .target }.count == 1)
+        #expect(output.items.contains { $0.role == .review })
     }
 
     // MARK: Scoped mode (entry points as constraints)

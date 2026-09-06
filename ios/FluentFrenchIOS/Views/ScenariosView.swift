@@ -24,7 +24,10 @@ struct ScenariosView: View {
     @State private var customPhrases: [ScenarioPhrase] = []
     /// Why the last guide request failed (E26): shown with its own title, copy and — when it can help — Retry.
     @State private var failure: TalkServiceFailure? = nil
+    /// The phrase whose audio is playing right now — cleared as soon as the
+    /// voice falls silent, so the speaker glyph never stays lit over silence.
     @State private var playingId: String? = nil
+    @State private var voice = NaturalVoice.shared
     @State private var generateTask: Task<Void, Never>? = nil
 
     // Mini translator
@@ -77,6 +80,9 @@ struct ScenariosView: View {
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
         .onAppear { saved = ScenarioStore.load() }
+        .onChange(of: voice.isBusy) { _, busy in
+            if !busy { playingId = nil }
+        }
         .onDisappear {
             NaturalVoice.shared.stop()
             generateTask?.cancel()
@@ -379,7 +385,7 @@ struct ScenariosView: View {
         .buttonStyle(.plain)
         .pressable()
         .accessibilityLabel("\(phrase.french). \(phrase.english)\(phrase.context.isEmpty ? "" : ". \(phrase.context)")")
-        .accessibilityHint(playingId == pid ? "Stops the audio" : "Hears this phrase spoken")
+        .accessibilityHint(playingId == pid ? "Plays this phrase again" : "Hears this phrase spoken")
     }
 
     private func qaTab(_ guide: ScenarioGuide) -> some View {
@@ -421,7 +427,7 @@ struct ScenariosView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(badge): \(french). \(english)")
-        .accessibilityHint(playingId == id ? "Stops the audio" : "Hears this line spoken")
+        .accessibilityHint(playingId == id ? "Plays this line again" : "Hears this line spoken")
     }
 
     private func tipsTab(_ guide: ScenarioGuide) -> some View {
@@ -634,13 +640,12 @@ struct ScenariosView: View {
         }
     }
 
+    /// Tap-to-hear: every tap replays from the start. There is no stop branch —
+    /// the previous utterance is cut off by `speak` itself — so a phrase is
+    /// always one tap away from being heard again.
     private func play(_ text: String, id: String) {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         Haptics.tap()
-        if playingId == id {
-            playingId = nil
-            NaturalVoice.shared.stop()
-            return
-        }
         playingId = id
         NaturalVoice.shared.speak(text)
     }

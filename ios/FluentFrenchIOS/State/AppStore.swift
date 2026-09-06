@@ -2973,10 +2973,15 @@ extension AppStore {
     /// dialogue's level as the gap's level and the difficulty relative to the
     /// learner from `CaptureBuilder`. Built through the capture factory so it
     /// starts scheduled, and deduped on the headword by `captureGap`.
+    ///
+    /// A line that is not card-sized is refused, exactly as every other capture
+    /// path refuses one (`CaptureBuilder.isAcceptableHeadword`): a sixteen-word
+    /// turn saved as a gap comes back as "Translate to French: …" against the
+    /// whole line, which the learner cannot answer (talkmedia-5-1).
     @discardableResult
     func captureListeningTurn(_ spec: ListeningCaptureSpec, from item: ListeningItem, now: Date = Date()) -> CaptureOutcome {
         let french = spec.french.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !french.isEmpty else { return .rejected }
+        guard !french.isEmpty, CaptureBuilder.isAcceptableHeadword(french) else { return .rejected }
         if let existing = existingGap(forWord: french) { return .duplicate(existing) }
         let english = spec.english.trimmingCharacters(in: .whitespacesAndNewlines)
         let level = item.difficulty.captureLevel

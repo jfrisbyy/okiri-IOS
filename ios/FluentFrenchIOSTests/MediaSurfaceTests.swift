@@ -116,6 +116,52 @@ struct MediaSurfaceTests {
         #expect(gap.difficulty == .easy)
     }
 
+    // MARK: - talkmedia-5-1 card-size rule on listening captures
+
+    @Test func aWholeDialogueLineTooLongForACardIsRefusedNotSaved() {
+        let store = EngineFixtures.store()
+        let long = (1...(Tuning.maxCaptureWords + 3)).map { "mot\($0)" }.joined(separator: " ")
+        let twoSentences = "Bonjour ! Je voudrais un café."
+        let item = dialogue([("A", long, "en-long"), ("B", twoSentences, "en-two"), ("A", "un café", "a coffee")])
+        let specs = ListeningCapture.specs(for: item, from: 0, to: 2)
+        #expect(specs.map(\.isCardSized) == [false, false, true],
+                "the sheet can tell which lines the deck would take")
+        #expect(store.captureListeningTurn(specs[0], from: item, now: now) == .rejected,
+                "a line longer than \(Tuning.maxCaptureWords) words is text, not a card")
+        #expect(store.captureListeningTurn(specs[1], from: item, now: now) == .rejected,
+                "a line spanning two sentences is text, not a card")
+        #expect(store.gaps.filter { $0.sourceType == .listening }.isEmpty)
+    }
+
+    @Test func savingAWholeSelectionKeepsOnlyTheCardSizedLines() {
+        let store = EngineFixtures.store()
+        let long = (1...(Tuning.maxCaptureWords + 1)).map { "mot\($0)" }.joined(separator: " ")
+        let item = dialogue([("A", "un café", "a coffee"), ("B", long, "en-long"), ("A", "s'il vous plaît", "please")])
+        let outcome = store.captureListeningTurns(ListeningCapture.specs(for: item, from: 0, to: 2), from: item, now: now)
+        #expect(outcome.savedCount == 2)
+        #expect(outcome.duplicateCount == 0)
+        #expect(store.gaps.map(\.frenchWord).sorted() == ["s'il vous plaît", "un café"])
+        #expect(store.gaps.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.frenchWord) })
+    }
+
+    @Test func everyShippedDialogueLineTheDeckAcceptsIsCardSized() {
+        let store = EngineFixtures.store()
+        for item in ListeningData.items {
+            let specs = ListeningCapture.specs(for: item, from: 0, to: max(0, item.turns.count - 1))
+            for spec in specs {
+                let outcome = store.captureListeningTurn(spec, from: item, now: now)
+                if case .saved = outcome {
+                    #expect(spec.isCardSized, "\(spec.french) was saved but is not card-sized")
+                    #expect(CaptureBuilder.isAcceptableHeadword(spec.french))
+                } else if case .rejected = outcome {
+                    #expect(!spec.isCardSized, "\(spec.french) is card-sized but was refused")
+                }
+            }
+        }
+        #expect(store.gaps.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.frenchWord) },
+                "no shipped dialogue line can put an unanswerable card in the deck")
+    }
+
     // MARK: - E17 playback state machine
 
     @Test func pauseWhileBufferingClearsTheSpinnerAndDropsTheClip() {

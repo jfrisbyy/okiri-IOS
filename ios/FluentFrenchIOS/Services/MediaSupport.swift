@@ -522,6 +522,13 @@ nonisolated struct ListeningCaptureSpec: Hashable, Identifiable {
     let french: String
     let english: String
     var id: Int { turnIndex }
+
+    /// True when the line is small enough to be a card — a word or a short
+    /// phrase from one sentence, the same rule every other capture surface
+    /// applies (`CaptureBuilder.isAcceptableHeadword`). A whole dialogue turn
+    /// often is not: the deck would later ask the learner to type it out
+    /// (talkmedia-5-1).
+    var isCardSized: Bool { CaptureBuilder.isAcceptableHeadword(french) }
 }
 
 nonisolated enum ListeningCapture {

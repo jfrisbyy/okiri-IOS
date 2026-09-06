@@ -86,6 +86,7 @@ struct SpeakView: View {
         .onChange(of: mode) { _, _ in
             if recorder.isRecording { recorder.cancel() }
             NaturalVoice.shared.stop()
+            clearRound()
         }
         .alert(MicAvailability.permissionDenied.title, isPresented: $showSettingsAlert) {
             Button("Open Settings") { openSettings() }
@@ -97,6 +98,23 @@ struct SpeakView: View {
 
     private func openSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+    }
+
+    /// A round belongs to the mode it happened in. Switching Free / Guided /
+    /// Write drops the transcript, the feedback and outcome cards, any failure,
+    /// and the repeat-request guard, so the new tab never shows a fluency score
+    /// for something said in another one — nor greys out "Get feedback" because
+    /// the text matches a request made elsewhere (talkmedia-5-2).
+    private func clearRound() {
+        feedbackTask?.cancel()
+        feedbackTask = nil
+        feedbackLoading = false
+        feedback = nil
+        feedbackOutcome = nil
+        feedbackFailure = nil
+        spokenText = ""
+        lastRequest = nil
+        micNotice = nil
     }
 
     // MARK: - Header (stats bound to the store — E16)

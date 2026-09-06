@@ -795,6 +795,16 @@ struct ReadCaptureTests {
                 }
             }
         }
+        // The piece the audit named: the body says "de l'énergie propre" and
+        // "Beaucoup d'experts", the chips offer "énergie" and "experts".
+        let r3 = ReadingLibrary.pieces.first { $0.id == "r3" }?.body ?? ""
+        let chips = KeyVocabulary.words(in: r3)
+        #expect(r3.contains("l'énergie") && r3.contains("d'experts"))
+        #expect(chips.contains("énergie"))
+        #expect(KeyVocabulary.headword(for: "l'énergie") == "énergie",
+                "the body's l'énergie and the énergie chip are one card, not two")
+        #expect(KeyVocabulary.headword(for: "d'experts") == "experts",
+                "a word past the chip limit still taps to a headword, not to an elided chunk")
     }
 
     // MARK: - read-4-2 A form two tenses spell alike names both tenses

@@ -569,7 +569,11 @@ private struct ListeningCaptureSheet: View {
         }
     }
 
-    private var pending: [ListeningCaptureSpec] { specs.filter { !isDone($0) } }
+    /// Lines the deck can actually hold — a word or a short phrase from one
+    /// sentence. A whole long turn is text, not a card (talkmedia-5-1).
+    private var savable: [ListeningCaptureSpec] { specs.filter(\.isCardSized) }
+
+    private var pending: [ListeningCaptureSpec] { savable.filter { !isDone($0) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -585,7 +589,9 @@ private struct ListeningCaptureSheet: View {
                 .accessibilityLabel("Close")
             }
             .padding(.top, 8)
-            Text("Each line becomes its own card, with its own translation.")
+            Text(savable.count == specs.count
+                 ? "Each line becomes its own card, with its own translation."
+                 : "Each short line becomes its own card, with its own translation. Longer lines are text, not cards.")
                 .font(.footnote).foregroundStyle(Theme.textSecondary)
 
             ScrollView {
@@ -655,19 +661,30 @@ private struct ListeningCaptureSheet: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Replay this line")
                 Spacer(minLength: 0)
-                Button {
-                    let result = store.captureListeningTurn(spec, from: item)
-                    outcomes[spec.turnIndex] = result
-                    if case .saved = result { Haptics.success() } else { Haptics.tap() }
-                } label: {
-                    Label(status(spec), systemImage: done ? "checkmark.circle.fill" : "plus.circle.fill")
-                        .font(.footnote.weight(.semibold)).foregroundStyle(.white)
+                if spec.isCardSized {
+                    Button {
+                        let result = store.captureListeningTurn(spec, from: item)
+                        outcomes[spec.turnIndex] = result
+                        if case .saved = result { Haptics.success() } else { Haptics.tap() }
+                    } label: {
+                        Label(status(spec), systemImage: done ? "checkmark.circle.fill" : "plus.circle.fill")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 14).frame(minHeight: 44)
+                            .background(done ? Theme.success : accent).clipShape(.capsule)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(done)
+                    .accessibilityLabel(done ? status(spec) : "Save this line to my deck")
+                } else {
+                    // The deck refuses a whole long turn, so the sheet says why
+                    // rather than offering a save that would become an
+                    // unanswerable "translate this line" question (talkmedia-5-1).
+                    Label("Too long to save as a card", systemImage: "exclamationmark.circle.fill")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 14).frame(minHeight: 44)
-                        .background(done ? Theme.success : accent).clipShape(.capsule)
+                        .background(Theme.backgroundSecondary).clipShape(.capsule)
+                        .accessibilityLabel("Too long to save as a card — a card holds a word or a short phrase, up to \(Tuning.maxCaptureWords) words from one sentence")
                 }
-                .buttonStyle(.plain)
-                .disabled(done)
-                .accessibilityLabel(done ? status(spec) : "Save this line to my deck")
             }
         }
         .padding(14)

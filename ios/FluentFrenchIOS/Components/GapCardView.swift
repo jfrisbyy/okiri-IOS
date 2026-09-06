@@ -13,6 +13,20 @@ import SwiftUI
 struct GapCardView: View {
     let gap: GapItem
     @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The meaning is empty until a pending capture is translated; the card shows
+    /// a "Translation pending" pill instead of a blank line (Package G).
+    private var isAwaitingTranslation: Bool {
+        gap.needsTranslation || gap.englishTranslation.isEmpty
+    }
+
+    /// What VoiceOver reads for the card as a whole.
+    private var summaryLabel: String {
+        isAwaitingTranslation
+            ? "\(gap.frenchWord), translation pending"
+            : "\(gap.frenchWord), \(gap.englishTranslation)"
+    }
 
     private var streakColor: Color {
         gap.consecutiveCorrect >= 3 ? Theme.success : (gap.consecutiveCorrect >= 1 ? Theme.warning : Theme.border)
@@ -33,31 +47,53 @@ struct GapCardView: View {
     private var streakTarget: Int { Tuning.gapMasteryStreak }
     private var streakShown: Int { min(gap.consecutiveCorrect, streakTarget) }
 
+    /// The card is one VoiceOver element (a button), so the status the eye reads
+    /// from the chips — where it came from, whether it is due, how far the
+    /// mastery streak has come — is spoken as the element's value.
+    private var statusValue: String {
+        var parts = ["from \(gap.sourceType.label)"]
+        if let urgency { parts.append(urgency.text) }
+        parts.append("mastery streak \(streakShown) of \(streakTarget)")
+        return parts.joined(separator: ", ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
+            Button {
+                withAnimation(Theme.motion(.easeInOut(duration: 0.2), reduceMotion: reduceMotion)) {
+                    expanded.toggle()
+                }
+            } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         Circle().fill(gap.category.color).frame(width: 8, height: 8).accessibilityHidden(true)
                         Text(gap.frenchWord).font(.body.weight(.semibold)).foregroundStyle(Theme.primary)
                         Spacer()
                         SpeakButton(text: gap.frenchWord)
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.footnote).foregroundStyle(Theme.textMuted)
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.footnote).foregroundStyle(Theme.textSecondary)
                             .accessibilityHidden(true)
                     }
-                    Text(gap.englishTranslation).font(.subheadline).foregroundStyle(Theme.text).padding(.leading, 18)
+                    if isAwaitingTranslation {
+                        Pill(text: "Translation pending", color: Theme.warning)
+                            .padding(.leading, 18)
+                    } else {
+                        Text(gap.englishTranslation).font(.subheadline).foregroundStyle(Theme.text).padding(.leading, 18)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(gap.exampleSentence)
-                            .font(.footnote).italic().foregroundStyle(Theme.textSecondary)
-                            .lineLimit(expanded ? nil : 2)
-                        Spacer()
-                        Image(systemName: "quote.closing").font(.caption).foregroundStyle(Theme.textMuted)
-                            .accessibilityHidden(true)
+                    if !gap.exampleSentence.isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(gap.exampleSentence)
+                                .font(.footnote).italic().foregroundStyle(Theme.textSecondary)
+                                .lineLimit(expanded ? nil : 2)
+                            Spacer()
+                            Image(systemName: "quote.closing").font(.caption).foregroundStyle(Theme.textMuted)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(10)
+                        .background(Theme.background)
+                        .clipShape(.rect(cornerRadius: 8))
                     }
-                    .padding(10)
-                    .background(Theme.background)
-                    .clipShape(.rect(cornerRadius: 8))
 
                     HStack {
                         HStack(spacing: 4) {
@@ -85,8 +121,10 @@ struct GapCardView: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(gap.frenchWord), \(gap.englishTranslation)")
+            .accessibilityLabel(summaryLabel)
+            .accessibilityValue(statusValue)
             .accessibilityHint(expanded ? "Collapses the memory detail" : "Expands the memory detail")
+            .accessibilityAction(named: "Listen") { NaturalVoice.shared.speak(gap.frenchWord) }
 
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
@@ -109,7 +147,7 @@ struct GapCardView: View {
 
     private func infoBox(label: String, text: String, tint: Color = Theme.background) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(Theme.textMuted).tracking(0.3)
+            Text(label.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(Theme.textSecondary).tracking(0.3)
             Text(text).font(.footnote).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -125,14 +163,25 @@ struct GapCardView: View {
         let stability = gap.fsrs?.stability ?? 1
         return VStack(alignment: .leading, spacing: 8) {
             Text("MEMORY").font(.caption2.weight(.semibold)).foregroundStyle(Theme.secondary).tracking(0.3)
-            HStack(spacing: 16) {
-                memoryStat("\(r)%", "recall now")
-                memoryStat(String(format: "%.1fd", stability), "stability")
-                memoryStat(relativeDue(gap.nextReviewAt), "next review")
+                .accessibilityAddTraits(.isHeader)
+            if gap.isNew {
+                // No review evidence yet: quoting a recall percentage here would
+                // be inventing one.
+                Text("Not practiced yet — your memory of this word is measured after the first review.")
+                    .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    memoryStat("\(r)%", "recall now", spoken: "\(r) percent")
+                    memoryStat(String(format: "%.1fd", stability), "memory strength",
+                               spoken: String(format: "%.1f days", stability))
+                    memoryStat(relativeDue(gap.nextReviewAt), "next review",
+                               spoken: relativeDueSpoken(gap.nextReviewAt))
+                }
+                ForgettingCurve(stability: stability, retrievability: gap.retrievability)
+                    .frame(height: 42)
+                    .accessibilityHidden(true)
             }
-            ForgettingCurve(stability: stability, retrievability: gap.retrievability)
-                .frame(height: 42)
-                .accessibilityHidden(true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -140,12 +189,18 @@ struct GapCardView: View {
         .clipShape(.rect(cornerRadius: 8))
     }
 
-    private func memoryStat(_ value: String, _ label: String) -> some View {
+    /// One memory number with its plain-English label. `spoken` replaces the
+    /// on-screen shorthand ("7.4d") with something VoiceOver can read.
+    private func memoryStat(_ value: String, _ label: String, spoken: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value).font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
-            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
+                .minimumScaleFactor(0.8)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(spoken ?? value)
     }
 
     private func relativeDue(_ date: Date) -> String {
@@ -154,6 +209,15 @@ struct GapCardView: View {
         if days < 0.5 { return "today" }
         if days < 1.5 { return "tomorrow" }
         return "in \(Int(days.rounded()))d"
+    }
+
+    /// The same answer spelled out, so VoiceOver says "in 4 days", not "in 4 d".
+    private func relativeDueSpoken(_ date: Date) -> String {
+        let days = date.timeIntervalSinceNow / 86_400
+        if days < -0.5 { return "overdue" }
+        if days < 0.5 { return "today" }
+        if days < 1.5 { return "tomorrow" }
+        return "in \(Int(days.rounded())) days"
     }
 }
 

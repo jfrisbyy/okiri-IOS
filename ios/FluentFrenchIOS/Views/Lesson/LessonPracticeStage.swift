@@ -13,6 +13,11 @@ struct LessonPracticeStage: View {
     let model: LessonViewModel
     let onClose: () -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// VoiceOver focus moves to the feedback the moment an answer is checked —
+    /// the explanation is the point of the loop, and it lands below the answer
+    /// area where focus would otherwise never reach it.
+    @AccessibilityFocusState private var feedbackFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +29,7 @@ struct LessonPracticeStage: View {
                         LessonQuestionBody(model: model, question: question)
                         if model.revealed, let feedback = model.feedback {
                             LessonFeedbackBox(feedback: feedback)
+                                .accessibilityFocused($feedbackFocused)
                         }
                         if let note = model.releaseNote {
                             LessonReleaseNote(text: note)
@@ -31,8 +37,7 @@ struct LessonPracticeStage: View {
                     }
                     .padding(Space.xl)
                     .id(question.id) // slide each question in fresh
-                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                            removal: .move(edge: .leading).combined(with: .opacity)))
+                    .transition(questionTransition)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 LessonBottomBar(model: model, question: question)
@@ -42,6 +47,17 @@ struct LessonPracticeStage: View {
                 Spacer()
             }
         }
+        .onChange(of: model.revealed) { _, isRevealed in
+            if isRevealed { feedbackFocused = true }
+        }
+    }
+
+    /// Reduce Motion drops the full-width horizontal slide between questions;
+    /// the cross-fade stays so the change is still visible.
+    private var questionTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                           removal: .move(edge: .leading).combined(with: .opacity))
     }
 
     @ViewBuilder
@@ -98,7 +114,8 @@ struct LessonPracticeBar: View {
                 if let hearts = model.hearts {
                     LessonHeartsView(hearts: hearts, maximum: Tuning.lessonHearts)
                 } else {
-                    Text("No hearts").font(.caption.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                    Text("No hearts").font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                        .accessibilityLabel("No hearts in a capstone")
                 }
             }
             HStack(spacing: 10) {
@@ -106,19 +123,30 @@ struct LessonPracticeBar: View {
                 LessonStatChip(icon: "star.fill", color: Theme.warning, value: "\(model.session.xp)", label: "XP")
                 Spacer()
                 Text(trailingLabel)
-                    .font(.caption.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                    .font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel(trailingAccessibilityLabel)
             }
         }
         .padding(.horizontal, Space.xl).padding(.top, 10).padding(.bottom, 6)
     }
+
+    private var practicableCount: Int { model.gaps.filter { !$0.isProbe }.count }
 
     private var trailingLabel: String {
         let total = model.session.schedule.count
         if model.isCapstone {
             return "\(min(total, model.session.position + 1)) of \(total)"
         }
-        let practicable = model.gaps.filter { !$0.isProbe }.count
-        return "\(model.session.masteredGapIds.count)/\(practicable) mastered"
+        return "\(model.session.masteredGapIds.count)/\(practicableCount) mastered"
+    }
+
+    /// "3/8 mastered" would be read out as "three slash eight"; spell it out.
+    private var trailingAccessibilityLabel: String {
+        let total = model.session.schedule.count
+        if model.isCapstone {
+            return "Question \(min(total, model.session.position + 1)) of \(total)"
+        }
+        return "\(model.session.masteredGapIds.count) of \(practicableCount) mastered"
     }
 }
 
@@ -126,6 +154,7 @@ struct LessonPracticeBar: View {
 
 struct LessonFeedbackBox: View {
     let feedback: LessonFeedback
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var color: Color {
         switch feedback.tone {
@@ -170,7 +199,7 @@ struct LessonFeedbackBox: View {
             }
             if !feedback.alternatives.isEmpty {
                 Text("Also accepted: \(feedback.alternatives.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(Theme.textMuted)
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -178,13 +207,20 @@ struct LessonFeedbackBox: View {
         .padding(Space.lg)
         .background(background)
         .clipShape(.rect(cornerRadius: Radius.card))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(riseTransition)
+    }
+
+    /// Reduce Motion drops the slide up from the bottom edge.
+    private var riseTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .move(edge: .bottom).combined(with: .opacity)
     }
 }
 
 /// B11: "Nice — you've got <concept>, moving on."
 struct LessonReleaseNote: View {
     let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 8) {
@@ -197,7 +233,13 @@ struct LessonReleaseNote: View {
         .padding(Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.secondaryLight).clipShape(.rect(cornerRadius: Radius.card))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(riseTransition)
+    }
+
+    /// Reduce Motion drops the slide up from the bottom edge.
+    private var riseTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .move(edge: .bottom).combined(with: .opacity)
     }
 }
 
@@ -224,7 +266,8 @@ struct LessonBottomBar: View {
                 } label: {
                     Text("Show me · \(model.revealsLeft) left")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                        .frame(maxWidth: .infinity).frame(minHeight: 44)
+                        .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Show me the answer, \(model.revealsLeft) left")

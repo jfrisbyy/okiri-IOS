@@ -14,6 +14,10 @@ import SwiftUI
 
 struct ListenView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The header holds the largest text on the screen, so its height grows with
+    /// the learner's text size instead of clipping the title.
+    @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 175
 
     @State private var typeFilter: TypeFilter = .all
     @State private var levelFilter: LevelFilter = .forYou
@@ -75,7 +79,7 @@ struct ListenView: View {
                             Image(systemName: "line.3.horizontal.decrease.circle").font(.caption).accessibilityHidden(true)
                             Text(levelCopy).font(.caption)
                         }
-                        .foregroundStyle(Theme.textMuted)
+                        .foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if shelf.isEmpty {
@@ -108,12 +112,12 @@ struct ListenView: View {
                 .frame(width: 240, height: 240).offset(x: 130, y: -30)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Listen").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
+                Text("Listen").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
                 Text("Train your ear with French dialogues and stories").font(.subheadline).foregroundStyle(.white.opacity(0.85))
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
-        .frame(height: 175)
+        .frame(height: headerHeight)
         .clipped()
     }
 
@@ -130,11 +134,11 @@ struct ListenView: View {
                 let active = option == selection
                 Button {
                     Haptics.tap()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { onSelect(option) }
+                    withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.85), reduceMotion: reduceMotion)) { onSelect(option) }
                 } label: {
                     Text(label(option)).font(.footnote.weight(.semibold))
                         .foregroundStyle(active ? .white : Theme.textSecondary)
-                        .frame(maxWidth: .infinity).frame(minHeight: 36)
+                        .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
                         .background(active ? Self.violet : .clear)
                         .clipShape(.rect(cornerRadius: 9))
                 }
@@ -165,13 +169,15 @@ struct ListenView: View {
             selected = item
         } label: {
             HStack(spacing: 14) {
-                Text(item.emoji).font(.system(size: 30))
+                Text(item.emoji).scaledFont(30).minimumScaleFactor(0.6)
                     .frame(width: 54, height: 54)
                     .background(Self.violet.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title).font(.callout.weight(.semibold)).foregroundStyle(Theme.text).lineLimit(1)
-                    Text(item.titleEnglish).font(.footnote).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    Text(item.title).font(.callout.weight(.semibold)).foregroundStyle(Theme.text)
+                        .multilineTextAlignment(.leading)
+                    Text(item.titleEnglish).font(.footnote).foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.leading)
                     HStack(spacing: 6) {
                         Pill(text: item.difficulty.label, color: difficultyColor(item.difficulty))
                         if levelFilter == .forYou {
@@ -179,7 +185,7 @@ struct ListenView: View {
                         }
                         Pill(text: item.type.label, color: Self.violet)
                         Label("\(item.durationSeconds)s", systemImage: "clock")
-                            .font(.caption2.weight(.medium)).foregroundStyle(Theme.textMuted)
+                            .font(.caption2.weight(.medium)).foregroundStyle(Theme.textSecondary)
                     }
                     .padding(.top, 2)
                 }
@@ -225,6 +231,9 @@ private struct ListenPlayerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The hold-to-capture bar wraps its own label, so it grows with the text size.
+    @ScaledMetric(relativeTo: .subheadline) private var captureBarHeight: CGFloat = 48
     @State private var player = DialoguePlayer()
     @State private var showSubtitles = true
     @State private var speedIndex = 2
@@ -289,7 +298,7 @@ private struct ListenPlayerView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close player")
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title).font(.serifDisplay(24, weight: .bold)).foregroundStyle(.white)
+                    Text(item.title).scaledSerifDisplay(24, weight: .bold).foregroundStyle(.white)
                     Text(item.titleEnglish).font(.subheadline).foregroundStyle(.white.opacity(0.85))
                 }
             }
@@ -300,12 +309,12 @@ private struct ListenPlayerView: View {
 
     private var artwork: some View {
         VStack(spacing: 14) {
-            Text(item.emoji).font(.system(size: 72))
+            Text(item.emoji).scaledFont(72).minimumScaleFactor(0.5)
                 .frame(width: 140, height: 140)
                 .background(accent.opacity(0.1)).clipShape(.rect(cornerRadius: 30))
                 .overlay(RoundedRectangle(cornerRadius: 30).stroke(accent.opacity(0.2), lineWidth: 1))
                 .scaleEffect(player.isPlaying ? 1.04 : 1)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: player.isPlaying)
+                .reducedMotionAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: player.isPlaying)
                 .accessibilityHidden(true)
             Text(item.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -321,6 +330,7 @@ private struct ListenPlayerView: View {
                     if turn.speaker != "narrator" {
                         Text(turn.speaker)
                             .font(.caption.weight(.bold)).foregroundStyle(.white)
+                            .minimumScaleFactor(0.6)
                             .frame(width: 24, height: 24)
                             .background(turn.speaker == "B" ? Theme.secondary : accent).clipShape(.circle)
                     } else {
@@ -330,7 +340,7 @@ private struct ListenPlayerView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(turn.french).font(.subheadline.weight(isCurrent ? .semibold : .regular))
                             .foregroundStyle(isCurrent ? Theme.text : Theme.textSecondary)
-                        Text(turn.english).font(.caption).foregroundStyle(Theme.textMuted)
+                        Text(turn.english).font(.caption).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -356,7 +366,7 @@ private struct ListenPlayerView: View {
                     ZStack(alignment: .leading) {
                         Capsule().fill(Theme.border).frame(height: 5)
                         Capsule().fill(accent).frame(width: geo.size.width * player.progress, height: 5)
-                            .animation(.linear(duration: 0.2), value: player.progress)
+                            .reducedMotionAnimation(.linear(duration: 0.2), value: player.progress)
                     }
                 }
                 .frame(height: 5)
@@ -365,7 +375,7 @@ private struct ListenPlayerView: View {
                 .accessibilityValue("Line \(min(player.currentIndex + 1, item.turns.count)) of \(item.turns.count)")
                 HStack {
                     Text("Line \(min(player.currentIndex + 1, item.turns.count)) of \(item.turns.count)")
-                        .font(.caption2).foregroundStyle(Theme.textMuted)
+                        .font(.caption2).foregroundStyle(Theme.textSecondary)
                     Spacer()
                     if player.didFinish {
                         Text("Finished").font(.caption2.weight(.semibold)).foregroundStyle(Theme.success)
@@ -387,7 +397,7 @@ private struct ListenPlayerView: View {
                     ZStack {
                         Circle().fill(accent).frame(width: 64, height: 64)
                         if player.isBuffering {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(.white).accessibilityHidden(true)
                         } else {
                             Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                                 .font(.title).foregroundStyle(.white)
@@ -425,7 +435,7 @@ private struct ListenPlayerView: View {
                 .accessibilityHint("Cycles to the next speed")
                 Button {
                     Haptics.tap()
-                    withAnimation { showSubtitles.toggle() }
+                    withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { showSubtitles.toggle() }
                 } label: {
                     Label("Subtitles", systemImage: showSubtitles ? "captions.bubble.fill" : "captions.bubble")
                         .font(.footnote.weight(.semibold))
@@ -463,7 +473,7 @@ private struct ListenPlayerView: View {
         } else if let notice = player.voiceSource.notice {
             HStack(spacing: 8) {
                 Image(systemName: "speaker.wave.1").font(.caption).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
-                Text(notice).font(.caption).foregroundStyle(Theme.textMuted)
+                Text(notice).font(.caption).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
@@ -471,7 +481,7 @@ private struct ListenPlayerView: View {
         } else {
             HStack(spacing: 6) {
                 Image(systemName: "waveform").font(.caption).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
-                Text(player.voiceSource.label).font(.caption).foregroundStyle(Theme.textMuted)
+                Text(player.voiceSource.label).font(.caption).foregroundStyle(Theme.textSecondary)
                 Spacer(minLength: 0)
             }
             .accessibilityElement(children: .combine)
@@ -489,7 +499,7 @@ private struct ListenPlayerView: View {
             }
             .foregroundStyle(capturing ? .white : accent)
         }
-        .frame(maxWidth: .infinity).frame(height: 48)
+        .frame(maxWidth: .infinity).frame(height: captureBarHeight)
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
@@ -612,6 +622,7 @@ private struct ListeningCaptureSheet: View {
             HStack(alignment: .top, spacing: 10) {
                 if spec.speaker != "narrator" {
                     Text(spec.speaker).font(.caption.weight(.bold)).foregroundStyle(.white)
+                        .minimumScaleFactor(0.6)
                         .frame(width: 24, height: 24)
                         .background(spec.speaker == "B" ? Theme.secondary : accent).clipShape(.circle)
                         .accessibilityHidden(true)

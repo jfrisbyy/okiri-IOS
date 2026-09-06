@@ -14,6 +14,23 @@ import SwiftUI
 struct AssessmentView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Icon gutters grow with the type ratio so glyphs stay inside them at large
+    /// text sizes (G1). Only used for the small 22–28 pt gutters: the body curve
+    /// reaches ~3.1x at the largest accessibility sizes, which would make big
+    /// chrome wider than the screen.
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
+    /// Clamped multiplier for icon tiles, matching `HomeView`/`ProfileView`.
+    private var tile: CGFloat { Theme.chromeScale(typeScale) }
+    /// Hero chrome follows the large-title curve (the curve the numbers inside
+    /// them use) and is clamped so the disc never outgrows the narrowest phone.
+    @ScaledMetric(relativeTo: .largeTitle) private var introDiscSize: CGFloat = 104
+    @ScaledMetric(relativeTo: .largeTitle) private var ringSize: CGFloat = 130
+    private var introDisc: CGFloat { min(introDiscSize, 160) }
+    private var ring: CGFloat { min(ringSize, 200) }
+    /// The close disc stops at the 44 pt hit target: past that it only eats the
+    /// row it sits in.
+    private var closeDisc: CGFloat { min(32 * Theme.chromeScale(typeScale), Theme.minimumHitTarget) }
 
     /// True on first launch (starts the record from zero); false when re-taking
     /// ("Recalibrate": the result blends with existing evidence, D8).
@@ -29,6 +46,9 @@ struct AssessmentView: View {
     @State private var selected: String? = nil
     @State private var revealed = false
     @State private var result: PlacementResult? = nil
+    /// VoiceOver focus moves to the explanation when an answer is checked, so
+    /// the reason for the result is heard instead of having to be hunted for.
+    @AccessibilityFocusState private var explanationFocused: Bool
 
     private static let indigo = LinearGradient(
         colors: [Color(hex: "6366F1"), Color(hex: "4338CA")],
@@ -54,11 +74,14 @@ struct AssessmentView: View {
             if !isFirstRun { topClose }
             Spacer()
             ZStack {
-                Circle().fill(Self.indigo).frame(width: 104, height: 104).softLift(radius: 20, y: 10, strength: 2)
-                Image(systemName: "graduationcap.fill").font(.system(size: 44)).foregroundStyle(.white)
+                Circle().fill(Self.indigo)
+                    .frame(width: introDisc, height: introDisc)
+                    .softLift(radius: 20, y: 10, strength: 2)
+                Image(systemName: "graduationcap.fill").scaledFont(44).foregroundStyle(.white)
             }
-            Text(isFirstRun ? "Welcome ! Let's find your level" : "Recalibrate your level")
-                .font(.serifDisplay(28, weight: .bold)).foregroundStyle(Theme.text).multilineTextAlignment(.center)
+            .accessibilityHidden(true)
+            Text(isFirstRun ? "Welcome! Let's find your level" : "Recalibrate your level")
+                .scaledSerifDisplay(28, weight: .bold).foregroundStyle(Theme.text).multilineTextAlignment(.center)
             Text(isFirstRun
                  ? "A few quick questions that adapt to you. We'll set your starting point and only teach what you don't already know."
                  : "A short retake to update your level. It adds to what you've already shown — it never lowers what you've earned.")
@@ -82,8 +105,10 @@ struct AssessmentView: View {
             if isFirstRun {
                 Button { declareBeginner() } label: {
                     Text("I'm a complete beginner")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Self.accent)
+                        .scaledFont(14, weight: .semibold).foregroundStyle(Self.accent)
+                        .minimumHitTarget()
                 }
+                .accessibilityHint("Skips the questions and starts you from the very first words")
             }
         }
         .padding(Space.xl)
@@ -91,12 +116,14 @@ struct AssessmentView: View {
 
     private func infoRow(_ icon: String, _ text: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 18)).foregroundStyle(Self.accent).frame(width: 28)
+            Image(systemName: icon).scaledFont(18).foregroundStyle(Self.accent)
+                .frame(width: 28 * Theme.chromeScale(typeScale))
                 .accessibilityHidden(true)
             Text(text).font(.callout).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
+        .accessibilityElement(children: .combine)
     }
 
     /// The staircase's bounds, read from the engine (never hard-coded in copy — D17).
@@ -117,7 +144,7 @@ struct AssessmentView: View {
                             Pill(text: q.category.label, color: q.category.color)
                             Spacer()
                         }
-                        Text(q.prompt).font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.text)
+                        Text(q.prompt).scaledFont(22, weight: .bold).foregroundStyle(Theme.text)
                             .fixedSize(horizontal: false, vertical: true)
                         VStack(spacing: 10) {
                             ForEach(q.options, id: \.self) { option in optionRow(option, q: q) }
@@ -126,24 +153,39 @@ struct AssessmentView: View {
                     }
                     .padding(Space.xl)
                     .id(q.id)
-                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                            removal: .move(edge: .leading).combined(with: .opacity)))
+                    .transition(questionTransition)
                 }
                 bottomBar(q)
+            }
+            .onChange(of: revealed) { _, isRevealed in
+                if isRevealed { explanationFocused = true }
             }
         } else {
             ProgressView().tint(Self.accent)
         }
     }
 
+    /// Reduce Motion drops the large horizontal slide; the cross-fade stays so
+    /// the change is still visible.
+    private var questionTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                           removal: .move(edge: .leading).combined(with: .opacity))
+    }
+
+    private var feedbackTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+    }
+
     private var quizBar: some View {
         HStack(spacing: 12) {
             if !isFirstRun {
                 Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textMuted)
-                        .frame(width: 44, height: 44)
+                    Image(systemName: "xmark").scaledFont(16, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                        .minimumHitTarget()
                 }
                 .accessibilityLabel("Close")
+                .accessibilityHint("Leaves the placement check")
             }
             // The adaptive test has no fixed length: the bar fills toward the engine's
             // maximum as evidence accumulates, with a tick at its minimum (D17).
@@ -154,7 +196,7 @@ struct AssessmentView: View {
                     Capsule().fill(Theme.border).frame(height: 10)
                     Capsule().fill(Self.indigo)
                         .frame(width: max(10, geo.size.width * fraction), height: 10)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: engine.asked.count)
+                        .reducedMotionAnimation(.spring(response: 0.5, dampingFraction: 0.8), value: engine.asked.count)
                     Rectangle().fill(Theme.card.opacity(0.9))
                         .frame(width: 2, height: 10)
                         .offset(x: geo.size.width * minFraction)
@@ -165,7 +207,7 @@ struct AssessmentView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Placement progress")
             .accessibilityValue("Question \(questionNumber) of at most \(engineMax); at least \(engineMin)")
-            Text("Q\(questionNumber)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textMuted)
+            Text("Q\(questionNumber)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                 .accessibilityHidden(true)
         }
         .padding(.horizontal, Space.xl).padding(.top, 16).padding(.bottom, 8)
@@ -203,13 +245,19 @@ struct AssessmentView: View {
             Haptics.tap(); selected = option
         } label: {
             HStack {
-                Text(option).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                Text(option).scaledFont(16, weight: .medium).foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if revealed && isCorrect { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.success) }
-                else if revealed && isSelected { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.error) }
+                if revealed && isCorrect {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.success).accessibilityHidden(true)
+                } else if revealed && isSelected {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.error).accessibilityHidden(true)
+                }
             }
             .padding(Space.lg).background(bg).clipShape(.rect(cornerRadius: Radius.card))
             .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(stroke, lineWidth: 1.5))
+            .frame(minHeight: Theme.minimumHitTarget)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(option)
@@ -222,19 +270,24 @@ struct AssessmentView: View {
             HStack(spacing: 6) {
                 Image(systemName: selected == q.correctAnswer ? "checkmark.circle.fill" : "info.circle.fill")
                     .foregroundStyle(selected == q.correctAnswer ? Theme.success : Self.accent)
-                Text(selected == q.correctAnswer ? "Correct !" : "Answer: \(q.correctAnswer)")
-                    .font(.system(size: 15, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text(selected == q.correctAnswer ? "Correct!" : "Answer: \(q.correctAnswer)")
+                    .scaledFont(15, weight: .semibold)
                     .foregroundStyle(selected == q.correctAnswer ? Theme.success : Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if !q.explanation.isEmpty {
-                Text(q.explanation).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                Text(q.explanation).scaledFont(14).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Space.lg)
         .background(selected == q.correctAnswer ? Theme.successLight : Self.accent.opacity(0.08))
         .clipShape(.rect(cornerRadius: Radius.card))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .accessibilityElement(children: .combine)
+        .accessibilityFocused($explanationFocused)
+        .transition(feedbackTransition)
     }
 
     private func bottomBar(_ q: AssessmentQuestion) -> some View {
@@ -254,17 +307,24 @@ struct AssessmentView: View {
                 VStack(spacing: Space.lg) {
                     Spacer().frame(height: 30)
                     ZStack {
-                        Circle().fill(Self.indigo).frame(width: 130, height: 130).softLift(radius: 20, y: 10, strength: 2)
+                        Circle().fill(Self.indigo)
+                            .frame(width: ring, height: ring)
+                            .softLift(radius: 20, y: 10, strength: 2)
                         VStack(spacing: 0) {
-                            Text(result.estimatedLevel.rawValue).font(.system(size: 40, weight: .heavy)).foregroundStyle(.white)
+                            Text(result.estimatedLevel.rawValue).scaledFont(40, weight: .heavy).foregroundStyle(.white)
+                                .lineLimit(1).minimumScaleFactor(0.6)
                             Text("placed at").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1).minimumScaleFactor(0.6)
                         }
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: ring)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Placed at \(result.estimatedLevel.rawValue)")
-                    Text(headline(result)).font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
+                    Text(headline(result)).scaledSerifDisplay(26, weight: .bold).foregroundStyle(Theme.text)
                         .multilineTextAlignment(.center)
-                    Text(blurb(result)).font(.system(size: 15)).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+                    Text(blurb(result)).scaledFont(15).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     scoreCard(result)
                     routeCard(result)
@@ -281,16 +341,21 @@ struct AssessmentView: View {
     /// The two separate estimates — vocabulary coverage and grammar control.
     private func scoreCard(_ result: PlacementResult) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("YOUR PROFILE").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+            Text("YOUR PROFILE").scaledFont(11, weight: .bold).foregroundStyle(Theme.textSecondary).tracking(0.5)
             scoreRow("textformat", "Vocabulary", result.vocabBand, Self.accent)
             scoreRow("curlybraces", "Grammar", result.grammarBand, Theme.secondary)
             HStack(spacing: 12) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(Theme.success).frame(width: 28)
-                Text("Answered correctly").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(Theme.success)
+                    .frame(width: 28 * Theme.chromeScale(typeScale))
+                    .accessibilityHidden(true)
+                Text("Answered correctly").scaledFont(14).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Text("\(result.correctCount)/\(max(result.askedCount, 1))")
-                    .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.text)
+                    .scaledFont(15, weight: .bold).foregroundStyle(Theme.text)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Answered correctly")
+            .accessibilityValue("\(result.correctCount) of \(max(result.askedCount, 1))")
         }
         .padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card)).softLift()
@@ -299,10 +364,13 @@ struct AssessmentView: View {
     private func scoreRow(_ icon: String, _ label: String, _ band: Int, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                Image(systemName: icon).font(.system(size: 14)).foregroundStyle(tint).frame(width: 22)
-                Text(label).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                Image(systemName: icon).scaledFont(14).foregroundStyle(tint)
+                    .frame(width: 22 * Theme.chromeScale(typeScale))
+                    .accessibilityHidden(true)
+                Text(label).scaledFont(15, weight: .semibold).foregroundStyle(Theme.text)
                 Spacer()
-                Text(bandStrength(band)).font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+                // The words carry the meaning; the tinted bar only echoes them.
+                Text(bandStrength(band)).scaledFont(12, weight: .semibold).foregroundStyle(tint)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -312,10 +380,10 @@ struct AssessmentView: View {
                 }
             }
             .frame(height: 8)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(label) strength")
-            .accessibilityValue(bandStrength(band))
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) strength")
+        .accessibilityValue(bandStrength(band))
     }
 
     private func bandStrength(_ band: Int) -> String {
@@ -333,17 +401,19 @@ struct AssessmentView: View {
         let foundation = result.isTrueBeginner || store.willEnterFoundation(after: result)
         return HStack(spacing: 14) {
             Image(systemName: foundation ? "building.columns.fill" : "book.fill")
-                .font(.system(size: 20)).foregroundStyle(.white)
-                .frame(width: 46, height: 46)
+                .scaledFont(20).foregroundStyle(.white)
+                .frame(width: 46 * tile, height: 46 * tile)
                 .background(foundation ? Theme.secondary : Theme.success)
                 .clipShape(.rect(cornerRadius: 13))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(foundation ? "Starting with Foundation" : "Straight to reading")
-                    .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.text)
+                    .scaledFont(15, weight: .bold).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(foundation
                      ? "We'll build the core basics first, then unlock real content as you go."
                      : "You're ready for real articles. More activities open as you practice.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    .scaledFont(12).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -351,6 +421,7 @@ struct AssessmentView: View {
         .padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.5), lineWidth: 0.5))
+        .accessibilityElement(children: .combine)
     }
 
     private func headline(_ result: PlacementResult) -> String {
@@ -388,7 +459,7 @@ struct AssessmentView: View {
         engine = PlacementEngine(bank: AssessmentService.placementBank(concepts: store.concepts, probes: store.probeContent))
         result = nil
         loadNext()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { stage = .quiz }
+        withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) { stage = .quiz }
     }
 
     private func declareBeginner() {
@@ -396,7 +467,7 @@ struct AssessmentView: View {
         engine.declareBeginner()
         let r = engine.result()
         result = r
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { stage = .results }
+        withAnimation(Theme.motion(.spring(response: 0.45, dampingFraction: 0.85), reduceMotion: reduceMotion)) { stage = .results }
     }
 
     private func loadNext() {
@@ -411,19 +482,19 @@ struct AssessmentView: View {
         engine.record(q, correct: correct)
         if correct { Haptics.success() }
         else { UINotificationFeedbackGenerator().notificationOccurred(.error) }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { revealed = true }
+        withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.8), reduceMotion: reduceMotion)) { revealed = true }
     }
 
     private func advance() {
         if let nextQ = engine.next() {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                 current = nextQ
                 selected = nil
                 revealed = false
             }
         } else {
             result = engine.result()
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { stage = .results }
+            withAnimation(Theme.motion(.spring(response: 0.45, dampingFraction: 0.85), reduceMotion: reduceMotion)) { stage = .results }
         }
     }
 
@@ -439,20 +510,24 @@ struct AssessmentView: View {
         HStack {
             Spacer()
             Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textMuted)
-                    .frame(width: 32, height: 32).background(Theme.card).clipShape(.circle).softLift(strength: 0.5)
-                    .frame(width: 44, height: 44)
+                Image(systemName: "xmark").scaledFont(16, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                    .frame(width: closeDisc, height: closeDisc)
+                    .background(Theme.card).clipShape(.circle).softLift(strength: 0.5)
+                    .minimumHitTarget()
             }
             .accessibilityLabel("Close")
+            .accessibilityHint("Leaves the placement check")
         }
     }
 
     private func primaryButton(_ title: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
+            Text(title).scaledFont(17, weight: .bold).foregroundStyle(.white)
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
+                .frame(minHeight: Theme.minimumHitTarget)
                 .background(enabled ? Self.accent : Theme.textMuted)
                 .clipShape(.rect(cornerRadius: 14))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)

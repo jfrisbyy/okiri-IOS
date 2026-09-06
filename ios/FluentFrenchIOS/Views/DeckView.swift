@@ -15,6 +15,10 @@ import SwiftUI
 
 struct DeckView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 at the default text size; the square icon badges grow with it so the
+    /// glyph inside keeps its padding.
+    @ScaledMetric private var typeScale: CGFloat = 1
     @State private var selectedCategory: GapCategory? = nil
     @State private var showMastered = false
     @State private var scopedLesson: AssembledLesson? = nil
@@ -75,7 +79,7 @@ struct DeckView: View {
         GradientHeader(gradient: Theme.tealGradient, title: "My Gaps", subtitle: "Practice your weak spots until mastery") {
             EmptyView()
         }
-        .frame(height: 190)
+        .frame(minHeight: 190)
         .overlay(alignment: .bottomLeading) {
             HStack(spacing: 20) {
                 HeaderStat(systemImage: "clock.badge.exclamationmark", value: "\(dueNowCount)", label: "Due now")
@@ -100,17 +104,18 @@ struct DeckView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 Image(systemName: "brain.head.profile")
-                    .font(.system(size: 22)).foregroundStyle(Color(hex: "C7D2FE"))
-                    .frame(width: 44, height: 44)
+                    .scaledFont(22).foregroundStyle(Color(hex: "C7D2FE"))
+                    .frame(width: Theme.minimumHitTarget * typeScale, height: Theme.minimumHitTarget * typeScale)
                     .background(Color.white.opacity(0.12)).clipShape(.rect(cornerRadius: 14))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Spaced Repetition").font(.system(size: 17, weight: .bold)).foregroundStyle(Color(hex: "E0E7FF"))
-                    Text("\(due) due now · \(soon) coming up").font(.footnote).foregroundStyle(Color(hex: "A5B4FC"))
+                    Text("Spaced Repetition").scaledFont(17, weight: .bold).foregroundStyle(Color(hex: "E0E7FF"))
+                    Text("\(due) due now · \(soon) coming up").font(.footnote).foregroundStyle(Color(hex: "E0E7FF").opacity(0.9))
                 }
+                .accessibilityElement(children: .combine)
                 Spacer()
                 Text("\(due)")
-                    .font(.system(size: 13, weight: .heavy)).foregroundStyle(.white)
+                    .scaledFont(13, weight: .heavy).foregroundStyle(.white)
                     .padding(.horizontal, 9).padding(.vertical, 5)
                     .background(due > 0 ? Theme.error : Color.white.opacity(0.2)).clipShape(.capsule)
                     .accessibilityLabel("\(due) due now")
@@ -120,16 +125,21 @@ struct DeckView: View {
             } label: {
                 HStack {
                     Spacer()
-                    Text(due > 0 ? "Review due now" : "Review what's coming up").font(.system(size: 16, weight: .bold)).foregroundStyle(Color(hex: "312E81"))
-                    Image(systemName: "chevron.right").font(.system(size: 14, weight: .bold)).foregroundStyle(Color(hex: "312E81"))
+                    Text(due > 0 ? "Review due now" : "Review what's coming up").scaledFont(16, weight: .bold).foregroundStyle(Color(hex: "312E81"))
+                        .multilineTextAlignment(.center)
+                    Image(systemName: "chevron.right").scaledFont(14, weight: .bold).foregroundStyle(Color(hex: "312E81"))
+                        .accessibilityHidden(true)
                     Spacer()
                 }
                 .padding(.vertical, 14)
+                .frame(minHeight: Theme.minimumHitTarget)
                 .background(Color(hex: "E0E7FF"))
                 .clipShape(.rect(cornerRadius: Radius.card))
             }
             .buttonStyle(.plain)
             .pressable()
+            .accessibilityHint(due > 0 ? "Starts a review of the cards due today"
+                                       : "Starts an early review of what is coming up")
         }
         .padding(Space.xl)
         .background(Theme.indigoGradient)
@@ -146,6 +156,7 @@ struct DeckView: View {
                 let h = store.gapHealth
                 HStack(spacing: 6) {
                     Circle().fill(h.score >= healthy ? Theme.success : h.score >= attention ? Theme.warning : Theme.error).frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
                     Text(h.label).font(.caption.weight(.semibold))
                         .foregroundStyle(h.score >= healthy ? Color(hex: "065F46") : h.score >= attention ? Color(hex: "92400E") : Color(hex: "991B1B"))
                 }
@@ -166,17 +177,20 @@ struct DeckView: View {
                 startScoped(due > 0 ? .dueNow : .mixed)
             } label: {
                 HStack(spacing: 14) {
-                    Image(systemName: "bolt.fill").font(.system(size: 18)).foregroundStyle(.white)
-                        .frame(width: 40, height: 40).background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
+                    Image(systemName: "bolt.fill").scaledFont(18).foregroundStyle(.white)
+                        .frame(width: 40 * Theme.chromeScale(typeScale), height: 40 * Theme.chromeScale(typeScale))
+                        .background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(due > 0 ? "Review due now" : "Start Practice")
-                            .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                            .scaledFont(16, weight: .semibold).foregroundStyle(.white)
                         Text(due > 0 ? "\(due) card\(due == 1 ? "" : "s") due now" : "Mixed review of all categories")
-                            .font(.footnote).foregroundStyle(.white.opacity(0.8))
+                            .font(.footnote).foregroundStyle(.white.opacity(0.9))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     Image(systemName: "chevron.right").foregroundStyle(.white)
+                        .accessibilityHidden(true)
                 }
                 .padding(Space.lg)
                 .background(due > 0 ? Theme.error : Theme.primary)
@@ -185,6 +199,7 @@ struct DeckView: View {
             }
             .buttonStyle(.plain)
             .pressable()
+            .accessibilityHint("Starts a practice session")
         }
     }
 
@@ -200,22 +215,27 @@ struct DeckView: View {
                     } label: {
                         HStack(spacing: 12) {
                             Capsule().fill(category.color).frame(width: 4, height: 28)
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(category.label).font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(active ? Theme.primaryDark : (s.active == 0 ? Theme.textMuted : Theme.text))
-                                Text("\(s.active) active · \(s.mastered) mastered").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                                Text(category.label).scaledFont(15, weight: .semibold)
+                                    .foregroundStyle(active ? Theme.primaryDark : (s.active == 0 ? Theme.textSecondary : Theme.text))
+                                Text("\(s.active) active · \(s.mastered) mastered").scaledFont(12).foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
                             if s.active > 0 {
+                                // Nested inside the outer filter Button, so this is not a
+                                // separate VoiceOver element: the equivalent action lives on
+                                // the outer button as a custom accessibility action below.
                                 Button {
                                     startScoped(.category(category))
                                 } label: {
-                                    Image(systemName: "play.fill").font(.system(size: 11)).foregroundStyle(category.color)
-                                        .frame(width: 28, height: 28).background(category.color.opacity(0.12)).clipShape(.rect(cornerRadius: 8))
-                                        .frame(width: 44, height: 44)
+                                    Image(systemName: "play.fill").scaledFont(11).foregroundStyle(category.color)
+                                        .frame(width: 28 * Theme.chromeScale(typeScale), height: 28 * Theme.chromeScale(typeScale))
+                                        .background(category.color.opacity(0.12)).clipShape(.rect(cornerRadius: 8))
+                                        .minimumHitTarget()
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Practice \(category.label)")
+                                .accessibilityHidden(true)
                             }
                         }
                         .padding(Space.lg)
@@ -223,10 +243,16 @@ struct DeckView: View {
                         .clipShape(.rect(cornerRadius: Radius.card))
                         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(active ? Theme.primary : Theme.border.opacity(0.5), lineWidth: active ? 1.5 : 0.5))
                         .softLift(radius: 10, y: 3, strength: 0.6)
-                        .opacity(s.active == 0 && s.mastered == 0 ? 0.5 : 1)
                     }
                     .buttonStyle(.plain)
                     .pressable()
+                    .accessibilityActions {
+                        if s.active > 0 {
+                            Button("Practice \(category.label)") { startScoped(.category(category)) }
+                        }
+                    }
+                    .accessibilityAddTraits(active ? .isSelected : [])
+                    .accessibilityHint("Filters the gaps below by this category")
                 }
             }
         }
@@ -237,15 +263,19 @@ struct DeckView: View {
             SectionHeader(title: selectedCategory?.label ?? "All Gaps", trailing: "\(displayedGaps.count) gaps")
             if displayedGaps.isEmpty {
                 VStack(spacing: 12) {
-                    Image(systemName: "square.stack.3d.up").font(.system(size: 32)).foregroundStyle(Theme.textMuted)
-                        .frame(width: 64, height: 64).background(Theme.backgroundSecondary).clipShape(.circle)
+                    Image(systemName: "square.stack.3d.up").scaledFont(32).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 64 * Theme.chromeScale(typeScale), height: 64 * Theme.chromeScale(typeScale))
+                        .background(Theme.backgroundSecondary).clipShape(.circle)
+                        .accessibilityHidden(true)
                     Text("No gaps yet").font(.headline).foregroundStyle(Theme.text)
                     Text(selectedCategory == nil
                          ? "Your lessons and captures fill this deck as you go."
                          : "Nothing in \(selectedCategory?.label ?? "this category") yet — capture words while reading or speaking.")
-                        .font(.subheadline).foregroundStyle(Theme.textMuted).multilineTextAlignment(.center)
+                        .font(.subheadline).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 40)
+                .accessibilityElement(children: .combine)
             } else {
                 VStack(spacing: 10) {
                     ForEach(displayedGaps.prefix(12)) { gap in
@@ -258,27 +288,41 @@ struct DeckView: View {
 
     private var masteredSection: some View {
         VStack(spacing: 0) {
-            Button { withAnimation(.easeInOut) { showMastered.toggle() } } label: {
+            Button {
+                withAnimation(Theme.motion(.easeInOut, reduceMotion: reduceMotion)) { showMastered.toggle() }
+            } label: {
                 HStack {
-                    Image(systemName: "rosette").font(.system(size: 15)).foregroundStyle(Theme.success)
-                    Text("Mastered (\(store.masteredGaps.count))").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                    Image(systemName: "rosette").scaledFont(15).foregroundStyle(Theme.success)
+                        .accessibilityHidden(true)
+                    Text("Mastered (\(store.masteredGaps.count))").scaledFont(15, weight: .semibold).foregroundStyle(Theme.text)
                     Spacer()
-                    Image(systemName: showMastered ? "chevron.up" : "chevron.down").foregroundStyle(Theme.textMuted)
+                    Image(systemName: showMastered ? "chevron.up" : "chevron.down").foregroundStyle(Theme.textSecondary)
+                        .accessibilityHidden(true)
                 }
                 .padding(14)
+                .frame(minHeight: Theme.minimumHitTarget)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Mastered, \(store.masteredGaps.count)")
             .accessibilityValue(showMastered ? "Expanded" : "Collapsed")
+            .accessibilityHint(showMastered ? "Hides the list" : "Shows the words you have mastered")
             if showMastered {
                 VStack(spacing: 0) {
                     ForEach(store.masteredGaps) { gap in
                         HStack {
-                            Text(gap.frenchWord).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.success)
+                            Text(gap.frenchWord).scaledFont(14, weight: .medium).foregroundStyle(Theme.success)
                             Spacer()
-                            Text(gap.englishTranslation).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                            // Same "waiting for its meaning" state as the deck
+                            // cards, so a pending capture never shows a blank.
+                            if gap.needsTranslation || gap.englishTranslation.isEmpty {
+                                Pill(text: "Translation pending", color: Theme.warning)
+                            } else {
+                                Text(gap.englishTranslation).scaledFont(13).foregroundStyle(Theme.textSecondary)
+                                    .multilineTextAlignment(.trailing)
+                            }
                         }
                         .padding(.vertical, 8)
+                        .accessibilityElement(children: .combine)
                         Divider()
                     }
                 }

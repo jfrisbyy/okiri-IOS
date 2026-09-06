@@ -13,6 +13,8 @@ import SwiftUI
 struct GapsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    /// 1 at the default text size; the square category badge grows with it.
+    @ScaledMetric private var typeScale: CGFloat = 1
     @State private var scopedLesson: AssembledLesson? = nil
     /// The selector's headline when a tapped category had nothing to offer.
     @State private var emptyHeadline: String? = nil
@@ -121,9 +123,12 @@ struct GapsView: View {
 
     private func overviewStat(value: String, label: String, tint: Color, icon: String) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(tint).accessibilityHidden(true)
-            Text(value).font(.system(size: 20, weight: .heavy)).foregroundStyle(Theme.text)
-            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
+            Image(systemName: icon).scaledFont(15).foregroundStyle(tint).accessibilityHidden(true)
+            Text(value).scaledFont(20, weight: .heavy).foregroundStyle(Theme.text)
+                .minimumScaleFactor(0.6).lineLimit(1)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
@@ -150,12 +155,14 @@ struct GapsView: View {
         } label: {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
-                    Image(systemName: icon(stat.category)).font(.system(size: 18)).foregroundStyle(stat.category.color)
-                        .frame(width: 44, height: 44).background(stat.category.color.opacity(0.1)).clipShape(.rect(cornerRadius: 12))
+                    Image(systemName: icon(stat.category)).scaledFont(18).foregroundStyle(stat.category.color)
+                        .frame(width: Theme.minimumHitTarget * typeScale, height: Theme.minimumHitTarget * typeScale)
+                        .background(stat.category.color.opacity(0.1)).clipShape(.rect(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(stat.category.color.opacity(0.16), lineWidth: 0.5))
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(stat.category.label).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
-                        Text("\(stat.active) active · \(stat.mastered) mastered").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Text(stat.category.label).scaledFont(16, weight: .semibold).foregroundStyle(Theme.text)
+                        Text("\(stat.active) active · \(stat.mastered) mastered").scaledFont(12).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
                     Pill(text: healthLabel, color: healthColor)
@@ -175,19 +182,19 @@ struct GapsView: View {
                 HStack {
                     if stat.due > 0 {
                         HStack(spacing: 4) {
-                            Image(systemName: "clock.fill").font(.system(size: 10))
+                            Image(systemName: "clock.fill").scaledFont(10).accessibilityHidden(true)
                             Text("\(stat.due) due now").font(.caption.weight(.medium))
                         }
                         .foregroundStyle(Theme.warning)
                     } else {
                         Text(stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention)% retention")
-                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                            .scaledFont(12).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
                     if stat.active > 0 {
                         HStack(spacing: 4) {
-                            Text("Practice").font(.system(size: 12, weight: .semibold))
-                            Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold))
+                            Text("Practice").scaledFont(12, weight: .semibold)
+                            Image(systemName: "arrow.right").scaledFont(10, weight: .bold).accessibilityHidden(true)
                         }
                         .foregroundStyle(stat.category.color)
                     }
@@ -203,6 +210,9 @@ struct GapsView: View {
         .buttonStyle(.plain)
         .pressable()
         .accessibilityLabel("\(stat.category.label): \(stat.active) active, \(stat.mastered) mastered, \(healthLabel)")
+        .accessibilityValue(stat.due > 0
+                            ? "\(stat.due) due now"
+                            : (stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention) percent retention"))
         .accessibilityHint(stat.active > 0 ? "Starts a focused lesson." : "Nothing to practice here yet.")
     }
 

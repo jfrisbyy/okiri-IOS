@@ -35,7 +35,7 @@ struct LessonPrimaryButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .frame(minHeight: 44)
+        .frame(minHeight: Theme.minimumHitTarget)
     }
 }
 
@@ -55,30 +55,37 @@ struct LessonSecondaryButton: View {
             .foregroundStyle(Theme.primary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
+            .frame(minHeight: Theme.minimumHitTarget)
             .background(Theme.primaryLight)
             .clipShape(.rect(cornerRadius: 12))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(minHeight: 44)
     }
 }
 
 struct LessonCloseButton: View {
     let action: () -> Void
+    /// The circular chrome grows with the type ratio so the glyph stays inside
+    /// it, stopping at the 44 pt hit target: past that the disc only eats the
+    /// row it shares with the progress bar.
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
+    private var disc: CGFloat { min(32 * Theme.chromeScale(typeScale), Theme.minimumHitTarget) }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.textMuted)
-                .frame(width: 32, height: 32)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: disc, height: disc)
                 .background(Theme.card)
                 .clipShape(.circle)
                 .softLift(strength: 0.5)
-                .frame(minWidth: 44, minHeight: 44)
+                .minimumHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Close lesson")
+        .accessibilityHint("Leaves this lesson")
     }
 }
 
@@ -111,7 +118,7 @@ struct LessonProgressBar: View {
                 Capsule().fill(Theme.border).frame(height: 10)
                 Capsule().fill(Theme.primaryGradient)
                     .frame(width: max(10, geo.size.width * min(1, max(0, progress))), height: 10)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
+                    .reducedMotionAnimation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
             }
         }
         .frame(height: 10)
@@ -127,17 +134,18 @@ struct LessonStatChip: View {
     let value: String
     let label: String
     var pop: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.caption).foregroundStyle(color).accessibilityHidden(true)
             Text(value).font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
-            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(color.opacity(0.1)).clipShape(.capsule)
-        .scaleEffect(pop ? 1.25 : 1)
-        .animation(.spring(response: 0.3, dampingFraction: 0.5), value: pop)
+        .scaleEffect(pop && !reduceMotion ? 1.25 : 1)
+        .reducedMotionAnimation(.spring(response: 0.3, dampingFraction: 0.5), value: pop)
         .accessibilityElement(children: .combine)
     }
 }
@@ -145,6 +153,7 @@ struct LessonStatChip: View {
 struct LessonFlashOverlay: View {
     let title: String
     let subtitle: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack {
@@ -160,9 +169,15 @@ struct LessonFlashOverlay: View {
             .background(Theme.success).clipShape(.capsule).softLift(radius: 16, y: 8, strength: 2)
             Spacer().frame(height: 120)
         }
-        .transition(.scale(scale: 0.6).combined(with: .opacity))
+        .transition(flashTransition)
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Reduce Motion drops the scale pop; the flash still fades in and out.
+    private var flashTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .scale(scale: 0.6).combined(with: .opacity)
     }
 }
 
@@ -219,11 +234,13 @@ struct LessonMissedList: View {
                         Text(item.correctAnswer).font(.footnote).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // Combined on the text only: combining the whole row would
+                    // swallow the Listen button and make it untappable.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(item.gap.frenchWord): \(item.correctAnswer)")
                     Spacer(minLength: 0)
                     SpeakButton(text: item.gap.frenchWord, size: 26)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(item.gap.frenchWord): \(item.correctAnswer)")
             }
         }
     }

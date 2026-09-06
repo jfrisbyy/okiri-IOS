@@ -101,6 +101,15 @@ enum HomeResource: Int, Identifiable {
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Icon tiles, rings and medallions grow with the learner's text size so the
+    /// scaled glyphs inside them keep their proportions instead of overflowing.
+    @ScaledMetric(relativeTo: .body) private var tileScale: CGFloat = 1
+    @ScaledMetric(relativeTo: .largeTitle) private var markScale: CGFloat = 1
+    /// Clamped multipliers: past `Theme.maxChromeScale` a tile would take the whole
+    /// row it shares with text, so the containers stop growing there.
+    private var tile: CGFloat { Theme.chromeScale(tileScale) }
+    private var mark: CGFloat { min(markScale, Theme.maxChromeScale) }
     @State private var showProfile = false
     @State private var showCEFR = false
     /// The lesson being shown (smart, scoped or capstone) — always assembled from
@@ -268,7 +277,8 @@ struct HomeView: View {
                 Image(systemName: "chevron.left")
                     .font(.headline.weight(.bold))
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
+                    .frame(width: max(Theme.minimumHitTarget, 44 * tile),
+                           height: max(Theme.minimumHitTarget, 44 * tile))
                     .background(Color.black.opacity(0.22), in: Circle())
                     .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
             }
@@ -365,7 +375,7 @@ struct HomeView: View {
                     HStack(spacing: 10) {
                         Text("🇫🇷")
                             .font(.title)
-                            .frame(width: 56, height: 44)
+                            .frame(width: 56 * tile, height: 44 * tile)
                             .background(Color.white.opacity(0.2))
                             .clipShape(.rect(cornerRadius: 8))
                             .accessibilityHidden(true)
@@ -373,12 +383,14 @@ struct HomeView: View {
                             Image(systemName: "person.crop.circle")
                                 .font(.title2)
                                 .foregroundStyle(.white.opacity(0.9))
-                                .frame(width: 44, height: 44)
+                                .frame(width: max(Theme.minimumHitTarget, 44 * tile),
+                                       height: max(Theme.minimumHitTarget, 44 * tile))
                                 .background(Color.white.opacity(0.2))
                                 .clipShape(.circle)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Profile")
+                        .accessibilityHint("Opens your profile, progress and settings")
                     }
                     Spacer()
                     Button { showCEFR = true } label: {
@@ -402,7 +414,7 @@ struct HomeView: View {
                 .padding(.bottom, 20)
 
                 Text(greeting)
-                    .font(.serifDisplay(40, weight: .bold))
+                    .scaledSerifDisplay(40, weight: .bold)
                     .foregroundStyle(.white)
                 Text(greetingSubtitle)
                     .font(.callout)
@@ -437,7 +449,9 @@ struct HomeView: View {
     private var statsCard: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { statsExpanded.toggle() }
+                withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
+                    statsExpanded.toggle()
+                }
             } label: {
                 HStack(spacing: 12) {
                     chip(icon: "flame.fill", value: "\(store.currentStreak)", unit: "streak", tint: Theme.primary,
@@ -452,11 +466,12 @@ struct HomeView: View {
                     // No reviews yet → an empty ring and "—", never a full ring reading
                     // 100 over data that does not exist (D19).
                     let hasEvidence = store.hasRetentionEvidence
+                    let ring = 30 * tile
                     ZStack {
-                        Circle().stroke(Theme.primaryLight, lineWidth: 3).frame(width: 30, height: 30)
+                        Circle().stroke(Theme.primaryLight, lineWidth: 3).frame(width: ring, height: ring)
                         Circle().trim(from: 0, to: hasEvidence ? CGFloat(store.overallRetention) / 100 : 0)
                             .stroke(Theme.primary, style: .init(lineWidth: 3, lineCap: .round))
-                            .rotationEffect(.degrees(-90)).frame(width: 30, height: 30)
+                            .rotationEffect(.degrees(-90)).frame(width: ring, height: ring)
                         Text(hasEvidence ? "\(store.overallRetention)" : "—")
                             .font(.caption2.weight(.heavy)).foregroundStyle(Theme.primary)
                     }
@@ -465,13 +480,14 @@ struct HomeView: View {
                     .accessibilityValue(hasEvidence ? "\(store.overallRetention) percent" : "No reviews yet")
                     Image(systemName: "chevron.down")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.textMuted)
+                        .foregroundStyle(Theme.textSecondary)
                         .rotationEffect(.degrees(statsExpanded ? 180 : 0))
                         .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 14)
             }
             .buttonStyle(.plain)
+            .accessibilityValue(statsExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint(statsExpanded ? "Collapses your stats" : "Expands your stats")
 
             if statsExpanded {
@@ -493,7 +509,8 @@ struct HomeView: View {
                     }
                 }
                 .padding(.horizontal, 16).padding(.bottom, 16).padding(.top, 2)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? AnyTransition.opacity
+                                         : AnyTransition.opacity.combined(with: .move(edge: .top)))
             }
         }
         .background(Theme.card)
@@ -509,7 +526,7 @@ struct HomeView: View {
         HStack(spacing: 4) {
             Image(systemName: icon).font(.subheadline).foregroundStyle(tint)
             Text(value).font(.subheadline.weight(.heavy)).foregroundStyle(Theme.text)
-            if let unit { Text(unit).font(.caption2).foregroundStyle(Theme.textMuted) }
+            if let unit { Text(unit).font(.caption2).foregroundStyle(Theme.textSecondary) }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
@@ -522,9 +539,9 @@ struct HomeView: View {
     private func miniStat(icon: String, value: String, label: String, tint: Color, bg: Color) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon).font(.subheadline).foregroundStyle(tint)
-                .frame(width: 30, height: 30).background(bg).clipShape(.rect(cornerRadius: 9))
+                .frame(width: 30 * tile, height: 30 * tile).background(bg).clipShape(.rect(cornerRadius: 9))
             Text(value).font(.headline.weight(.heavy)).foregroundStyle(Theme.text)
-            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -542,7 +559,7 @@ struct HomeView: View {
             HStack {
                 Text("Weekly goal").font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
                 Spacer()
-                Text("\(done) of \(goal) days").font(.caption).foregroundStyle(Theme.textMuted)
+                Text("\(done) of \(goal) days").font(.caption).foregroundStyle(Theme.textSecondary)
             }
             progressBar(progress, tint: Theme.primary, height: 6)
         }
@@ -557,7 +574,7 @@ struct HomeView: View {
                 Capsule().fill(Theme.border).frame(height: height)
                 Capsule().fill(tint)
                     .frame(width: geo.size.width * CGFloat(min(1, max(0, progress))), height: height)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
+                    .reducedMotionAnimation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
             }
         }
         .frame(height: height)
@@ -591,9 +608,11 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.primary)
-                    .frame(width: 24, height: 24).background(Theme.primaryLight).clipShape(.rect(cornerRadius: 7))
+                    .frame(width: 24 * tile, height: 24 * tile)
+                    .background(Theme.primaryLight).clipShape(.rect(cornerRadius: 7))
                     .accessibilityHidden(true)
-                Text("Recommended For You").font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
+                Text("Recommended for You").font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
+                    .accessibilityAddTraits(.isHeader)
             }
             ForEach(recommendations) { rec in
                 Button {
@@ -602,12 +621,12 @@ struct HomeView: View {
                     HStack(spacing: 12) {
                         Image(systemName: categoryIcon(rec.category))
                             .font(.headline).foregroundStyle(rec.category.color)
-                            .frame(width: 38, height: 38)
+                            .frame(width: 38 * tile, height: 38 * tile)
                             .background(rec.category.color.opacity(0.12)).clipShape(.rect(cornerRadius: 11))
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(rec.category.label).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
-                            Text(HomeCopy.gapsToReview(rec.count)).font(.caption2).foregroundStyle(Theme.textMuted)
+                            Text(HomeCopy.gapsToReview(rec.count)).font(.caption2).foregroundStyle(Theme.textSecondary)
                         }
                         Spacer()
                         HStack(spacing: 4) {
@@ -658,11 +677,13 @@ struct HomeView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "building.columns.fill").font(.subheadline).foregroundStyle(Theme.secondary)
-                    .frame(width: 28, height: 28).background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
+                    .frame(width: 28 * tile, height: 28 * tile)
+                    .background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
                     .accessibilityHidden(true)
-                Text("Build Your Foundation").font(.serifDisplay(22, weight: .bold)).foregroundStyle(Theme.text)
+                Text("Build Your Foundation").scaledSerifDisplay(22, weight: .bold).foregroundStyle(Theme.text)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Text("\(mastered)/\(total)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                Text("\(mastered)/\(total)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                     .accessibilityHidden(true)
             }
 
@@ -685,7 +706,7 @@ struct HomeView: View {
                     .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if store.isGovernorActive {
-                    Text(dailyPlan.rationale).font(.caption2).foregroundStyle(Theme.textMuted)
+                    Text(dailyPlan.rationale).font(.caption2).foregroundStyle(Theme.textSecondary)
                         .lineLimit(2).multilineTextAlignment(.trailing)
                 }
             }
@@ -696,11 +717,12 @@ struct HomeView: View {
             } label: {
                 HStack(spacing: 14) {
                     Image(systemName: "graduationcap.fill").font(.headline).foregroundStyle(.white)
-                        .frame(width: 40, height: 40).background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
+                        .frame(width: 40 * tile, height: 40 * tile)
+                        .background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(next.map { "Continue: \($0.name)" } ?? "Review the basics")
-                            .font(.subheadline.weight(.bold)).foregroundStyle(.white).lineLimit(1)
+                            .font(.subheadline.weight(.bold)).foregroundStyle(.white)
                         Text("Tap to start your next basics lesson").font(.caption).foregroundStyle(.white.opacity(0.85))
                     }
                     Spacer()
@@ -708,13 +730,15 @@ struct HomeView: View {
                         .accessibilityHidden(true)
                 }
                 .padding(Space.md)
-                .frame(minHeight: 44)
+                .frame(minHeight: Theme.minimumHitTarget)
                 .background(Theme.secondary)
                 .clipShape(.rect(cornerRadius: Radius.card))
                 .softLift(radius: 12, y: 5, strength: 0.8)
             }
             .buttonStyle(.plain)
             .pressable()
+            .accessibilityLabel(next.map { "Continue: \($0.name)" } ?? "Review the basics")
+            .accessibilityHint("Starts your next basics lesson")
 
             // The capstone cadence applies to Foundation learners too (C15).
             if capstoneReady { capstoneRow }
@@ -738,11 +762,12 @@ struct HomeView: View {
         return VStack(alignment: .leading, spacing: 8) {
             if !locked.isEmpty {
                 Text("UNLOCKS AS YOU BUILD THE BASICS")
-                    .font(.caption2.weight(.bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    .font(.caption2.weight(.bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
+                    .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 8) {
                     ForEach(locked) { m in
                         HStack(spacing: 6) {
-                            Image(systemName: "lock.fill").font(.caption2).foregroundStyle(Theme.textMuted)
+                            Image(systemName: "lock.fill").font(.caption2).foregroundStyle(Theme.textSecondary)
                             Image(systemName: m.icon).font(.caption2).foregroundStyle(Theme.textSecondary)
                             Text(m.label).font(.caption2.weight(.medium)).foregroundStyle(Theme.textSecondary)
                         }
@@ -755,7 +780,7 @@ struct HomeView: View {
                 }
                 if let condition = store.unlockCondition(for: .reading) {
                     Text(condition)
-                        .font(.caption).foregroundStyle(Theme.textMuted)
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -766,11 +791,12 @@ struct HomeView: View {
                             .accessibilityHidden(true)
                         Text("Read short pieces at your level").font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
                         Spacer()
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textSecondary)
                             .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 12)
-                    .frame(minHeight: 44)
+                    .padding(.vertical, 8)
+                    .frame(minHeight: Theme.minimumHitTarget)
                     .background(Theme.successLight).clipShape(.rect(cornerRadius: Radius.card))
                 }
                 .buttonStyle(.plain)
@@ -788,13 +814,15 @@ struct HomeView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "sun.max.fill").font(.subheadline).foregroundStyle(Theme.primary)
-                    .frame(width: 28, height: 28).background(Theme.primaryLight).clipShape(.rect(cornerRadius: 8))
+                    .frame(width: 28 * tile, height: 28 * tile)
+                    .background(Theme.primaryLight).clipShape(.rect(cornerRadius: 8))
                     .accessibilityHidden(true)
-                Text("Today's Plan").font(.serifDisplay(22, weight: .bold)).foregroundStyle(Theme.text)
+                Text("Today's Plan").scaledSerifDisplay(22, weight: .bold).foregroundStyle(Theme.text)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if plan.totalMinutes > 0 {
                     Text("\(planMinutesDone(plan))/\(plan.totalMinutes) min")
-                        .font(.caption.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                        .font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                         .accessibilityLabel("\(planMinutesDone(plan)) of \(plan.totalMinutes) minutes done")
                 }
             }
@@ -854,11 +882,12 @@ struct HomeView: View {
         } label: {
             HStack(spacing: 14) {
                 ZStack {
-                    Circle().stroke(Theme.primaryLight, lineWidth: 4).frame(width: 40, height: 40)
+                    Circle().stroke(Theme.primaryLight, lineWidth: 4)
+                        .frame(width: 40 * tile, height: 40 * tile)
                     Circle().trim(from: 0, to: CGFloat(progress))
                         .stroke(complete ? Theme.success : Theme.primary, style: .init(lineWidth: 4, lineCap: .round))
-                        .rotationEffect(.degrees(-90)).frame(width: 40, height: 40)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
+                        .rotationEffect(.degrees(-90)).frame(width: 40 * tile, height: 40 * tile)
+                        .reducedMotionAnimation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
                     Image(systemName: complete ? "checkmark" : icon)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(complete ? Theme.success : Theme.primary)
@@ -866,14 +895,14 @@ struct HomeView: View {
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
-                    Text(subtitle).font(.caption).foregroundStyle(Theme.textMuted)
+                    Text(subtitle).font(.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                     .accessibilityHidden(true)
             }
             .padding(Space.md)
-            .frame(minHeight: 44)
+            .frame(minHeight: Theme.minimumHitTarget)
             .background(Theme.backgroundSecondary)
             .clipShape(.rect(cornerRadius: Radius.card))
             .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.4), lineWidth: 0.5))
@@ -897,11 +926,12 @@ struct HomeView: View {
         } label: {
             HStack(spacing: 14) {
                 ZStack {
-                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 4).frame(width: 40, height: 40)
+                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 4)
+                        .frame(width: 40 * tile, height: 40 * tile)
                     Circle().trim(from: 0, to: CGFloat(progress))
                         .stroke(.white, style: .init(lineWidth: 4, lineCap: .round))
-                        .rotationEffect(.degrees(-90)).frame(width: 40, height: 40)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
+                        .rotationEffect(.degrees(-90)).frame(width: 40 * tile, height: 40 * tile)
+                        .reducedMotionAnimation(.spring(response: 0.5, dampingFraction: 0.8), value: progress)
                     Image(systemName: modality.icon).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                 }
                 .accessibilityHidden(true)
@@ -916,7 +946,7 @@ struct HomeView: View {
                     .accessibilityHidden(true)
             }
             .padding(Space.md)
-            .frame(minHeight: 44)
+            .frame(minHeight: Theme.minimumHitTarget)
             .background(Theme.secondary)
             .clipShape(.rect(cornerRadius: Radius.card))
             .softLift(radius: 12, y: 5, strength: 0.8)
@@ -932,19 +962,20 @@ struct HomeView: View {
         let condition = store.unlockCondition(for: modality) ?? ReadinessCopy.lockedLabel
         return HStack(spacing: 14) {
             ZStack {
-                Circle().stroke(Theme.border, lineWidth: 4).frame(width: 40, height: 40)
-                Image(systemName: "lock.fill").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                Circle().stroke(Theme.border, lineWidth: 4)
+                    .frame(width: 40 * tile, height: 40 * tile)
+                Image(systemName: "lock.fill").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
             }
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(modality.label).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                Text(condition).font(.caption).foregroundStyle(Theme.textMuted)
+                Text(condition).font(.caption).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
         }
         .padding(Space.md)
-        .frame(minHeight: 44)
+        .frame(minHeight: Theme.minimumHitTarget)
         .background(Theme.backgroundSecondary.opacity(0.6))
         .clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.4), lineWidth: 0.5))
@@ -959,7 +990,8 @@ struct HomeView: View {
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: "graduationcap.fill").font(.headline).foregroundStyle(.white)
-                    .frame(width: 40, height: 40).background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
+                    .frame(width: 40 * tile, height: 40 * tile)
+                    .background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Lesson ready").font(.subheadline.weight(.bold)).foregroundStyle(.white)
@@ -970,13 +1002,15 @@ struct HomeView: View {
                     .accessibilityHidden(true)
             }
             .padding(Space.md)
-            .frame(minHeight: 44)
+            .frame(minHeight: Theme.minimumHitTarget)
             .background(Theme.secondary)
             .clipShape(.rect(cornerRadius: Radius.card))
             .softLift(radius: 12, y: 5, strength: 0.8)
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("Lesson ready")
+        .accessibilityHint("Starts a lesson from what you've gathered")
     }
 
     private var capstoneRow: some View {
@@ -985,7 +1019,8 @@ struct HomeView: View {
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: "flag.checkered").font(.headline).foregroundStyle(.white)
-                    .frame(width: 40, height: 40).background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
+                    .frame(width: 40 * tile, height: 40 * tile)
+                    .background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Capstone challenge").font(.subheadline.weight(.bold)).foregroundStyle(.white)
@@ -996,13 +1031,15 @@ struct HomeView: View {
                     .accessibilityHidden(true)
             }
             .padding(Space.md)
-            .frame(minHeight: 44)
+            .frame(minHeight: Theme.minimumHitTarget)
             .background(LinearGradient(colors: [Color(hex: "7C3AED"), Color(hex: "4338CA")], startPoint: .leading, endPoint: .trailing))
             .clipShape(.rect(cornerRadius: Radius.card))
             .softLift(radius: 12, y: 5, strength: 0.8)
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("Capstone challenge")
+        .accessibilityHint("Starts a mixed quiz that tests what has stuck")
     }
 
     // MARK: - Activity tracking + lesson trigger
@@ -1045,13 +1082,13 @@ struct HomeView: View {
 
     private func showToast(_ text: String, icon: String, tint: Color) {
         toastTask?.cancel()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+        withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.8), reduceMotion: reduceMotion)) {
             toast = HomeToast(text: text, icon: icon, tint: tint)
         }
         toastTask = Task {
             try? await Task.sleep(for: .seconds(Tuning.homeToastSeconds))
             guard !Task.isCancelled else { return }
-            withAnimation { toast = nil }
+            withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { toast = nil }
         }
     }
 
@@ -1069,7 +1106,9 @@ struct HomeView: View {
             .softLift(radius: 14, y: 6)
             .padding(.horizontal, 24)
             .padding(.bottom, 28)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(reduceMotion ? AnyTransition.opacity
+                                     : AnyTransition.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.updatesFrequently)
         }
     }
@@ -1079,26 +1118,33 @@ struct HomeView: View {
     private var exploreSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Button {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { exploreExpanded.toggle() }
+                withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
+                    exploreExpanded.toggle()
+                }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "square.grid.2x2.fill").font(.footnote).foregroundStyle(Theme.secondary)
-                        .frame(width: 28, height: 28).background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
+                        .frame(width: 28 * tile, height: 28 * tile)
+                        .background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
                         .accessibilityHidden(true)
-                    Text("Explore").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text("Explore").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
                     Spacer()
                     Image(systemName: exploreExpanded ? "chevron.up" : "chevron.down")
-                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                         .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 20)
-                .frame(minHeight: 44)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Explore")
+            .accessibilityValue(exploreExpanded ? "Expanded" : "Collapsed")
             .accessibilityHint(exploreExpanded ? "Collapses the activity cards" : "Expands the activity cards")
 
             if exploreExpanded {
-                carousel.transition(.opacity.combined(with: .move(edge: .top)))
+                carousel.transition(reduceMotion ? AnyTransition.opacity
+                                                 : AnyTransition.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -1150,7 +1196,9 @@ struct HomeView: View {
                             .frame(width: cardWidth)
                             .scrollTransition(.interactive, axis: .horizontal) { content, phase in
                                 content
-                                    .scaleEffect(phase.isIdentity ? 1 : 0.91, anchor: .center)
+                                    // Reduce Motion: the neighbouring cards dim
+                                    // instead of shrinking as they scroll past.
+                                    .scaleEffect(phase.isIdentity || reduceMotion ? 1 : 0.91, anchor: .center)
                                     .opacity(phase.isIdentity ? 1 : 0.82)
                             }
                             .id(card.id)
@@ -1182,20 +1230,24 @@ struct HomeView: View {
                 let active = currentCardId == card.id
                 Button {
                     Haptics.tap()
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    withAnimation(Theme.motion(.spring(response: 0.45, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
                         currentCardId = card.id
                     }
                 } label: {
                     Image(systemName: card.icon)
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(active ? Theme.primary : Theme.textMuted.opacity(0.65))
-                        .frame(width: navItemWidth, height: 34)
-                        .scaleEffect(active ? 1.12 : 1)
-                        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
+                        .foregroundStyle(active ? Theme.primary : Theme.textSecondary.opacity(0.75))
+                        .scaleEffect(active && !reduceMotion ? 1.12 : 1)
+                        .reducedMotionAnimation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
+                        // The pill stays 34 pt tall (drawn behind); the tappable
+                        // area is the full 44 pt so the row still clears the
+                        // minimum touch target without changing the bar's height.
+                        .frame(width: navItemWidth, height: Theme.minimumHitTarget)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(card.title)
-                .accessibilityAddTraits(active ? AccessibilityTraits.isSelected : AccessibilityTraits())
+                .accessibilityAddTraits(active ? [.isButton, .isSelected] : [.isButton])
             }
         }
         .background(alignment: .leading) {
@@ -1203,9 +1255,12 @@ struct HomeView: View {
                 .fill(Theme.primary.opacity(0.14))
                 .frame(width: navItemWidth, height: 34)
                 .offset(x: CGFloat(activeIndex) * navItemWidth)
-                .animation(.spring(response: 0.42, dampingFraction: 0.78), value: activeIndex)
+                .reducedMotionAnimation(.spring(response: 0.42, dampingFraction: 0.78), value: activeIndex)
         }
-        .padding(5)
+        // Horizontal only: each item is already 44 pt tall (the minimum touch
+        // target), which is exactly the height the 34 pt pill plus 5 pt of
+        // vertical padding used to make.
+        .padding(.horizontal, 5)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(Capsule().stroke(Color.white.opacity(0.65), lineWidth: 0.5))
         .softLift(radius: 14, y: 5, strength: 0.9)
@@ -1220,26 +1275,27 @@ struct HomeView: View {
                 HStack(alignment: .top) {
                     Image(systemName: card.icon)
                         .font(.largeTitle)
-                        .foregroundStyle(locked ? Theme.textMuted : card.iconColor)
-                        .frame(width: 60, height: 60)
+                        .foregroundStyle(locked ? Theme.textSecondary : card.iconColor)
+                        .frame(width: 60 * mark, height: 60 * mark)
                         .background(locked ? Theme.backgroundSecondary : card.iconBg)
                         .clipShape(.rect(cornerRadius: 18))
+                        .accessibilityHidden(true)
                     Spacer()
                     if locked {
                         HStack(spacing: 4) {
                             Image(systemName: "lock.fill").font(.caption2)
                             Text(ReadinessCopy.lockedLabel).font(.caption2.weight(.semibold))
                         }
-                        .foregroundStyle(Theme.textMuted)
+                        .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 5)
                         .background(Theme.backgroundSecondary).clipShape(.capsule)
                     }
                 }
                 .padding(.bottom, 18)
 
-                Text(card.title).font(.serifDisplay(28, weight: .bold)).foregroundStyle(Theme.text)
+                Text(card.title).scaledSerifDisplay(28, weight: .bold).foregroundStyle(Theme.text)
                 Text(card.subtitle).font(.subheadline).foregroundStyle(Theme.textSecondary).padding(.top, 4)
-                Text(card.description).font(.subheadline).foregroundStyle(Theme.textMuted)
+                Text(card.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true).padding(.top, 12)
 
                 Spacer(minLength: 18)
@@ -1256,7 +1312,7 @@ struct HomeView: View {
                         // A locked card states its unlock condition where the stat line would be.
                         Text(locked ? (condition ?? ReadinessCopy.lockedLabel) : card.stats)
                             .font(.footnote.weight(.medium))
-                            .foregroundStyle(locked ? Theme.textMuted : Theme.primary)
+                            .foregroundStyle(locked ? Theme.textSecondary : Theme.primary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1301,7 +1357,8 @@ struct HomeView: View {
     private func learnStat(value: String, label: String) -> some View {
         VStack(spacing: 2) {
             Text(value).font(.callout.weight(.bold)).foregroundStyle(Theme.text)
-            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
@@ -1317,15 +1374,18 @@ struct HomeView: View {
             HStack {
                 HStack(spacing: 8) {
                     Image(systemName: "newspaper.fill").font(.footnote).foregroundStyle(Theme.secondary)
-                        .frame(width: 28, height: 28).background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
+                        .frame(width: 28 * tile, height: 28 * tile)
+                        .background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
                         .accessibilityHidden(true)
-                    Text("Today's Headlines").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text("Today's Headlines").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 Spacer()
                 Button { open(.read) } label: {
                     Text("See All").font(.footnote.weight(.semibold))
-                        .foregroundStyle(locked ? Theme.textMuted : Theme.primary)
-                        .frame(minHeight: 44)
+                        .foregroundStyle(locked ? Theme.textSecondary : Theme.primary)
+                        .frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(locked)
@@ -1335,29 +1395,30 @@ struct HomeView: View {
                 HStack(spacing: 12) {
                     Image(systemName: locked ? "lock.fill" : "newspaper")
                         .font(.headline)
-                        .foregroundStyle(locked ? Theme.textMuted : Theme.success)
-                        .frame(width: 38, height: 38)
+                        .foregroundStyle(locked ? Theme.textSecondary : Theme.success)
+                        .frame(width: 38 * tile, height: 38 * tile)
                         .background(locked ? Theme.backgroundSecondary : Theme.successLight)
                         .clipShape(.rect(cornerRadius: 11))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(locked ? "French news unlocks with Reading" : "Fresh French news at your level")
                             .font(.subheadline.weight(.medium)).foregroundStyle(locked ? Theme.textSecondary : Theme.text)
-                            .lineLimit(2).multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
                         Text(locked ? (condition ?? ReadinessCopy.lockedLabel)
                                     : (condition ?? "Tap any word to save it as a gap"))
-                            .font(.caption).foregroundStyle(Theme.textMuted)
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
                     }
                     Spacer()
                     if !locked {
-                        Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.textSecondary)
                             .accessibilityHidden(true)
                     }
                 }
                 .padding(Space.lg)
-                .frame(minHeight: 44)
+                .frame(minHeight: Theme.minimumHitTarget)
                 .background(Theme.card)
                 .clipShape(.rect(cornerRadius: Radius.card))
                 .overlay(
@@ -1378,7 +1439,8 @@ struct HomeView: View {
 
     private var resourcesSection: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
-            Text("Resources").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
+            Text("Resources").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
+                .accessibilityAddTraits(.isHeader)
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
                     ForEach([HomeResource.scenarios, .translator, .tenses, .accent, .idioms, .gaps]) { r in
@@ -1396,21 +1458,24 @@ struct HomeView: View {
         return Button { open(r) } label: {
             VStack(spacing: 8) {
                 Image(systemName: r.icon).font(.title2)
-                    .foregroundStyle(locked ? Theme.textMuted : Theme.primary)
-                    .frame(width: 56, height: 56)
+                    .foregroundStyle(locked ? Theme.textSecondary : Theme.primary)
+                    .frame(width: 56 * tile, height: 56 * tile)
                     .background(locked ? Theme.backgroundSecondary : Theme.primaryLight).clipShape(.circle)
                     .overlay(alignment: .bottomTrailing) {
                         if locked {
                             Image(systemName: "lock.fill").font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
-                                .frame(width: 20, height: 20)
-                                .background(Theme.textMuted, in: Circle())
+                                .frame(width: 20 * tile, height: 20 * tile)
+                                .background(Theme.textSecondary, in: Circle())
                         }
                     }
+                    .accessibilityHidden(true)
                 Text(r.label).font(.caption.weight(.medium))
-                    .foregroundStyle(locked ? Theme.textMuted : Theme.textSecondary)
+                    // Both states read at the same contrast; the lock badge carries the state.
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
             }
-            .frame(width: 64)
+            .frame(minWidth: 64)
         }
         .buttonStyle(.plain)
         .pressable()
@@ -1443,11 +1508,11 @@ private struct CEFRSheet: View {
                 VStack(spacing: 14) {
                     if let placedLine = HomeCopy.placedLine(placed: store.hasCompletedAssessment, assessedLevel: store.assessedLevel) {
                         Text("\(placedLine) · now studying at \(store.learnerLevel.rawValue)")
-                            .font(.footnote).foregroundStyle(Theme.textMuted)
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text("Not placed yet — the short placement in your profile finds your level.")
-                            .font(.footnote).foregroundStyle(Theme.textMuted)
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     ForEach(levels, id: \.level) { item in
@@ -1488,7 +1553,7 @@ private struct CEFRSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted) }
+                    Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textSecondary) }
                         .accessibilityLabel("Close")
                 }
             }

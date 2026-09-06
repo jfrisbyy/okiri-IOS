@@ -20,8 +20,12 @@ import UIKit
 
 struct ConverseView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var active: ConverseScenario? = nil
     @State private var reachability = NetworkReachability.shared
+    /// The header holds the largest text on the screen, so its height grows with
+    /// the learner's text size instead of clipping the title.
+    @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 175
 
     private static let rose = Color(hex: "E11D48")
     private static let roseGradient = LinearGradient(
@@ -79,12 +83,12 @@ struct ConverseView: View {
                 .frame(width: 240, height: 240).offset(x: 130, y: -30)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Converse").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
+                Text("Converse").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
                 Text("Speak with your AI French tutor").font(.system(.callout)).foregroundStyle(.white.opacity(0.85))
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
-        .frame(height: 175)
+        .frame(height: headerHeight)
         .clipped()
     }
 
@@ -109,7 +113,7 @@ struct ConverseView: View {
                     reachability.refresh()
                 } label: {
                     Text("Try again").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.warning)
-                        .frame(minHeight: 44)
+                        .minimumHitTarget()
                 }
                 .buttonStyle(.plain)
             }
@@ -144,7 +148,7 @@ struct ConverseView: View {
             active = scenario
         } label: {
             HStack(spacing: 14) {
-                Text(scenario.emoji).font(.system(.title))
+                Text(scenario.emoji).font(.system(.title)).minimumScaleFactor(0.6)
                     .frame(width: 54, height: 54)
                     .background(Self.rose.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
                     .accessibilityHidden(true)
@@ -153,8 +157,8 @@ struct ConverseView: View {
                         Text(scenario.title).font(.system(.body, weight: .semibold)).foregroundStyle(Theme.text)
                         Pill(text: scenario.requiredLevel.rawValue, color: locked ? Theme.textMuted : Self.rose)
                     }
-                    Text(scenario.description).font(.system(.footnote)).foregroundStyle(Theme.textMuted)
-                        .lineLimit(2).multilineTextAlignment(.leading)
+                    Text(scenario.description).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2).multilineTextAlignment(.leading)
                     if let lockReason, !unavailable {
                         Text(lockReason.message).font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     }
@@ -264,6 +268,9 @@ private struct ConverseCallView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The call header carries the scenario title, so it grows with the text size.
+    @ScaledMetric(relativeTo: .body) private var chatHeaderHeight: CGFloat = 112
 
     /// The engine's one notion of level (theta → CEFR), not a local gap-count rule.
     private var userLevel: CEFRLevel { store.learnerLevel }
@@ -345,7 +352,7 @@ private struct ConverseCallView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Leave conversation")
-                Text(scenario.emoji).font(.system(.title2))
+                Text(scenario.emoji).font(.system(.title2)).minimumScaleFactor(0.6)
                     .frame(width: 44, height: 44).background(.white.opacity(0.18)).clipShape(.circle)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
@@ -363,7 +370,7 @@ private struct ConverseCallView: View {
             }
             .padding(.horizontal, 16).padding(.bottom, 14)
         }
-        .frame(height: 112)
+        .frame(height: chatHeaderHeight)
         .clipped()
     }
 
@@ -377,7 +384,7 @@ private struct ConverseCallView: View {
                     .foregroundStyle(isTutor ? Theme.text : .white)
                 if isRevealed, !turn.english.isEmpty {
                     Text(turn.english).font(.system(.footnote))
-                        .foregroundStyle(isTutor ? Theme.textMuted : .white.opacity(0.85))
+                        .foregroundStyle(isTutor ? Theme.textSecondary : .white.opacity(0.85))
                 }
                 HStack(spacing: 14) {
                     Button {
@@ -397,9 +404,10 @@ private struct ConverseCallView: View {
                         } label: {
                             Text(isRevealed ? "Hide" : "Translate").font(.system(.caption2, weight: .semibold))
                                 .foregroundStyle(isTutor ? accent : .white.opacity(0.9))
-                                .frame(minHeight: 44)
+                                .minimumHitTarget()
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(isRevealed ? "Hide the English translation" : "Show the English translation")
                     }
                 }
             }
@@ -409,7 +417,9 @@ private struct ConverseCallView: View {
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(isTutor ? Theme.border.opacity(0.6) : .clear, lineWidth: 0.5))
             if isTutor { Spacer(minLength: 40) }
         }
-        .transition(.move(edge: isTutor ? .leading : .trailing).combined(with: .opacity))
+        .transition(reduceMotion
+                    ? AnyTransition.opacity
+                    : AnyTransition.move(edge: isTutor ? .leading : .trailing).combined(with: .opacity))
     }
 
     private var typingIndicator: some View {
@@ -418,11 +428,12 @@ private struct ConverseCallView: View {
                 ForEach(0..<3) { i in
                     Circle().fill(Theme.textMuted).frame(width: 7, height: 7)
                         .opacity(0.4)
-                        .animation(.easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.18), value: tutorThinking)
+                        .reducedMotionAnimation(.easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.18), value: tutorThinking)
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
             .background(Theme.card).clipShape(.rect(cornerRadius: 18))
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("Tutor is replying")
             Spacer(minLength: 40)
         }
@@ -498,15 +509,15 @@ private struct ConverseCallView: View {
             }
         } else if recorder.isTranscribing {
             HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Transcribing what you said…").font(.system(.caption2)).foregroundStyle(Theme.textMuted)
+                ProgressView().controlSize(.mini).accessibilityHidden(true)
+                Text("Transcribing what you said…").font(.system(.caption2)).foregroundStyle(Theme.textSecondary)
             }
         } else if !micState.isReady {
             HStack(spacing: 6) {
                 Image(systemName: "mic.slash.fill").font(.system(.caption2)).foregroundStyle(Theme.textMuted)
                     .accessibilityHidden(true)
                 Text(micState.message(typedAlternative: "type your reply"))
-                    .font(.system(.caption2)).foregroundStyle(Theme.textMuted)
+                    .font(.system(.caption2)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if micState.canOpenSettings {
                     Button {
@@ -514,7 +525,7 @@ private struct ConverseCallView: View {
                         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                     } label: {
                         Text("Open Settings").font(.system(.caption2, weight: .bold)).foregroundStyle(accent)
-                            .frame(minHeight: 44)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -588,7 +599,7 @@ private struct ConverseCallView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.25)) {
+        withAnimation(Theme.motion(.easeOut(duration: 0.25), reduceMotion: reduceMotion)) {
             if tutorThinking { proxy.scrollTo("typing", anchor: .bottom) }
             else if let last = transcript.last { proxy.scrollTo(last.id, anchor: .bottom) }
         }
@@ -663,7 +674,7 @@ private struct ConverseCallView: View {
         micNotice = nil
         turnFailure = nil
         inputFocused = false
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
             transcript.append(ChatTurn(role: .user, french: text, english: "", correction: nil))
         }
         respond()
@@ -690,7 +701,7 @@ private struct ConverseCallView: View {
                 let turn = ChatTurn(role: .tutor, french: reply.french, english: reply.english, correction: reply.correction,
                                     correctedFrench: reply.correctedFrench, correctedEnglish: reply.correctedEnglish,
                                     conceptId: reply.conceptId)
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { transcript.append(turn) }
+                withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.85), reduceMotion: reduceMotion)) { transcript.append(turn) }
                 NaturalVoice.shared.speak(turn.french)
             case .failure(let failure):
                 turnFailure = failure
@@ -734,7 +745,7 @@ private struct ConverseCallView: View {
     private func endCall() {
         teardown()
         recordRecap()
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { ended = true }
+        withAnimation(Theme.motion(.spring(response: 0.45, dampingFraction: 0.85), reduceMotion: reduceMotion)) { ended = true }
     }
 
     /// The header chevron: a call the learner took part in ends like the End
@@ -784,7 +795,7 @@ private struct ConverseCallView: View {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.seal.fill").font(.system(.largeTitle)).foregroundStyle(accent)
                         .accessibilityHidden(true)
-                    Text("Conversation Recap").font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
+                    Text("Conversation Recap").scaledSerifDisplay(26, weight: .bold).foregroundStyle(Theme.text)
                     Text(scenario.title).font(.system(.callout)).foregroundStyle(Theme.textSecondary)
                 }
                 .padding(.top, 64)
@@ -798,7 +809,7 @@ private struct ConverseCallView: View {
                 whatToFixSection
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("TRANSCRIPT").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("TRANSCRIPT").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                     ForEach(transcript) { turn in
                         recapLine(turn)
                     }
@@ -822,7 +833,7 @@ private struct ConverseCallView: View {
     /// Every correction the tutor made, paired with the slip it fixes (E10).
     private var whatToFixSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("WHAT TO FIX").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+            Text("WHAT TO FIX").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
             if corrections.isEmpty && unsavableNotes.isEmpty {
                 Text(userExchanges == 0
                      ? "You didn't say anything this time — next call, try the starter phrase."
@@ -852,7 +863,7 @@ private struct ConverseCallView: View {
         let saved = savedCorrectionIds.contains(correction.id)
         let duplicate = duplicateCorrectionIds.contains(correction.id)
         return VStack(alignment: .leading, spacing: 6) {
-            Text(correction.originalFrench).font(.system(.footnote)).foregroundStyle(Theme.textMuted).strikethrough()
+            Text(correction.originalFrench).font(.system(.footnote)).foregroundStyle(Theme.textSecondary).strikethrough()
                 .accessibilityLabel("You said: \(correction.originalFrench)")
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "arrow.turn.down.right").font(.system(.caption)).foregroundStyle(Theme.success)
@@ -861,7 +872,7 @@ private struct ConverseCallView: View {
                     Text(correction.correctedFrench).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text)
                         .accessibilityLabel("Corrected: \(correction.correctedFrench)")
                     if let english = correction.englishTranslation {
-                        Text(english).font(.system(.caption)).foregroundStyle(Theme.textMuted)
+                        Text(english).font(.system(.caption)).foregroundStyle(Theme.textSecondary)
                     }
                     if !correction.explanation.isEmpty {
                         Text(correction.explanation).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
@@ -884,7 +895,7 @@ private struct ConverseCallView: View {
                 Label(saved ? "Saved to your deck" : (duplicate ? "Already in your deck" : "Nothing to save"),
                       systemImage: saved || duplicate ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.system(.caption2, weight: .semibold))
-                    .foregroundStyle(saved || duplicate ? Theme.success : Theme.textMuted)
+                    .foregroundStyle(saved || duplicate ? Theme.success : Theme.textSecondary)
             }
         }
         .padding(12)
@@ -895,7 +906,7 @@ private struct ConverseCallView: View {
     private func recapStat(value: String, label: String) -> some View {
         VStack(spacing: 4) {
             Text(value).font(.system(.title3, weight: .bold)).foregroundStyle(accent)
-            Text(label).font(.system(.caption2)).foregroundStyle(Theme.textMuted)
+            Text(label).font(.system(.caption2)).foregroundStyle(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 14)
         .background(accent.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
@@ -927,14 +938,14 @@ private struct ConverseCallView: View {
                     let kept = savedCorrectionIds.contains(correction.id) || duplicateCorrectionIds.contains(correction.id)
                     Label(kept ? "Correction saved" : "Corrected above", systemImage: kept ? "checkmark.circle.fill" : "arrow.turn.down.right")
                         .font(.system(.caption2, weight: .semibold))
-                        .foregroundStyle(kept ? Theme.success : Theme.textMuted)
+                        .foregroundStyle(kept ? Theme.success : Theme.textSecondary)
                 case .none:
                     EmptyView()
                 }
             }
             Text(turn.french).font(.system(.subheadline, weight: .medium)).foregroundStyle(Theme.text)
             if !turn.english.isEmpty {
-                Text(turn.english).font(.system(.caption)).foregroundStyle(Theme.textMuted)
+                Text(turn.english).font(.system(.caption)).foregroundStyle(Theme.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

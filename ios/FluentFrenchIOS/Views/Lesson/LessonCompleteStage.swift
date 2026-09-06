@@ -14,6 +14,14 @@ struct LessonCompleteStage: View {
     let model: LessonViewModel
     let onDone: () -> Void
     @Environment(AppStore.self) private var store
+    /// Icon gutters grow with the type ratio so nothing spills out of them at
+    /// large text sizes (G1). Small chrome only — the body curve reaches ~3.1x
+    /// at the largest accessibility sizes.
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
+    /// The score ring follows the large-title curve its number uses, clamped so
+    /// the disc never outgrows the narrowest phone.
+    @ScaledMetric(relativeTo: .largeTitle) private var ringSize: CGFloat = 130
+    private var ring: CGFloat { min(ringSize, 200) }
 
     var body: some View {
         if let summary = model.summary {
@@ -67,11 +75,17 @@ struct LessonCompleteStage: View {
 
     private func scoreRing(_ summary: LessonSummary) -> some View {
         ZStack {
-            Circle().fill(Theme.primaryGradient).frame(width: 130, height: 130).softLift(radius: 20, y: 10, strength: 2)
+            Circle().fill(Theme.primaryGradient)
+                .frame(width: ring, height: ring)
+                .softLift(radius: 20, y: 10, strength: 2)
             VStack(spacing: 0) {
                 Text("\(summary.accuracyPercent)%").font(.system(.largeTitle, design: .rounded, weight: .heavy)).foregroundStyle(.white)
+                    .lineLimit(1).minimumScaleFactor(0.6)
                 Text("\(summary.scoredCorrect)/\(summary.scored)").font(.subheadline.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: ring)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("First-try accuracy")
@@ -116,7 +130,7 @@ struct LessonCompleteStage: View {
             Image(systemName: icon).font(.title3).foregroundStyle(color).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(value).font(.title3.weight(.heavy)).foregroundStyle(Theme.text)
-                Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
+                Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
@@ -150,11 +164,11 @@ struct LessonCompleteStage: View {
 
     private func summaryRow(_ icon: String, _ color: Color, _ label: String, _ value: String, detail: String? = nil) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).foregroundStyle(color).frame(width: 28).accessibilityHidden(true)
+            Image(systemName: icon).foregroundStyle(color).frame(width: 28 * Theme.chromeScale(typeScale)).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(label).font(.subheadline).foregroundStyle(Theme.textSecondary)
                 if let detail {
-                    Text(detail).font(.caption2).foregroundStyle(Theme.textMuted)
+                    Text(detail).font(.caption2).foregroundStyle(Theme.textSecondary)
                 }
             }
             Spacer()
@@ -175,7 +189,7 @@ struct LessonCompleteStage: View {
                 model.practiceMissed(store: store)
             }
             if let notice = model.followUpNotice {
-                Text(notice).font(.footnote).foregroundStyle(Theme.textMuted)
+                Text(notice).font(.footnote).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

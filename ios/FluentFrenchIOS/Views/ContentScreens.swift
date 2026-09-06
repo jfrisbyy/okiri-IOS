@@ -77,6 +77,16 @@ private struct GlossTarget: Identifiable {
 struct WordReader: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Body text is sized per block, so the reader needs a `Font` value rather
+    /// than the `.scaledFont` modifier (one environment read for every word).
+    @Environment(\.sizeCategory) private var sizeCategory
+    /// 1 at the default text size; the hero image and the round chrome grow
+    /// with it so scaled text keeps its designed proportions.
+    @ScaledMetric private var typeScale: CGFloat = 1
+
+    /// The hero grows with the text size but stops before it swallows the screen.
+    private var heroScale: CGFloat { min(max(typeScale, 1), 1.6) }
 
     let title: String
     var subtitle: String? = nil
@@ -153,20 +163,25 @@ struct WordReader: View {
 
     private var hero: some View {
         Color(Theme.backgroundTertiary)
-            .frame(height: 300)
+            .frame(height: 300 * heroScale)
             .overlay {
                 if let imageUrl, let url = URL(string: imageUrl) {
                     AsyncImage(url: url) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
                         LinearGradient(colors: [tint.opacity(0.85), tint], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            .overlay { Image(systemName: "newspaper.fill").font(.system(size: 44)).foregroundStyle(.white.opacity(0.5)) }
+                            .overlay {
+                                Image(systemName: "newspaper.fill").scaledFont(44).foregroundStyle(.white.opacity(0.5))
+                                    .accessibilityHidden(true)
+                            }
                     }
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 } else {
                     LinearGradient(colors: [tint.opacity(0.9), tint], startPoint: .topLeading, endPoint: .bottomTrailing)
                         .overlay {
-                            Image(systemName: "book.pages.fill").font(.system(size: 50)).foregroundStyle(.white.opacity(0.4))
+                            Image(systemName: "book.pages.fill").scaledFont(50).foregroundStyle(.white.opacity(0.4))
+                                .accessibilityHidden(true)
                         }
                 }
             }
@@ -180,29 +195,32 @@ struct WordReader: View {
                     HStack(spacing: 6) {
                         if let categoryLabel {
                             Text(categoryLabel.uppercased())
-                                .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                .scaledFont(10, weight: .bold).foregroundStyle(.white)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(tint).clipShape(.capsule)
                         }
                         Text(levelLabel ?? level.rawValue)
-                            .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                            .scaledFont(10, weight: .bold).foregroundStyle(.white)
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.white.opacity(0.22)).clipShape(.capsule)
                         if let regionLabel {
                             HStack(spacing: 3) {
-                                if let regionEmoji { Text(regionEmoji).font(.system(size: 10)) }
-                                Text(regionLabel).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+                                if let regionEmoji { Text(regionEmoji).scaledFont(10) }
+                                Text(regionLabel).scaledFont(10, weight: .semibold).foregroundStyle(.white)
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.black.opacity(0.3)).clipShape(.capsule)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                     Text(title)
-                        .font(.serifDisplay(27, weight: .bold)).foregroundStyle(.white)
+                        .scaledSerifDisplay(27, weight: .bold).foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
                         .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+                        .accessibilityAddTraits(.isHeader)
                     if let subtitle {
-                        Text(subtitle).font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                        Text(subtitle).scaledFont(13, weight: .medium).foregroundStyle(.white.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.horizontal, Space.xl).padding(.bottom, 20)
@@ -217,14 +235,15 @@ struct WordReader: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .scaledFont(17, weight: .bold).foregroundStyle(.white)
+                    .frame(width: 38 * Theme.chromeScale(typeScale), height: 38 * Theme.chromeScale(typeScale))
                     .background(.black.opacity(0.32)).clipShape(.circle)
                     .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 0.5))
-                    .frame(minWidth: 44, minHeight: 44)
+                    .minimumHitTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
+            .accessibilityHint("Returns to the previous screen")
             Spacer()
             SpeakButton(text: text, size: 38)
                 .background(.black.opacity(0.32), in: .circle)
@@ -246,10 +265,11 @@ struct WordReader: View {
     private func contextBox(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Context", systemImage: "text.alignleft")
-                .font(.system(size: 12, weight: .bold)).foregroundStyle(tint)
-            Text(text).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                .scaledFont(12, weight: .bold).foregroundStyle(tint)
+            Text(text).scaledFont(15, weight: .medium).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .accessibilityElement(children: .combine)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Space.lg)
         .background(tint.opacity(0.07))
@@ -261,10 +281,13 @@ struct WordReader: View {
 
     private var hintRow: some View {
         HStack(spacing: 6) {
-            Image(systemName: "hand.tap.fill").font(.system(size: 11)).foregroundStyle(tint)
+            Image(systemName: "hand.tap.fill").scaledFont(11).foregroundStyle(tint)
+                .accessibilityHidden(true)
             Text("Tap any word to translate · Drag across words for phrases")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+                .scaledFont(12, weight: .medium).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Body
@@ -299,8 +322,8 @@ struct WordReader: View {
         case .numbered:
             HStack(alignment: .top, spacing: 10) {
                 Text("\(block.number ?? 1)")
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 22, height: 22).background(tint).clipShape(.circle)
+                    .scaledFont(13, weight: .bold).foregroundStyle(.white)
+                    .frame(width: 22 * Theme.chromeScale(typeScale), height: 22 * Theme.chromeScale(typeScale)).background(tint).clipShape(.circle)
                 tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
             }
         case .paragraph:
@@ -316,12 +339,13 @@ struct WordReader: View {
         }
     }
 
+    @ViewBuilder
     private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
         let highlighted = isHighlighted(token.id)
         let saved = savedTerms.contains(Self.clean(token.text).lowercased()) && !Self.clean(token.text).isEmpty
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
-        return Text(token.text)
-            .font(.system(size: size, weight: weight))
+        let wordView = Text(token.text)
+            .font(Theme.scaledFontValue(size, weight: weight, for: sizeCategory))
             .foregroundStyle(highlighted ? Theme.text : color)
             .padding(.horizontal, 2.5).padding(.vertical, 1)
             .background(bg)
@@ -341,6 +365,17 @@ struct WordReader: View {
                 }
             }
             .onTapGesture { handleTap(token: token, blockId: blockId) }
+            // Each word is its own control: VoiceOver announces it as a button
+            // and says what activating it does.
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens the translation")
+        // The underline that marks a saved word gets said in words — but only
+        // for saved words, so the reader is not read out as a wall of values.
+        if saved {
+            wordView.accessibilityValue("Saved to your deck")
+        } else {
+            wordView
+        }
     }
 
     private func isHighlighted(_ id: Int) -> Bool {
@@ -363,18 +398,21 @@ struct WordReader: View {
                             present(term: word)
                         } label: {
                             HStack(spacing: 5) {
-                                Text(word).font(.system(size: 14, weight: .semibold))
+                                Text(word).scaledFont(14, weight: .semibold)
                                 Image(systemName: saved ? "checkmark.circle.fill" : "plus.circle")
-                                    .font(.system(size: 12))
+                                    .scaledFont(12)
+                                    .accessibilityHidden(true)
                             }
                             .foregroundStyle(saved ? Theme.success : tint)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(saved ? Theme.successLight : tint.opacity(0.1))
                             .clipShape(.capsule)
-                            .frame(minHeight: 44)
+                            .frame(minHeight: Theme.minimumHitTarget)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(saved ? "\(word), saved to your deck" : "\(word), look up")
+                        .accessibilityLabel(word)
+                        .accessibilityValue(saved ? "Saved to your deck" : "")
+                        .accessibilityHint(saved ? "Opens the word again" : "Opens the translation and lets you save it")
                     }
                 }
             }
@@ -385,7 +423,7 @@ struct WordReader: View {
     private var savedFooter: some View {
         Label("\(savedTerms.count) word\(savedTerms.count == 1 ? "" : "s") added to your deck",
               systemImage: "checkmark.seal.fill")
-            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.success)
+            .scaledFont(13, weight: .semibold).foregroundStyle(Theme.success)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .background(Theme.successLight).clipShape(.capsule)
@@ -397,16 +435,19 @@ struct WordReader: View {
         VStack {
             Spacer()
             HStack(spacing: 8) {
-                Image(systemName: "text.cursor").font(.system(size: 13, weight: .bold))
+                Image(systemName: "text.cursor").scaledFont(13, weight: .bold)
+                    .accessibilityHidden(true)
                 Text("Drag across words to build a phrase")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
+                    .multilineTextAlignment(.center)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 16).padding(.vertical, 11)
             .background(Theme.text.opacity(0.92)).clipShape(.capsule)
             .softLift(radius: 12, y: 4, strength: 2)
             .padding(.bottom, 36)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Reduce Motion: the hint fades in instead of sliding up.
+            .transition(reduceMotion ? AnyTransition.opacity : .move(edge: .bottom).combined(with: .opacity))
         }
         .allowsHitTesting(false)
     }
@@ -443,14 +484,14 @@ struct WordReader: View {
         if !selectionMode {
             Haptics.select()
             clearTask?.cancel()
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            withAnimation(Theme.motion(.spring(response: 0.25, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                 selectionMode = true
                 anchorId = id
                 focusId = id
             }
         } else if focusId != id {
             Haptics.tap()
-            withAnimation(.easeOut(duration: 0.12)) { focusId = id }
+            withAnimation(Theme.motion(.easeOut(duration: 0.12), reduceMotion: reduceMotion)) { focusId = id }
         }
     }
 
@@ -495,7 +536,7 @@ struct WordReader: View {
 
     private func endSelection() {
         clearTask?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(Theme.motion(.easeOut(duration: 0.2), reduceMotion: reduceMotion)) {
             selectionMode = false
             anchorId = nil
             focusId = nil
@@ -722,9 +763,10 @@ struct GlossSheet: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(term)
-                    .font(.serifDisplay(term.count > 22 ? 22 : 28, weight: .bold))
+                    .scaledSerifDisplay(term.count > 22 ? 22 : 28, weight: .bold)
                     .foregroundStyle(Theme.primary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 if let g = lookup.gloss, !g.pronunciation.isEmpty {
                     PhoneticLine(text: g.pronunciation)
                 }
@@ -737,7 +779,7 @@ struct GlossSheet: View {
     private func glossContent(_ g: WordGloss) -> some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("MEANING").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+                Text("MEANING").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
                 Text(g.translation).font(.headline).foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -751,7 +793,7 @@ struct GlossSheet: View {
                     Text(g.example).font(.body.weight(.medium)).italic().foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                     if !g.exampleTranslation.isEmpty {
-                        Text(g.exampleTranslation).font(.subheadline).foregroundStyle(Theme.textMuted)
+                        Text(g.exampleTranslation).font(.subheadline).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -767,7 +809,7 @@ struct GlossSheet: View {
     /// The sentence the word was met in — what gets saved as context.
     private var contextBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("WHERE YOU MET IT").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+            Text("WHERE YOU MET IT").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
             Text(context).font(.subheadline).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -776,7 +818,7 @@ struct GlossSheet: View {
 
     private var noteField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("PERSONAL NOTE").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+            Text("PERSONAL NOTE").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
             TextField("Add a memory hook (optional)", text: $note, axis: .vertical)
                 .font(.body)
                 .lineLimit(1...3)
@@ -817,12 +859,15 @@ struct CameraNotice: View {
     let text: String
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "info.circle.fill").foregroundStyle(Theme.textMuted)
-            Text(text).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "info.circle.fill").foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+            Text(text).scaledFont(12).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.backgroundSecondary)
         .clipShape(.rect(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
     }
 }

@@ -12,6 +12,10 @@ import SwiftUI
 
 struct TranslatorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 at the default text size — the round icon buttons grow with it so a
+    /// scaled glyph never spills out of its circle.
+    @ScaledMetric private var typeScale: CGFloat = 1
 
     /// The translator's explicit states.
     private enum Phase: Equatable {
@@ -75,7 +79,7 @@ struct TranslatorView: View {
             languageBox(source.displayName)
             Button {
                 Haptics.tap()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.8), reduceMotion: reduceMotion)) {
                     source = source.opposite
                     // Swapping direction carries the translation back into the input.
                     if let outputText {
@@ -85,13 +89,15 @@ struct TranslatorView: View {
                 }
             } label: {
                 Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.secondary)
-                    .frame(width: 44, height: 44)
+                    .scaledFont(17, weight: .semibold).foregroundStyle(Theme.secondary)
+                    .frame(width: Theme.minimumHitTarget * typeScale, height: Theme.minimumHitTarget * typeScale)
                     .background(Theme.secondaryLight).clipShape(.circle)
                     .overlay(Circle().stroke(Theme.secondary.opacity(0.15), lineWidth: 0.5))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Swap languages")
+            .accessibilityValue("\(source.displayName) to \(target.displayName)")
+            .accessibilityHint("Translates in the other direction")
             languageBox(target.displayName)
         }
     }
@@ -113,19 +119,21 @@ struct TranslatorView: View {
                 Spacer()
                 if !inputText.isEmpty {
                     Button { NaturalVoice.shared.speak(inputText, fallbackLanguage: source.bcp47) } label: {
-                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 14)).foregroundStyle(Theme.secondary)
-                            .frame(width: 30, height: 30).background(Theme.secondaryLight).clipShape(.circle)
-                            .frame(minWidth: 44, minHeight: 44)
+                        Image(systemName: "speaker.wave.2.fill").scaledFont(14).foregroundStyle(Theme.secondary)
+                            .frame(width: 30 * Theme.chromeScale(typeScale), height: 30 * Theme.chromeScale(typeScale))
+                            .background(Theme.secondaryLight).clipShape(.circle)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Listen to your text")
+                    .accessibilityHint("Reads what you typed aloud")
                 }
             }
 
             ZStack(alignment: .topLeading) {
                 if inputText.isEmpty {
                     Text("Type in \(source.displayName)…")
-                        .font(.body).foregroundStyle(Theme.textMuted)
+                        .font(.body).foregroundStyle(Theme.textSecondary)
                         .padding(.top, 8).padding(.leading, 4)
                         .accessibilityHidden(true)
                 }
@@ -184,21 +192,26 @@ struct TranslatorView: View {
                 Spacer()
                 HStack(spacing: 8) {
                     Button { NaturalVoice.shared.speak(text, fallbackLanguage: target.bcp47) } label: {
-                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 14)).foregroundStyle(Theme.secondary)
-                            .frame(width: 30, height: 30).background(Theme.secondaryLight).clipShape(.circle)
-                            .frame(minWidth: 44, minHeight: 44)
+                        Image(systemName: "speaker.wave.2.fill").scaledFont(14).foregroundStyle(Theme.secondary)
+                            .frame(width: 30 * Theme.chromeScale(typeScale), height: 30 * Theme.chromeScale(typeScale))
+                            .background(Theme.secondaryLight).clipShape(.circle)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Listen to the translation")
+                    .accessibilityHint("Reads the translation aloud")
                     Button {
                         UIPasteboard.general.string = text
                         Haptics.success()
-                        withAnimation { didCopy = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { didCopy = false } }
+                        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { didCopy = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                            withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { didCopy = false }
+                        }
                     } label: {
-                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc").font(.system(size: 14)).foregroundStyle(Theme.secondary)
-                            .frame(width: 30, height: 30).background(Theme.secondaryLight).clipShape(.circle)
-                            .frame(minWidth: 44, minHeight: 44)
+                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc").scaledFont(14).foregroundStyle(Theme.secondary)
+                            .frame(width: 30 * Theme.chromeScale(typeScale), height: 30 * Theme.chromeScale(typeScale))
+                            .background(Theme.secondaryLight).clipShape(.circle)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(didCopy ? "Copied" : "Copy the translation")
@@ -206,13 +219,16 @@ struct TranslatorView: View {
             }
             Text(text).font(.title3.weight(.medium)).foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+                .accessibilityLabel("\(target.displayName) translation")
+                .accessibilityValue(text)
         }
         .padding(18)
         .background(Theme.secondaryLight.opacity(0.6))
         .clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.secondary.opacity(0.2), lineWidth: 1))
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .bottom)))
     }
 
     private func translate() async {
@@ -220,7 +236,7 @@ struct TranslatorView: View {
         guard !text.isEmpty, !isTranslating else { return }
         phase = .translating
         let outcome = await TranslationService.translation(of: text, from: source, to: target)
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
             switch outcome {
             case .translated(let result): phase = .translated(result)
             case .unavailable(let failure): phase = .failed(failure)

@@ -32,8 +32,11 @@ enum Theme {
 
     // Text
     static let text = Color(hex: "1A1A1A")
-    static let textSecondary = Color(hex: "6B6B6B")
-    static let textMuted = Color(hex: "9B9B9B")
+    /// 6.9:1 on white, 6.6:1 on the cream background — passes AA at any size.
+    static let textSecondary = Color(hex: "5A5A5A")
+    /// De-emphasised, but still real text: 5.0:1 on white, 4.8:1 on cream.
+    /// The old #9B9B9B was 2.8:1 and failed AA everywhere it was used.
+    static let textMuted = Color(hex: "6F6F6F")
     static let textLight = Color.white
 
     // Borders
@@ -97,6 +100,7 @@ extension Theme {
     /// Apple's minimum comfortable touch target, in points.
     static let minimumHitTarget: CGFloat = 44
 
+
     /// The Dynamic Type text style a fixed point size is scaled against
     /// (Package G band mapping). Large sizes scale with the large title curve,
     /// small labels with the caption curve, so every piece of text grows in
@@ -130,6 +134,37 @@ extension Theme {
         return .system(size: scaled, weight: weight, design: design)
     }
 
+    /// `scaledFontValue` for call sites reading `@Environment(\.dynamicTypeSize)`,
+    /// the non-deprecated way to observe the learner's text size.
+    static func scaledFontValue(
+        _ size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default,
+        for dynamicTypeSize: DynamicTypeSize,
+        relativeTo style: Font.TextStyle? = nil
+    ) -> Font {
+        scaledFontValue(size, weight: weight, design: design,
+                        for: contentSizeCategory(dynamicTypeSize), relativeTo: style)
+    }
+
+    nonisolated private static func contentSizeCategory(_ size: DynamicTypeSize) -> ContentSizeCategory {
+        switch size {
+        case .xSmall: return .extraSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .xLarge: return .extraLarge
+        case .xxLarge: return .extraExtraLarge
+        case .xxxLarge: return .extraExtraExtraLarge
+        case .accessibility1: return .accessibilityMedium
+        case .accessibility2: return .accessibilityLarge
+        case .accessibility3: return .accessibilityExtraLarge
+        case .accessibility4: return .accessibilityExtraExtraLarge
+        case .accessibility5: return .accessibilityExtraExtraExtraLarge
+        @unknown default: return .large
+        }
+    }
+
     /// The animation to use given the learner's Reduce Motion setting: the
     /// original when motion is allowed, otherwise a short plain cross-fade
     /// (or nil when there was no animation to begin with) so state changes
@@ -137,6 +172,53 @@ extension Theme {
     nonisolated static func motion(_ animation: Animation?, reduceMotion: Bool) -> Animation? {
         guard reduceMotion else { return animation }
         return animation == nil ? nil : .easeInOut(duration: 0.15)
+    }
+
+    /// The transition to use given Reduce Motion: a plain cross-fade instead of
+    /// anything that slides, scales or flies content across the screen.
+    /// `Theme.motion` only governs `withAnimation`/`.animation`; a
+    /// `.transition(...)` carries its own movement and needs this too.
+    nonisolated static func transition(_ transition: AnyTransition, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : transition
+    }
+
+    /// Ceiling on how far decorative chrome (icon circles, tiles, mascot wells)
+    /// grows with the text size. Text itself is never capped, but a 44 pt circle
+    /// scaled by the full accessibility curve (up to ~3.1x) would push every
+    /// neighbouring control off screen, so containers stop here and their glyphs
+    /// shrink to fit instead.
+    static let maxChromeScale: CGFloat = 1.6
+
+    /// Clamp a raw `@ScaledMetric` multiplier for use on chrome dimensions.
+    nonisolated static func chromeScale(_ raw: CGFloat) -> CGFloat {
+        min(max(raw, 1), maxChromeScale)
+    }
+
+    /// Text colour dark enough to read on this tint's 12% wash over white — the
+    /// Pill / chip treatment. A brand hue on its own tint can sit near 2:1
+    /// (Theme.warning is 2.0:1), so the label is walked toward black until it
+    /// clears the AA floor for small text.
+    static func readableOnTint(_ color: Color, minimumContrast: CGFloat = 4.5) -> Color {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) else { return color }
+        // The Pill background: the tint at 12% composited over white.
+        let bg = relativeLuminance(r: 0.12 * r + 0.88, g: 0.12 * g + 0.88, b: 0.12 * b + 0.88)
+        var factor: CGFloat = 1
+        while factor > 0.05 {
+            let fg = relativeLuminance(r: r * factor, g: g * factor, b: b * factor)
+            let ratio = (max(bg, fg) + 0.05) / (min(bg, fg) + 0.05)
+            if ratio >= minimumContrast { break }
+            factor -= 0.05
+        }
+        return Color(red: Double(r * factor), green: Double(g * factor), blue: Double(b * factor))
+    }
+
+    nonisolated private static func relativeLuminance(r: CGFloat, g: CGFloat, b: CGFloat) -> CGFloat {
+        func channel(_ c: CGFloat) -> CGFloat {
+            let c = min(max(c, 0), 1)
+            return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     }
 
     nonisolated private static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
@@ -172,20 +254,6 @@ extension Theme {
         case .accessibilityExtraExtraExtraLarge: return .accessibilityExtraExtraExtraLarge
         @unknown default: return .large
         }
-    }
-}
-
-// MARK: - Editorial typography
-
-extension Font {
-    /// Elegant editorial serif (New York) for big moments — greetings,
-    /// screen titles, and hero section headers.
-    ///
-    /// DEPRECATED (Package G): this is a fixed point size that ignores Dynamic
-    /// Type. Use `.scaledSerifDisplay(_:weight:)` on the view instead; kept only
-    /// until every call site has migrated.
-    static func serifDisplay(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
-        .system(size: size, weight: weight, design: .serif)
     }
 }
 
@@ -250,6 +318,24 @@ extension View {
     /// cross-fade (or no animation) when the learner has Reduce Motion on.
     func reducedMotionAnimation<V: Equatable>(_ animation: Animation?, value: V) -> some View {
         modifier(ReducedMotionAnimation(animation: animation, value: value))
+    }
+}
+
+/// `.transition(_:)` that collapses to a cross-fade under Reduce Motion.
+struct ReducedMotionTransition: ViewModifier {
+    let transition: AnyTransition
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.transition(Theme.transition(transition, reduceMotion: reduceMotion))
+    }
+}
+
+extension View {
+    /// Use instead of `.transition(_:)` so content does not slide, scale or fly
+    /// when the learner has asked the system for less motion.
+    func reducedMotionTransition(_ transition: AnyTransition) -> some View {
+        modifier(ReducedMotionTransition(transition: transition))
     }
 }
 

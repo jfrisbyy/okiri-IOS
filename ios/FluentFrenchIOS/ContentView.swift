@@ -116,14 +116,21 @@ struct ContentView: View {
 /// Brief branded loading state shown while the saved session restores on launch
 /// and while the account snapshot is being reconciled after sign-in.
 struct LaunchLoadingView: View {
+    /// The launch mark grows with the learner's text size so the glyph never
+    /// outgrows the circle it sits in.
+    @ScaledMetric(relativeTo: .largeTitle) private var markScale: CGFloat = 1
+    /// Clamped at `Theme.maxTileScale` so the mark cannot swallow the screen.
+    private var mark: CGFloat { min(markScale, Theme.maxTileScale) }
+
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
             VStack(spacing: 18) {
                 ZStack {
-                    Circle().fill(Theme.primaryGradient).frame(width: 76, height: 76)
+                    Circle().fill(Theme.primaryGradient)
+                        .frame(width: 76 * mark, height: 76 * mark)
                     Image(systemName: "sparkles")
-                        .font(.system(size: 32, weight: .semibold))
+                        .scaledFont(32, weight: .semibold)
                         .foregroundStyle(.white)
                 }
                 ProgressView().tint(Theme.primary)
@@ -158,7 +165,7 @@ struct LocalDataRecoveryView: View {
         ) {
             if lastAttemptFailed {
                 Text(failureMessage)
-                    .font(.system(size: 14))
+                    .scaledFont(14)
                     .foregroundStyle(Theme.error)
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 4)
@@ -171,25 +178,27 @@ struct LocalDataRecoveryView: View {
                     if isRestoring { ProgressView().tint(.white) }
                     Text("Restore from my account")
                 }
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(16, weight: .semibold)
                 .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .frame(minHeight: 52)
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.primary)
             .disabled(isRestoring)
+            .accessibilityHint("Replaces the unreadable copy on this device with your account backup")
 
             Button {
                 attempt(discardUnreadableCopy: false)
             } label: {
                 Text("Restore, but keep the unreadable copy")
-                    .font(.system(size: 15, weight: .medium))
+                    .scaledFont(15, weight: .medium)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 44)
+                    .frame(minHeight: Theme.minimumHitTarget)
             }
             .buttonStyle(.bordered)
             .tint(Theme.textSecondary)
             .disabled(isRestoring)
+            .accessibilityHint("Restores from your account and keeps the unreadable copy on this device for support")
         }
     }
 
@@ -238,20 +247,21 @@ struct AccountUnreachableView: View {
                     if isRetrying { ProgressView().tint(.white) }
                     Text("Try again")
                 }
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(16, weight: .semibold)
                 .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .frame(minHeight: 52)
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.primary)
             .disabled(isRetrying)
+            .accessibilityHint("Tries to load your progress from your account again")
 
             Button("Sign out") {
                 Task { try? await auth.signOut(force: true) }
             }
-            .font(.system(size: 15, weight: .medium))
+            .scaledFont(15, weight: .medium)
             .foregroundStyle(Theme.textSecondary)
-            .frame(height: 44)
+            .frame(minHeight: Theme.minimumHitTarget)
         }
     }
 }
@@ -270,16 +280,17 @@ private struct StatusScreen<Actions: View>: View {
             VStack(spacing: 0) {
                 Spacer()
                 Image(systemName: icon)
-                    .font(.system(size: 44, weight: .semibold))
+                    .scaledFont(44, weight: .semibold)
                     .foregroundStyle(tint)
                     .accessibilityHidden(true)
                 Text(title)
-                    .font(.system(size: 22, weight: .bold))
+                    .scaledFont(22, weight: .bold)
                     .foregroundStyle(Theme.text)
                     .multilineTextAlignment(.center)
                     .padding(.top, 18)
+                    .accessibilityAddTraits(.isHeader)
                 Text(message)
-                    .font(.system(size: 15))
+                    .scaledFont(15)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 10)

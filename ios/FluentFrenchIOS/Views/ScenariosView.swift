@@ -11,6 +11,7 @@ import SwiftUI
 
 struct ScenariosView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum Tab: String, CaseIterable { case phrases = "Phrases", qa = "Q & A", tips = "Tips" }
 
@@ -155,7 +156,7 @@ struct ScenariosView: View {
                                 Image(systemName: pick.icon).font(.system(.callout)).foregroundStyle(pick.color)
                                     .frame(width: 30, height: 30).background(pick.color.opacity(0.12)).clipShape(.rect(cornerRadius: 8))
                                 Text(pick.label).font(.system(.footnote, weight: .medium)).foregroundStyle(Theme.text)
-                                    .lineLimit(1)
+                                    .multilineTextAlignment(.leading)
                                 Spacer(minLength: 0)
                             }
                             .padding(8)
@@ -167,6 +168,7 @@ struct ScenariosView: View {
                         .pressable()
                         .disabled(!serviceAvailable)
                         .opacity(serviceAvailable ? 1 : 0.6)
+                        .accessibilityHint("Builds a survival guide for this situation")
                     }
                 }
             }
@@ -195,14 +197,14 @@ struct ScenariosView: View {
                         Label("Saved Scenarios", systemImage: "clock.fill")
                             .font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text)
                         Spacer()
-                        Text("\(saved.count)").font(.system(.caption, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        Text("\(saved.count)").font(.system(.caption, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     }
                     ForEach(saved) { item in
                         Button { openSaved(item) } label: {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.guide.title).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
-                                    Text(item.guide.titleFrench).font(.system(.caption)).foregroundStyle(Theme.textMuted).lineLimit(1)
+                                    Text(item.guide.titleFrench).font(.system(.caption)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                                 }
                                 Spacer()
                                 Button {
@@ -222,6 +224,9 @@ struct ScenariosView: View {
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border.opacity(0.6), lineWidth: 0.5))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("\(item.guide.title), \(item.guide.titleFrench)")
+                        .accessibilityHint("Opens this saved guide")
+                        .accessibilityAction(named: Text("Delete")) { deleteSaved(item) }
                     }
                 }
             }
@@ -230,10 +235,11 @@ struct ScenariosView: View {
 
     private var loadingCard: some View {
         VStack(spacing: 12) {
-            ProgressView().tint(Theme.secondary).scaleEffect(1.4)
+            ProgressView().tint(Theme.secondary).scaleEffect(1.4).accessibilityHidden(true)
             Text("Building your guide…").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.text).padding(.top, 6)
-            Text("Preparing phrases, tips & answers").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
+            Text("Preparing phrases, tips & answers").font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
         }
+        .accessibilityElement(children: .combine)
         .frame(maxWidth: .infinity).padding(.vertical, 48)
         .background(Theme.card).clipShape(.rect(cornerRadius: Radius.hero)).softLift()
         .padding(.top, 40)
@@ -246,7 +252,7 @@ struct ScenariosView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(guide.title).font(.serifDisplay(24, weight: .bold)).foregroundStyle(Theme.text)
+                    Text(guide.title).scaledSerifDisplay(24, weight: .bold).foregroundStyle(Theme.text)
                     Text(guide.titleFrench).font(.system(.callout, weight: .medium)).foregroundStyle(Theme.secondary)
                 }
                 Spacer()
@@ -279,7 +285,7 @@ struct ScenariosView: View {
 
             Button {
                 Haptics.tap()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { resetToSearch() }
+                withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.85), reduceMotion: reduceMotion)) { resetToSearch() }
             } label: {
                 Label("New Scenario", systemImage: "magnifyingglass")
                     .font(.system(.callout, weight: .semibold)).foregroundStyle(Theme.secondary)
@@ -296,16 +302,18 @@ struct ScenariosView: View {
                 let active = activeTab == tab
                 Button {
                     Haptics.tap()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { activeTab = tab }
+                    withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.85), reduceMotion: reduceMotion)) { activeTab = tab }
                 } label: {
                     Text(tab.rawValue).font(.system(.footnote, weight: .semibold))
-                        .foregroundStyle(active ? Theme.secondary : Theme.textMuted)
+                        .foregroundStyle(active ? Theme.secondary : Theme.textSecondary)
                         .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .frame(minHeight: Theme.minimumHitTarget)
                         .background(active ? Theme.card : .clear)
                         .clipShape(.rect(cornerRadius: 9))
                         .softLift(radius: active ? 6 : 0, y: active ? 2 : 0, strength: active ? 0.7 : 0)
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(active ? [.isSelected] : [])
             }
         }
         .padding(4)
@@ -350,7 +358,7 @@ struct ScenariosView: View {
                     if !phrase.context.isEmpty {
                         HStack(alignment: .top, spacing: 6) {
                             Circle().fill(accent).frame(width: 4, height: 4).padding(.top, 6)
-                            Text(phrase.context).font(.system(.caption)).italic().foregroundStyle(Theme.textMuted)
+                            Text(phrase.context).font(.system(.caption)).italic().foregroundStyle(Theme.textSecondary)
                         }
                     }
                 }
@@ -360,6 +368,7 @@ struct ScenariosView: View {
                     .frame(width: 30, height: 30)
                     .background(playingId == pid ? accent.opacity(0.14) : Theme.backgroundSecondary)
                     .clipShape(.circle)
+                    .accessibilityHidden(true)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -369,11 +378,13 @@ struct ScenariosView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("\(phrase.french). \(phrase.english)\(phrase.context.isEmpty ? "" : ". \(phrase.context)")")
+        .accessibilityHint(playingId == pid ? "Stops the audio" : "Hears this phrase spoken")
     }
 
     private func qaTab(_ guide: ScenarioGuide) -> some View {
         VStack(spacing: 10) {
-            Text("Tap any phrase to hear it spoken").font(.system(.caption)).foregroundStyle(Theme.textMuted)
+            Text("Tap any phrase to hear it spoken").font(.system(.caption)).foregroundStyle(Theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(Array(guide.questionsAndAnswers.enumerated()), id: \.element.id) { i, qa in
                 VStack(spacing: 0) {
@@ -400,6 +411,7 @@ struct ScenariosView: View {
                     Spacer()
                     Image(systemName: "speaker.wave.2.fill").font(.system(.caption2))
                         .foregroundStyle(playingId == id ? badgeColor : Theme.textMuted)
+                        .accessibilityHidden(true)
                 }
                 Text(french).font(.system(.callout, weight: .semibold)).foregroundStyle(Theme.text)
                 Text(english).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
@@ -408,6 +420,8 @@ struct ScenariosView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(badge): \(french). \(english)")
+        .accessibilityHint(playingId == id ? "Stops the audio" : "Hears this line spoken")
     }
 
     private func tipsTab(_ guide: ScenarioGuide) -> some View {
@@ -462,7 +476,7 @@ struct ScenariosView: View {
                     Label("Quick Translator", systemImage: "character.bubble").font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.secondary)
                     Spacer()
                     Button {
-                        withAnimation { translatorOpen = false; translateInput = ""; translateResult = nil; translateNotice = nil }
+                        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { translatorOpen = false; translateInput = ""; translateResult = nil; translateNotice = nil }
                     } label: {
                         Image(systemName: "xmark").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
                             .frame(width: 44, height: 44)
@@ -536,7 +550,7 @@ struct ScenariosView: View {
         } else {
             Button {
                 Haptics.tap()
-                withAnimation { translatorOpen = true }
+                withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { translatorOpen = true }
             } label: {
                 Label("Translate & Add Phrase", systemImage: "character.bubble")
                     .font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.secondary)
@@ -565,12 +579,12 @@ struct ScenariosView: View {
         translateInput = ""
         translateResult = nil
         translateNotice = nil
-        withAnimation { isGenerating = true; guide = nil }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { isGenerating = true; guide = nil }
         generateTask?.cancel()
         generateTask = Task {
             let result = await ScenariosService.generate(for: clean)
             guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                 isGenerating = false
                 switch result {
                 case .success(let built):
@@ -592,7 +606,7 @@ struct ScenariosView: View {
         // Typed API: a failure is a `TranslationFailure`, never a string that could be
         // mistaken for French, spoken aloud, or added to a saved guide.
         let outcome = await TranslationService.translation(of: text, from: .english, to: .french)
-        withAnimation {
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) {
             isTranslating = false
             switch outcome {
             case .translated(let raw):
@@ -614,7 +628,7 @@ struct ScenariosView: View {
         guard let translateResult else { return }
         Haptics.success()
         customPhrases.append(translateResult)
-        withAnimation {
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) {
             translateInput = ""
             self.translateResult = nil
         }
@@ -652,7 +666,7 @@ struct ScenariosView: View {
 
     private func openSaved(_ item: SavedScenario) {
         Haptics.select()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
             guide = item.guide
             currentQuery = item.query
             activeTab = .phrases

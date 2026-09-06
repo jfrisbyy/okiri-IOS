@@ -25,8 +25,9 @@ struct DiagnosticsView: View {
         List {
             if entries.isEmpty {
                 Text("No lessons completed yet — a snapshot is logged at the end of every lesson.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textMuted)
+                    .scaledFont(14)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Section {
                     ForEach(Array(entries.enumerated()), id: \.offset) { _, metrics in
@@ -52,14 +53,14 @@ private struct DiagnosticsRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Day \(metrics.daysSinceStart) · session \(metrics.sessionIndex)")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Text(metrics.at, format: .dateTime.month().day().hour().minute())
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textMuted)
+                    .scaledFont(12)
+                    .foregroundStyle(Theme.textSecondary)
             }
             Text("Frontier \(metrics.frontierSize) · learning \(metrics.learningCount) · mastered \(metrics.masteredCount) · provisional \(metrics.provisionalCount)")
             Text("Check-ins \(metrics.checkInCount) · misses \(metrics.checkInMisses) · pass rate \(passRate)")
@@ -69,7 +70,7 @@ private struct DiagnosticsRow: View {
                     .foregroundStyle(Theme.error)
             }
         }
-        .font(.system(size: 13))
+        .scaledFont(13)
         .foregroundStyle(Theme.text)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)

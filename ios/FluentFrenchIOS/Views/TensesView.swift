@@ -11,6 +11,15 @@ import SwiftUI
 struct TensesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 at the default text size; the round listen buttons grow with it so the
+    /// glyph inside keeps its padding.
+    @ScaledMetric private var typeScale: CGFloat = 1
+
+    /// The pronoun column keeps the conjugation table aligned, so it grows with
+    /// the text size but stops before it crowds out the verb form (the pronoun
+    /// wraps instead).
+    private var columnScale: CGFloat { min(max(typeScale, 1), 1.6) }
     @State private var selectedTense: String = "Present"
     /// The paradigm being saved to the deck (E25).
     @State private var captureDraft: CaptureDraft? = nil
@@ -105,15 +114,21 @@ struct TensesView: View {
             HStack(spacing: 8) {
                 ForEach(TensesData.tenses) { tense in
                     let active = tense.name == selectedTense
-                    Button { Haptics.tap(); withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { selectedTense = tense.name } } label: {
-                        Text(tense.name).font(.system(size: 13, weight: .medium))
+                    Button {
+                        Haptics.tap()
+                        withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion)) {
+                            selectedTense = tense.name
+                        }
+                    } label: {
+                        Text(tense.name).scaledFont(13, weight: .medium)
                             .foregroundStyle(active ? .white : Theme.text)
-                            .padding(.horizontal, 14).frame(minHeight: 44)
+                            .padding(.horizontal, 14).frame(minHeight: Theme.minimumHitTarget)
                             .background(active ? Theme.indigo : Theme.card)
                             .clipShape(.capsule)
                             .overlay(Capsule().stroke(active ? Color.clear : Theme.border.opacity(0.7), lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Shows this tense for every verb below")
                     .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
@@ -126,16 +141,22 @@ struct TensesView: View {
     private func infoCard(_ tense: FrenchTense) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(tense.frenchName).font(.serifDisplay(22, weight: .bold)).foregroundStyle(Theme.indigo)
-                Text(tense.detail).font(.system(size: 15)).foregroundStyle(Theme.text)
+                Text(tense.frenchName).scaledSerifDisplay(22, weight: .bold).foregroundStyle(Theme.indigo)
+                    .accessibilityAddTraits(.isHeader)
+                Text(tense.detail).scaledFont(15).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text("WHEN TO USE").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.8)
-                Text(tense.usage).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                Text("WHEN TO USE").scaledFont(10, weight: .bold).foregroundStyle(Theme.textSecondary).tracking(0.8)
+                Text(tense.usage).scaledFont(14).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityElement(children: .combine)
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "text.quote").font(.system(size: 13)).foregroundStyle(Theme.indigo.opacity(0.7))
-                Text(tense.example).font(.system(size: 14, weight: .medium)).italic().foregroundStyle(Theme.text)
+                Image(systemName: "text.quote").scaledFont(13).foregroundStyle(Theme.indigo)
+                    .accessibilityHidden(true)
+                Text(tense.example).scaledFont(14, weight: .medium).italic().foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
             }
             .padding(12)
@@ -156,9 +177,11 @@ struct TensesView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verb.infinitive).font(.serifDisplay(19, weight: .bold)).foregroundStyle(Theme.text)
-                    Text(verb.meaning).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    Text(verb.infinitive).scaledSerifDisplay(19, weight: .bold).foregroundStyle(Theme.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(verb.meaning).scaledFont(13).foregroundStyle(Theme.textSecondary)
                 }
+                .accessibilityElement(children: .combine)
                 Spacer()
                 Pill(text: "-\(verb.group)", color: Theme.indigo)
             }
@@ -166,17 +189,20 @@ struct TensesView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(conj.forms().enumerated()), id: \.offset) { i, item in
                         HStack {
-                            Text(item.pronoun).font(.system(size: 14)).foregroundStyle(Theme.textMuted)
-                                .frame(width: 92, alignment: .leading)
-                            Text(item.form).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                            Text(item.pronoun).scaledFont(14).foregroundStyle(Theme.textSecondary)
+                                .frame(width: 92 * columnScale, alignment: .leading)
+                            Text(item.form).scaledFont(15, weight: .semibold).foregroundStyle(Theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Button { NaturalVoice.shared.speak(verbPhrase(pronoun: item.pronoun, form: item.form)) } label: {
-                                Image(systemName: "speaker.wave.2.fill").font(.system(size: 12)).foregroundStyle(Theme.indigo)
-                                    .frame(width: 28, height: 28).background(Theme.indigo.opacity(0.1)).clipShape(.circle)
-                                    .frame(minWidth: 44, minHeight: 44)
+                                Image(systemName: "speaker.wave.2.fill").scaledFont(12).foregroundStyle(Theme.indigo)
+                                    .frame(width: 28 * Theme.chromeScale(typeScale), height: 28 * Theme.chromeScale(typeScale))
+                                    .background(Theme.indigo.opacity(0.1)).clipShape(.circle)
+                                    .minimumHitTarget()
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Listen to \(item.pronoun) \(item.form)")
+                            .accessibilityHint("Reads the French aloud")
                         }
                         .padding(.vertical, 2)
                         if i < conj.forms().count - 1 {
@@ -207,12 +233,15 @@ struct TensesView: View {
                   systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(saved ? Theme.success : Theme.indigo)
-                .frame(maxWidth: .infinity).frame(minHeight: 44)
+                .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
                 .background(saved ? Theme.successLight : Theme.indigo.opacity(0.08))
                 .clipShape(.rect(cornerRadius: Radius.chip))
         }
         .buttonStyle(.plain)
         .disabled(saved)
+        .accessibilityLabel(saved ? "\(verb.infinitive) in \(tense.name) is already in your deck"
+                                  : "Save \(verb.infinitive) in \(tense.name) to my deck")
+        .accessibilityHint(saved ? "" : "Adds these forms to your practice deck")
     }
 
     /// Build a natural spoken phrase, picking the first pronoun variant and

@@ -101,7 +101,8 @@ struct LessonOptionRow: View {
                 }
                 .padding(Space.lg).background(background).clipShape(.rect(cornerRadius: Radius.card))
                 .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(stroke, lineWidth: 1.5))
-                .frame(minHeight: 44)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(state == .correct || state == .wrong)
@@ -160,7 +161,7 @@ struct LessonTypedAnswer: View {
                 .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(stroke, lineWidth: 1.5))
                 .accessibilityLabel(question.kind == .fillBlank ? "Missing word" : "French translation")
             if let hint = question.hint, !hint.isEmpty, !model.revealed {
-                Text(hint).font(.footnote).italic().foregroundStyle(Theme.textMuted)
+                Text(hint).font(.footnote).italic().foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -220,7 +221,7 @@ struct LessonArrangeArea: View {
                 }
             }
             if let hint = question.hint, !hint.isEmpty, !model.revealed {
-                Text(hint).font(.footnote).italic().foregroundStyle(Theme.textMuted)
+                Text(hint).font(.footnote).italic().foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -237,7 +238,8 @@ struct LessonWordChip: View {
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(filled ? Theme.primary : Theme.card).clipShape(.rect(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(filled ? .clear : Theme.border, lineWidth: 1))
-            .frame(minHeight: 44)
+            .frame(minHeight: Theme.minimumHitTarget)
+            .contentShape(Rectangle())
     }
 }
 
@@ -260,7 +262,7 @@ struct LessonMatchArea: View {
                         Text(gap.frenchWord).font(.subheadline.weight(.semibold))
                             .foregroundStyle(done ? .white : Theme.text)
                             .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity).frame(minHeight: 44).padding(.vertical, 6)
+                            .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget).padding(.vertical, 6)
                             .background(done ? Theme.success : (selected ? Theme.primaryLight : Theme.card))
                             .clipShape(.rect(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Theme.primary : Theme.border, lineWidth: 1.5))
@@ -270,6 +272,7 @@ struct LessonMatchArea: View {
                     .accessibilityLabel(gap.frenchWord)
                     .accessibilityValue(done ? "matched" : (selected ? "selected" : ""))
                     .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityHint("Pick a French word, then its meaning on the right")
                 }
             }
             VStack(spacing: 10) {
@@ -282,7 +285,7 @@ struct LessonMatchArea: View {
                         Text(gap.englishTranslation).font(.subheadline.weight(.medium))
                             .foregroundStyle(done ? .white : Theme.text)
                             .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity).frame(minHeight: 44).padding(.vertical, 6)
+                            .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget).padding(.vertical, 6)
                             .background(done ? Theme.success : (wrong ? Theme.errorLight : Theme.card))
                             .clipShape(.rect(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(wrong ? Theme.error : Theme.border, lineWidth: 1.5))
@@ -291,9 +294,9 @@ struct LessonMatchArea: View {
                     .disabled(done || model.revealed)
                     .accessibilityLabel(gap.englishTranslation)
                     .accessibilityValue(done ? "matched" : (wrong ? "wrong pair" : ""))
+                    .accessibilityHint("Pairs this meaning with the French word you picked")
                 }
             }
         }
-        .accessibilityHint(model.matchSelectedLeft == nil ? "Pick a French word first, then its meaning" : "Now pick the meaning")
     }
 }

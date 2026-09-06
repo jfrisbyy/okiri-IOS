@@ -13,6 +13,7 @@ import SwiftUI
 
 struct RetentionView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab: Tab = .atRisk
     @State private var scopedLesson: AssembledLesson? = nil
     /// The selector's headline when "Review these now" had nothing to offer.
@@ -74,26 +75,30 @@ struct RetentionView: View {
                     HStack(spacing: 8) {
                         ForEach(Tab.allCases) { t in
                             let count = countFor(t)
-                            Button { withAnimation { tab = t } } label: {
+                            Button {
+                                withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { tab = t }
+                            } label: {
                                 Text("\(t.rawValue) \(count)")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(tab == t ? .white : Theme.textSecondary)
                                     .padding(.horizontal, 14).padding(.vertical, 9)
-                                    .frame(minHeight: 44)
+                                    .frame(minHeight: Theme.minimumHitTarget)
                                     .background(tab == t ? Theme.primary : Theme.card)
                                     .clipShape(.capsule)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("\(t.rawValue), \(count)")
-                            .accessibilityAddTraits(tab == t ? .isSelected : [])
+                            .accessibilityLabel("\(t.rawValue), \(count) word\(count == 1 ? "" : "s")")
+                            .accessibilityHint("Shows the words in this group")
+                            .accessibilityAddTraits(tab == t ? [.isSelected, .isButton] : .isButton)
                         }
                     }
                     .padding(.horizontal, 20)
                 }
 
                 if items.isEmpty {
-                    Text(emptyCopy).font(.subheadline).foregroundStyle(Theme.textMuted)
+                    Text(emptyCopy).font(.subheadline).foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 32).padding(.vertical, 40)
                 } else {
                     VStack(spacing: 10) {
@@ -108,8 +113,9 @@ struct RetentionView: View {
                     case .new:
                         // Never-reviewed cards are taught by lessons, not drilled here (B4).
                         Text("New cards are taught in your lessons — the first \(Tuning.foundationSeedBatch) or so come due each day.")
-                            .font(.footnote).foregroundStyle(Theme.textMuted)
+                            .font(.footnote).foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 20)
                     case .mastered:
                         // Mastery is a badge, not retirement (B3): the schedule can
@@ -117,14 +123,16 @@ struct RetentionView: View {
                         let dueCount = store.dueMasteredGaps(at: Date()).count
                         if dueCount > 0 {
                             Text("\(dueCount) due for a check — mastered words stay on the schedule.")
-                                .font(.footnote).foregroundStyle(Theme.textMuted)
+                                .font(.footnote).foregroundStyle(Theme.textSecondary)
                                 .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 20)
                             reviewNowButton
                         } else {
                             Text("None due for a check right now — mastered words stay on the schedule.")
-                                .font(.footnote).foregroundStyle(Theme.textMuted)
+                                .font(.footnote).foregroundStyle(Theme.textSecondary)
                                 .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 20)
                         }
                     case .fresh:
@@ -157,11 +165,13 @@ struct RetentionView: View {
             case .empty(let headline): emptyHeadline = headline
             }
         } label: {
-            Text("Review these now").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+            Text("Review these now").scaledFont(16, weight: .bold).foregroundStyle(.white)
                 .frame(maxWidth: .infinity).padding(.vertical, 15)
+                .frame(minHeight: Theme.minimumHitTarget)
                 .background(tint).clipShape(.rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .accessibilityHint("Starts a review of the \(tab.rawValue.lowercased()) words")
         .padding(.horizontal, 20)
     }
 
@@ -173,20 +183,31 @@ struct RetentionView: View {
         let r = Int((gap.retrievability * 100).rounded())
         return HStack(spacing: 12) {
             Circle().fill(gap.category.color).frame(width: 8, height: 8)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(gap.frenchWord).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                Text(gap.englishTranslation).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                Text(gap.frenchWord).scaledFont(15, weight: .semibold).foregroundStyle(Theme.text)
+                // A capture whose meaning has not arrived yet shows the same
+                // pending pill as the deck rather than an empty line.
+                if gap.needsTranslation || gap.englishTranslation.isEmpty {
+                    Pill(text: "Translation pending", color: Theme.warning)
+                } else {
+                    Text(gap.englishTranslation).scaledFont(13).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
             if tab == .new {
                 Text("new").font(.footnote.weight(.semibold)).foregroundStyle(tint)
             } else {
-                Text("\(r)%").font(.system(size: 15, weight: .bold)).foregroundStyle(tint)
+                Text("\(r)%").scaledFont(15, weight: .bold).foregroundStyle(tint)
+                    .accessibilityHidden(true)
             }
         }
         .cardStyle(padding: 14)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(gap.frenchWord), \(gap.englishTranslation)")
+        .accessibilityLabel(gap.needsTranslation || gap.englishTranslation.isEmpty
+                            ? "\(gap.frenchWord), translation pending"
+                            : "\(gap.frenchWord), \(gap.englishTranslation)")
         .accessibilityValue(tab == .new ? "Not reviewed yet" : "\(r) percent recall")
     }
 }
@@ -200,7 +221,9 @@ struct ErrorPatternsView: View {
         ScrollView {
             VStack(spacing: 12) {
                 if store.errorPatterns.isEmpty {
-                    Text("No mistake patterns yet.").font(.system(size: 14)).foregroundStyle(Theme.textMuted).padding(.vertical, 40)
+                    Text("No mistake patterns yet.").scaledFont(14).foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.vertical, 40)
                 } else {
                     ForEach(store.errorPatterns) { pattern in
                         NavigationLink { ErrorPatternDetailView(pattern: pattern) } label: {
@@ -241,28 +264,39 @@ struct ErrorPatternDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 8) {
                     Pill(text: pattern.category.label, color: pattern.category.color)
-                    Text(pattern.headline).font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.text)
+                    Text(pattern.headline).scaledFont(22, weight: .bold).foregroundStyle(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("HERE'S WHY").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.4)
-                    Text(explanation).font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
+                    Text("HERE'S WHY").scaledFont(11, weight: .semibold).foregroundStyle(Theme.textSecondary).tracking(0.4)
+                    Text(explanation).scaledFont(15).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cardStyle(padding: 16)
+                .accessibilityElement(children: .combine)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("YOUR MISTAKES").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.4)
+                    Text("YOUR MISTAKES").scaledFont(11, weight: .semibold).foregroundStyle(Theme.textSecondary).tracking(0.4)
                     ForEach(pattern.records) { record in
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(record.userAnswer).font(.system(size: 14)).strikethrough().foregroundStyle(Theme.error)
-                                Text(record.correctAnswer).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.success)
+                                Text(record.userAnswer).scaledFont(14).strikethrough().foregroundStyle(Theme.error)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(record.correctAnswer).scaledFont(14, weight: .semibold).foregroundStyle(Theme.success)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
-                            Text(relativeDate(record.occurredAt)).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                            Text(relativeDate(record.occurredAt)).scaledFont(11).foregroundStyle(Theme.textSecondary)
                         }
                         .cardStyle(padding: 12)
+                        // Struck-through red vs green is the only visual cue for
+                        // which answer was wrong, so VoiceOver gets it in words.
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("You wrote \(record.userAnswer). The answer is \(record.correctAnswer).")
+                        .accessibilityValue(relativeDate(record.occurredAt))
                     }
                 }
             }
@@ -278,8 +312,9 @@ struct ErrorPatternDetailView: View {
                 case .empty(let headline): emptyHeadline = headline
                 }
             } label: {
-                Text("Practice this pattern").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
+                Text("Practice this pattern").scaledFont(17, weight: .bold).foregroundStyle(.white)
                     .frame(maxWidth: .infinity).padding(.vertical, 16)
+                    .frame(minHeight: Theme.minimumHitTarget)
                     .background(Theme.primary).clipShape(.rect(cornerRadius: 14))
             }
             .buttonStyle(.plain)

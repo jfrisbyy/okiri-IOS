@@ -60,7 +60,7 @@ struct LessonSkillCard: View {
                 HStack(spacing: 8) {
                     Pill(text: "Skill", color: Theme.secondary, filled: true)
                     Pill(text: block.concept.category.label, color: block.concept.category.color)
-                    Pill(text: block.concept.cefrLevel.rawValue, color: Theme.textMuted)
+                    Pill(text: block.concept.cefrLevel.rawValue, color: Theme.textSecondary)
                     Spacer()
                 }
                 if block.isStalled {
@@ -133,7 +133,7 @@ struct LessonSkillCard: View {
                         Spacer(minLength: 0)
                         SpeakButton(text: item.fr, size: 26)
                     }
-                    Text(item.en).font(.footnote).foregroundStyle(Theme.textMuted)
+                    Text(item.en).font(.footnote).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let note = item.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
                         Text(note).font(.caption).italic().foregroundStyle(Theme.textSecondary)
@@ -156,11 +156,11 @@ struct LessonSkillCard: View {
             }
             if example.exampleSentence.isEmpty {
                 Text(example.frenchWord).font(.title3.weight(.bold)).foregroundStyle(Theme.primary)
-                Text(example.englishTranslation).font(.footnote).foregroundStyle(Theme.textMuted)
+                Text(example.englishTranslation).font(.footnote).foregroundStyle(Theme.textSecondary)
             } else {
                 LessonHighlightedText(sentence: example.exampleSentence, gap: example)
                 if !example.exampleTranslation.isEmpty {
-                    Text(example.exampleTranslation).font(.footnote).foregroundStyle(Theme.textMuted)
+                    Text(example.exampleTranslation).font(.footnote).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -180,7 +180,7 @@ struct LessonWordCard: View {
             VStack(alignment: .leading, spacing: Space.lg) {
                 HStack {
                     Pill(text: gap.category.label, color: gap.category.color, filled: true)
-                    if let level = gap.cefrLevel { Pill(text: level.rawValue, color: Theme.textMuted) }
+                    if let level = gap.cefrLevel { Pill(text: level.rawValue, color: Theme.textSecondary) }
                     if gap.isNew { Pill(text: "New", color: Theme.secondary) }
                     Spacer()
                 }
@@ -190,7 +190,7 @@ struct LessonWordCard: View {
                     SpeakButton(text: gap.frenchWord, size: 42)
                 }
                 if let pronunciation = gap.pronunciation, !pronunciation.isEmpty {
-                    Text(pronunciation).font(.subheadline).italic().foregroundStyle(Theme.textMuted)
+                    Text(pronunciation).font(.subheadline).italic().foregroundStyle(Theme.textSecondary)
                 }
                 let grammarTags: [String] = [gap.partOfSpeech, gap.gender, gap.article, gap.register]
                     .compactMap { $0 }.filter { !$0.isEmpty }
@@ -203,7 +203,7 @@ struct LessonWordCard: View {
                 }
                 if let base = gap.baseForm, !base.isEmpty {
                     HStack(spacing: 5) {
-                        Text("Base form:").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                        Text("Base form:").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                         Text(base).font(.footnote.weight(.bold)).foregroundStyle(Theme.text)
                     }
                     .accessibilityElement(children: .combine)
@@ -223,7 +223,7 @@ struct LessonWordCard: View {
                         }
                         LessonHighlightedText(sentence: gap.exampleSentence, gap: gap)
                         if !gap.exampleTranslation.isEmpty {
-                            Text(gap.exampleTranslation).font(.footnote).foregroundStyle(Theme.textMuted)
+                            Text(gap.exampleTranslation).font(.footnote).foregroundStyle(Theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -232,7 +232,7 @@ struct LessonWordCard: View {
                 }
                 if let related = gap.relatedWords, !related.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("RELATED WORDS").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+                        Text("RELATED WORDS").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
                         FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(related, id: \.self) { word in
                                 Text(word)

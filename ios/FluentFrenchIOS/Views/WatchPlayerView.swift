@@ -29,6 +29,9 @@ struct WatchPlayerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The timestamp column holds text, so it widens with the learner's text size.
+    @ScaledMetric(relativeTo: .caption) private var timeColumnWidth: CGFloat = 42
 
     @State private var controller: YouTubePlayerController
     @State private var transcript: TranscriptState = .loading
@@ -129,8 +132,8 @@ struct WatchPlayerView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
             VStack(alignment: .leading, spacing: 1) {
-                Text(video.title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
-                Text(video.channel).font(.caption2).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                Text(video.title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                Text(video.channel).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
             }
             Spacer()
         }
@@ -146,6 +149,7 @@ struct WatchPlayerView: View {
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .background(Color.black)
+                    .accessibilityElement()
                     .accessibilityLabel("Video: \(video.title)")
                 if let seg = activeSegment {
                     FloatingSubtitle(
@@ -169,7 +173,7 @@ struct WatchPlayerView: View {
                 .padding(6)
                 .accessibilityLabel("Enter fullscreen")
             }
-            .animation(.easeInOut(duration: 0.2), value: activeIndex)
+            .reducedMotionAnimation(.easeInOut(duration: 0.2), value: activeIndex)
             transportControls
         }
     }
@@ -180,7 +184,7 @@ struct WatchPlayerView: View {
             HStack {
                 Text(timeLabel(controller.currentTime)).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(.white.opacity(0.55))
                 Spacer()
-                Text(timeLabel(controller.duration)).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(.white.opacity(0.45))
+                Text(timeLabel(controller.duration)).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(.white.opacity(0.7))
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(timeLabel(controller.currentTime)) of \(timeLabel(controller.duration))")
@@ -229,7 +233,9 @@ struct WatchPlayerView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.bottom, 20)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(reduceMotion
+                            ? AnyTransition.opacity
+                            : AnyTransition.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -253,13 +259,13 @@ struct WatchPlayerView: View {
             )
             .onChange(of: activeIndex) { _, newIndex in
                 guard !userScrolling, newIndex >= 0 else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
+                withAnimation(Theme.motion(.easeInOut(duration: 0.35), reduceMotion: reduceMotion)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
             .onChange(of: showFollowPill) { _, show in
                 if !show, activeIndex >= 0 {
-                    withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(activeIndex, anchor: .center) }
+                    withAnimation(Theme.motion(.easeInOut(duration: 0.35), reduceMotion: reduceMotion)) { proxy.scrollTo(activeIndex, anchor: .center) }
                 }
             }
         }
@@ -270,13 +276,13 @@ struct WatchPlayerView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 9) {
                 Image(systemName: "text.alignleft").font(.footnote.weight(.semibold)).foregroundStyle(Theme.primary).accessibilityHidden(true)
-                Text("Transcript").font(.serifDisplay(19, weight: .semibold)).foregroundStyle(.white)
+                Text("Transcript").scaledSerifDisplay(19, weight: .semibold).foregroundStyle(.white)
                 Spacer()
                 HStack(spacing: 4) {
                     Image(systemName: "hand.tap.fill").font(.caption2).accessibilityHidden(true)
                     Text(coverage.isFrench ? TranscriptCopy.tapHint : TranscriptCopy.frenchOnlyTapHint).font(.caption2.weight(.medium))
                 }
-                .foregroundStyle(.white.opacity(0.38))
+                .foregroundStyle(.white.opacity(0.7))
                 .padding(.horizontal, 9).padding(.vertical, 5)
                 .background(.white.opacity(0.05), in: .capsule)
             }
@@ -318,13 +324,13 @@ struct WatchPlayerView: View {
             VStack(spacing: 4) {
                 Text(timeLabel(seg.start))
                     .font(.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(isActive ? Theme.primary : .white.opacity(0.4))
+                    .foregroundStyle(isActive ? Theme.primary : .white.opacity(0.7))
                 if isActive {
                     Image(systemName: "speaker.wave.2.fill").font(.caption2).foregroundStyle(Theme.primary)
                         .accessibilityHidden(true)
                 }
             }
-            .frame(width: 42, alignment: .leading)
+            .frame(width: timeColumnWidth, alignment: .leading)
             .padding(.top, 1)
 
             FlowWords(
@@ -345,8 +351,9 @@ struct WatchPlayerView: View {
         .clipShape(.rect(cornerRadius: 12))
         .contentShape(Rectangle())
         .onTapGesture { jumpTo(seg, index: index) }
-        .animation(.easeInOut(duration: 0.25), value: isActive)
+        .reducedMotionAnimation(.easeInOut(duration: 0.25), value: isActive)
         .accessibilityHint("Plays from \(timeLabel(seg.start))")
+        .accessibilityAction(named: Text("Play from here")) { jumpTo(seg, index: index) }
     }
 
     private var transcriptLoading: some View {
@@ -390,10 +397,10 @@ struct WatchPlayerView: View {
             }
             .accessibilityHidden(true)
             VStack(spacing: 6) {
-                Text(title).font(.serifDisplay(19, weight: .semibold)).foregroundStyle(.white)
+                Text(title).scaledSerifDisplay(19, weight: .semibold).foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                 Text(message)
-                    .font(.footnote).foregroundStyle(.white.opacity(0.5))
+                    .font(.footnote).foregroundStyle(.white.opacity(0.75))
                     .multilineTextAlignment(.center).lineSpacing(2).padding(.horizontal, 44)
             }
             if let retry {
@@ -427,13 +434,13 @@ struct WatchPlayerView: View {
     private func enterFullscreen() {
         Haptics.select()
         OrientationLock.lockLandscape()
-        withAnimation { isFullscreen = true }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { isFullscreen = true }
     }
 
     private func exitFullscreen() {
         Haptics.tap()
         OrientationLock.lockPortrait()
-        withAnimation { isFullscreen = false }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { isFullscreen = false }
     }
 
     // MARK: - Logic
@@ -509,11 +516,12 @@ struct WatchPlayerView: View {
 
     private func beginUserScroll() {
         userScrolling = true
-        if !showFollowPill { withAnimation { showFollowPill = true } }
+        if !showFollowPill { withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { showFollowPill = true } }
         scrollResumeWork?.cancel()
+        let reduce = reduceMotion
         let work = DispatchWorkItem {
             userScrolling = false
-            withAnimation { showFollowPill = false }
+            withAnimation(Theme.motion(.default, reduceMotion: reduce)) { showFollowPill = false }
         }
         scrollResumeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
@@ -527,7 +535,7 @@ struct WatchPlayerView: View {
     private func cancelFollowPill() {
         scrollResumeWork?.cancel()
         userScrolling = false
-        withAnimation { showFollowPill = false }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { showFollowPill = false }
     }
 
     // MARK: - Helpers
@@ -554,6 +562,7 @@ private struct FullscreenPlayerView: View {
     let onExit: () -> Void
 
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var controlsVisible = true
     @State private var hideWork: DispatchWorkItem? = nil
     @State private var selectedWord: WatchPlayerView.SelectedWord? = nil
@@ -586,6 +595,7 @@ private struct FullscreenPlayerView: View {
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
+                .accessibilityElement()
                 .accessibilityLabel("Video: \(title)")
 
             // Tap layer to toggle controls — kept BELOW the subtitle so word
@@ -609,7 +619,7 @@ private struct FullscreenPlayerView: View {
                     )
                     .padding(.horizontal, 40)
                     .padding(.bottom, controlsVisible ? 86 : 28)
-                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
+                    .reducedMotionAnimation(.easeInOut(duration: 0.25), value: controlsVisible)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -672,6 +682,7 @@ private struct FullscreenPlayerView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Exit fullscreen")
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             .padding(.horizontal, 28).padding(.top, 14)
@@ -701,14 +712,15 @@ private struct FullscreenPlayerView: View {
     }
 
     private func toggleControls() {
-        withAnimation(.easeInOut(duration: 0.25)) { controlsVisible.toggle() }
+        withAnimation(Theme.motion(.easeInOut(duration: 0.25), reduceMotion: reduceMotion)) { controlsVisible.toggle() }
         if controlsVisible { scheduleHide() }
     }
 
     private func scheduleHide() {
         hideWork?.cancel()
+        let reduce = reduceMotion
         let work = DispatchWorkItem {
-            withAnimation(.easeInOut(duration: 0.3)) { controlsVisible = false }
+            withAnimation(Theme.motion(.easeInOut(duration: 0.3), reduceMotion: reduce)) { controlsVisible = false }
         }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: work)
@@ -794,7 +806,11 @@ private struct PlayerButtons: View {
     let speeds: [Double]
     let tint: Color
     var playSize: CGFloat = 60
+    /// The play circle is chrome around a glyph that scales with Dynamic Type,
+    /// so the circle grows with it and the glyph never spills out.
+    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
 
+    private var scaledPlaySize: CGFloat { playSize * controlScale }
     private var step: Double { Tuning.watchSeekStepSeconds }
     private var stepLabel: String { "\(Int(step)) seconds" }
 
@@ -808,8 +824,8 @@ private struct PlayerButtons: View {
             .accessibilityLabel("Back \(stepLabel)")
             Button { Haptics.select(); controller.togglePlay() } label: {
                 Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: playSize * 0.4)).foregroundStyle(.white)
-                    .frame(width: playSize, height: playSize).background(tint).clipShape(.circle)
+                    .scaledFont(playSize * 0.4).foregroundStyle(.white)
+                    .frame(width: scaledPlaySize, height: scaledPlaySize).background(tint).clipShape(.circle)
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
@@ -824,6 +840,7 @@ private struct PlayerButtons: View {
         .overlay(alignment: .trailing) {
             Button { cycleSpeed() } label: {
                 Text(speedLabel).font(.footnote.weight(.bold)).foregroundStyle(.white)
+                    .minimumScaleFactor(0.7)
                     .frame(width: 46, height: 30).background(.white.opacity(0.12)).clipShape(.capsule)
                     .frame(minWidth: 44, minHeight: 44)
             }
@@ -908,7 +925,7 @@ private struct FlowWords: View {
                 let bare = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-")).lowercased()
                 let saved = lookupEnabled && !bare.isEmpty && savedWords.contains(bare)
                 Text(token)
-                    .font(.system(size: fontSize, weight: isActive ? .semibold : .regular))
+                    .scaledFont(fontSize, weight: isActive ? .semibold : .regular)
                     .foregroundStyle(saved ? Theme.primary : (isActive ? activeColor : baseColor))
                     .padding(.horizontal, saved ? 5 : 0).padding(.vertical, saved ? 1 : 0)
                     .background(saved ? Theme.primary.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
@@ -971,7 +988,7 @@ private struct WordCaptureSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(word).font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
+                        Text(word).scaledSerifDisplay(26, weight: .bold).foregroundStyle(Theme.text)
                         if case .loaded(let g) = lookup {
                             if !g.pronunciation.isEmpty { PhoneticLine(text: g.pronunciation) }
                             Text(g.translation).font(.subheadline.weight(.medium)).foregroundStyle(accent)
@@ -1031,7 +1048,7 @@ private struct WordCaptureSheet: View {
     private func exampleBlock(_ g: WordGloss) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("Example").font(.caption2.weight(.bold)).foregroundStyle(Theme.textMuted)
+                Text("Example").font(.caption2.weight(.bold)).foregroundStyle(Theme.textSecondary)
                 Button { Haptics.tap(); NaturalVoice.shared.speak(g.example) } label: {
                     Image(systemName: "speaker.wave.2").font(.footnote).foregroundStyle(accent)
                         .frame(minWidth: 44, minHeight: 44)
@@ -1048,7 +1065,7 @@ private struct WordCaptureSheet: View {
             Text(g.example).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             if !g.exampleTranslation.isEmpty {
-                Text(g.exampleTranslation).font(.footnote).foregroundStyle(Theme.textMuted)
+                Text(g.exampleTranslation).font(.footnote).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

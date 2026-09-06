@@ -53,6 +53,10 @@ struct KiriView: View {
     @State private var tapMood: KiriMood? = nil
     @State private var bubble: String? = nil
     @State private var didStart = false
+    /// Mirror of `reduceMotion` the escaping hop loop can read. An `@Environment`
+    /// value captured in a closure keeps the value it had when the closure was
+    /// made; `@State` reads through live storage, so this stays current.
+    @State private var motionReduced = false
 
     private let phrases = ["Bravo!", "Allez!", "Continue!", "Super!", "On y va!", "Génial!", "C'est parti!"]
 
@@ -66,16 +70,23 @@ struct KiriView: View {
             if let bubble {
                 speechBubble(bubble)
                     .offset(y: -size * 0.66)
-                    .transition(.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
+                    // Reduce Motion: the bubble fades in instead of popping.
+                    .transition(reduceMotion
+                                ? AnyTransition.opacity
+                                : AnyTransition.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
             }
         }
         .frame(width: size, height: size)
         .onAppear(perform: startIdle)
+        .onChange(of: reduceMotion) { _, newValue in motionReduced = newValue }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Kiri, your fox mascot, \(activeMood.accessibilityDescription)")
         .accessibilityValue(bubble ?? "")
         .accessibilityHint("Double-tap for a cheer")
         .accessibilityAddTraits(.isButton)
+        // The tap gesture lives on an ignored child, so VoiceOver needs the
+        // action spelled out here or activating the element would do nothing.
+        .accessibilityAction { react() }
     }
 
     // MARK: - Sprite (clipped pose + motion)
@@ -142,6 +153,7 @@ struct KiriView: View {
     // MARK: - Animation drivers
 
     private func startIdle() {
+        motionReduced = reduceMotion
         guard !didStart else { return }
         didStart = true
         guard !reduceMotion else { return }
@@ -152,6 +164,9 @@ struct KiriView: View {
 
     private func scheduleHop() {
         DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 3.5...7.5)) {
+            // Re-checked every tick: the learner can switch Reduce Motion on
+            // while the app is running, long after startIdle() ran.
+            guard !motionReduced else { scheduleHop(); return }
             if tapMood == nil { spontaneousHop() }
             scheduleHop()
         }
@@ -188,7 +203,7 @@ struct KiriView: View {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
-            withAnimation(.easeOut(duration: 0.35)) {
+            withAnimation(Theme.motion(.easeOut(duration: 0.35), reduceMotion: reduceMotion)) {
                 tapMood = nil
                 bubble = nil
             }
@@ -220,6 +235,10 @@ private struct SparkleParticle: View {
     private var dy: CGFloat { CGFloat(sin(angle * .pi / 180)) * radius * 0.85 }
 
     var body: some View {
+        // Not Dynamic Type: this is decorative artwork, not text. The glyph and
+        // its orbit are both derived from the mascot's `size`, so scaling the
+        // symbol with the text size alone would detach the sparkles from the
+        // sprite they orbit. The whole particle field is hidden from VoiceOver.
         Image(systemName: symbol)
             .font(.system(size: glyphSize, weight: .bold))
             .foregroundStyle(color)

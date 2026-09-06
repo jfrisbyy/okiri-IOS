@@ -12,6 +12,15 @@ import AuthenticationServices
 struct WelcomeView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(\.colorScheme) private var colorScheme
+    /// The hero mark grows with the learner's text size so the glyph stays
+    /// proportionate to the circle behind it.
+    @ScaledMetric(relativeTo: .largeTitle) private var markScale: CGFloat = 1
+    /// Sign-in buttons keep the same height as each other as text grows.
+    @ScaledMetric(relativeTo: .body) private var buttonScale: CGFloat = 1
+    /// Clamped at `Theme.maxChromeScale`: unclamped, the two sign-in buttons would
+    /// take a third of the screen at the largest accessibility text sizes.
+    private var mark: CGFloat { Theme.chromeScale(markScale) }
+    private var buttonHeight: CGFloat { 54 * Theme.chromeScale(buttonScale) }
 
     var body: some View {
         @Bindable var auth = auth
@@ -32,6 +41,7 @@ struct WelcomeView: View {
             if auth.isSigningIn {
                 Color.black.opacity(0.25).ignoresSafeArea()
                 ProgressView().controlSize(.large).tint(.white)
+                    .accessibilityLabel("Signing in")
             }
         }
         .alert("Sign-in failed", isPresented: $auth.showError) {
@@ -55,18 +65,20 @@ struct WelcomeView: View {
     private var hero: some View {
         VStack(spacing: 18) {
             ZStack {
-                Circle().fill(Theme.primaryGradient).frame(width: 96, height: 96)
+                Circle().fill(Theme.primaryGradient)
+                    .frame(width: 96 * mark, height: 96 * mark)
                     .shadow(color: Theme.primary.opacity(0.35), radius: 18, y: 8)
                 Image(systemName: "sparkles")
-                    .font(.system(size: 42, weight: .semibold))
+                    .scaledFont(42, weight: .semibold)
                     .foregroundStyle(.white)
             }
+            .accessibilityHidden(true)
             VStack(spacing: 10) {
                 Text("Okiri")
-                    .font(.serifDisplay(40, weight: .bold))
+                    .scaledSerifDisplay(40, weight: .bold)
                     .foregroundStyle(Theme.text)
                 Text("Your progress, saved and synced everywhere.")
-                    .font(.system(size: 17))
+                    .scaledFont(17)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 300)
@@ -88,15 +100,17 @@ struct WelcomeView: View {
     private func misconfigured(_ message: String) -> some View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 22, weight: .semibold))
+                .scaledFont(22, weight: .semibold)
                 .foregroundStyle(Theme.warning)
                 .accessibilityHidden(true)
             Text(message)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(16, weight: .semibold)
                 .foregroundStyle(Theme.text)
                 .multilineTextAlignment(.center)
-            Text("Sign-in keys weren't included in this build. If you're testing, install a release build; if you're developing, set the Supabase URL and anon key.")
-                .font(.system(size: 13))
+            // Developer note: the missing values are the Supabase project URL
+            // and anon key; the learner-facing copy stays vendor-neutral.
+            Text("Sign-in isn't set up in this build. If you're testing, install a release build; if you're developing, add the account service URL and key.")
+                .scaledFont(13)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -108,6 +122,7 @@ struct WelcomeView: View {
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(Theme.border, lineWidth: 1)
         )
+        .accessibilityElement(children: .combine)
     }
 
     private var signInButtons: some View {
@@ -118,7 +133,7 @@ struct WelcomeView: View {
                 handleApple(result)
             }
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 54)
+            .frame(height: buttonHeight)
             .clipShape(.rect(cornerRadius: 16))
             .disabled(auth.isSigningIn)
 
@@ -127,12 +142,13 @@ struct WelcomeView: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "globe")
-                        .font(.system(size: 18, weight: .semibold))
+                        .scaledFont(18, weight: .semibold)
+                        .accessibilityHidden(true)
                     Text("Continue with Google")
-                        .font(.system(size: 17, weight: .semibold))
+                        .scaledFont(17, weight: .semibold)
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 54)
+                .frame(minHeight: buttonHeight)
                 .foregroundStyle(Theme.text)
                 .background(Theme.card)
                 .clipShape(.rect(cornerRadius: 16))
@@ -148,8 +164,8 @@ struct WelcomeView: View {
 
     private var footnote: some View {
         Text("By continuing you agree to keep your learning progress backed up to your account.")
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.textMuted)
+            .scaledFont(12)
+            .foregroundStyle(Theme.textSecondary)
             .multilineTextAlignment(.center)
             .padding(.top, 18)
             .frame(maxWidth: 320)

@@ -63,11 +63,20 @@ enum ReadSearchState: Equatable {
 
 struct ReadView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var model = ReadModel()
     @State private var activeView: ReadTab = .feed
     @State private var searching = false
     @State private var searchText = ""
     @State private var search: ReadSearchState = .idle
+    /// 1 at the default text size, larger as the learner's text size grows.
+    /// Chrome drawn around text (the header band, the image cards, the round
+    /// search button) grows with it so scaled text still fits inside it.
+    @ScaledMetric private var typeScale: CGFloat = 1
+
+    /// Image cards keep their proportions but stop growing eventually — a card
+    /// three times taller than designed would push everything else off-screen.
+    private var cardScale: CGFloat { min(max(typeScale, 1), 1.8) }
 
     enum ReadTab { case feed, library }
 
@@ -118,36 +127,44 @@ struct ReadView: View {
         }
     }
 
+    /// The gradient moved from a ZStack layer to a background so the band's
+    /// height follows the (now scalable) title and subtitle instead of pinning
+    /// them inside 150 pt. At the default text size the layout is unchanged.
     private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            Theme.primaryGradient
-            Circle().fill(Color.white.opacity(0.1)).frame(width: 150, height: 150).offset(x: -40, y: 50)
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Read").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
-                        Text(headerSubtitle)
-                            .font(.subheadline).foregroundStyle(.white.opacity(0.85))
-                    }
-                    Spacer()
-                    if readiness == .unlocked {
-                        Button {
-                            Haptics.tap()
-                            withAnimation { searching.toggle() }
-                            if !searching { search = .idle }
-                        } label: {
-                            Image(systemName: searching ? "xmark" : "magnifyingglass")
-                                .font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
-                                .frame(width: 44, height: 44).background(Color.white.opacity(0.2)).clipShape(.circle)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(searching ? "Close search" : "Search stories")
-                    }
-                }
+                Text("Read").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
+                    .accessibilityAddTraits(.isHeader)
+                Text(headerSubtitle)
+                    .font(.subheadline).foregroundStyle(.white.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 20).padding(.bottom, 18)
+            Spacer()
+            if readiness == .unlocked {
+                Button {
+                    Haptics.tap()
+                    withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching.toggle() }
+                    if !searching { search = .idle }
+                } label: {
+                    Image(systemName: searching ? "xmark" : "magnifyingglass")
+                        .scaledFont(17, weight: .semibold).foregroundStyle(.white)
+                        .frame(width: Theme.minimumHitTarget * typeScale,
+                               height: Theme.minimumHitTarget * typeScale)
+                        .background(Color.white.opacity(0.2)).clipShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(searching ? "Close search" : "Search stories")
+                .accessibilityHint(searching ? "Returns to the feed" : "Finds French stories on any topic")
+            }
         }
-        .frame(height: 150)
+        .padding(.horizontal, 20).padding(.top, 60).padding(.bottom, 18)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .bottomLeading)
+        .background {
+            ZStack(alignment: .bottomLeading) {
+                Theme.primaryGradient
+                Circle().fill(Color.white.opacity(0.1)).frame(width: 150, height: 150).offset(x: -40, y: 50)
+            }
+        }
         .clipped()
     }
 
@@ -156,7 +173,8 @@ struct ReadView: View {
     private var lockedContent: some View {
         ScrollView {
             VStack(spacing: 12) {
-                Image(systemName: "lock.fill").font(.system(size: 30)).foregroundStyle(Theme.textMuted)
+                Image(systemName: "lock.fill").scaledFont(30).foregroundStyle(Theme.textMuted)
+                    .accessibilityHidden(true)
                 Text("Reading isn't open yet").font(.headline).foregroundStyle(Theme.text)
                 Text(ReadinessCopy.unlockCondition(for: .reading, readiness: .locked, readingReadiness: .locked,
                                                    readingMinutes: store.totalMinutes(.reading),
@@ -175,6 +193,7 @@ struct ReadView: View {
     private var bridgeBanner: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "figure.walk").font(.subheadline.weight(.bold)).foregroundStyle(Theme.primary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(ReadinessCopy.bridgeCondition).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
                 Text("Curated pieces up to \(Tuning.readingBridgeMaxLevel.rawValue). Live headlines and search open with the rest of Reading.")
@@ -194,7 +213,7 @@ struct ReadView: View {
 
     private var searchBar: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted)
+            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted).accessibilityHidden(true)
             TextField("Search any topic…", text: $searchText)
                 .font(.body).autocorrectionDisabled()
                 .onSubmit { Task { await runSearch() } }
@@ -241,14 +260,16 @@ struct ReadView: View {
         let active = activeView == tab
         return Button {
             Haptics.tap()
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { activeView = tab }
+            withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion)) {
+                activeView = tab
+            }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 13))
+                Image(systemName: icon).scaledFont(13).accessibilityHidden(true)
                 Text(title).font(.subheadline.weight(.semibold))
             }
             .foregroundStyle(active ? .white : Theme.textSecondary)
-            .frame(maxWidth: .infinity).frame(minHeight: 44)
+            .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
             .background(active ? Theme.primary : .clear)
             .clipShape(.rect(cornerRadius: 9))
         }
@@ -314,12 +335,13 @@ struct ReadView: View {
 
     private var feedSkeleton: some View {
         VStack(spacing: 14) {
-            SkeletonBlock(height: 230, cornerRadius: 16)
+            SkeletonBlock(height: 230 * cardScale, cornerRadius: 16)
             ForEach(0..<3, id: \.self) { _ in
-                SkeletonBlock(height: 150, cornerRadius: 16)
+                SkeletonBlock(height: 150 * cardScale, cornerRadius: 16)
             }
         }
         .padding(.top, 4)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Loading stories")
     }
 
@@ -330,29 +352,32 @@ struct ReadView: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: failure == .offline ? "wifi.slash" : "info.circle.fill")
                     .font(.footnote.weight(.bold)).foregroundStyle(Theme.warning)
+                    .accessibilityHidden(true)
                 Text(failure.message).font(.footnote).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if failure.isRetryable {
                     Button { Haptics.tap(); Task { await model.load(level: level) } } label: {
                         Text("Retry").font(.footnote.weight(.semibold)).foregroundStyle(Theme.primary)
-                            .frame(minWidth: 44, minHeight: 44)
+                            .frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Retry loading stories")
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(Theme.warningLight)
             .clipShape(.rect(cornerRadius: 10))
-            .accessibilityElement(children: .combine)
         } else {
             HStack(spacing: 6) {
-                Image(systemName: "bolt.fill").font(.system(size: 12)).foregroundStyle(Theme.primary)
+                Image(systemName: "bolt.fill").scaledFont(12).foregroundStyle(Theme.primary)
+                    .accessibilityHidden(true)
                 Text("Live headlines · closest to your level (\(level.rawValue)) first · levels are estimates")
                     .font(.footnote).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Text("\(model.displayed.count) of \(model.filtered.count)").font(.caption).foregroundStyle(Theme.textMuted)
+                Text("\(model.displayed.count) of \(model.filtered.count)").font(.caption).foregroundStyle(Theme.textSecondary)
+                    .accessibilityLabel("Showing \(model.displayed.count) of \(model.filtered.count) stories")
             }
             .padding(.vertical, 2)
         }
@@ -395,16 +420,17 @@ struct ReadView: View {
                         model.regionGroup = group
                     } label: {
                         HStack(spacing: 5) {
-                            Text(group.emoji).font(.system(size: 12))
+                            Text(group.emoji).scaledFont(12)
                             Text(group.label).font(.footnote.weight(.medium))
                         }
                         .foregroundStyle(active ? Theme.primaryDark : Theme.textSecondary)
-                        .padding(.horizontal, 12).frame(minHeight: 44)
+                        .padding(.horizontal, 12).frame(minHeight: Theme.minimumHitTarget)
                         .background(active ? Theme.primaryLight : Theme.backgroundSecondary)
                         .clipShape(.capsule)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(group.label)
+                    .accessibilityHint("Filters the feed by region")
                     .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
@@ -414,7 +440,7 @@ struct ReadView: View {
     }
 
     private func feedCard(_ article: NewsArticle, hero: Bool) -> some View {
-        let height: CGFloat = hero ? 230 : 150
+        let height: CGFloat = (hero ? 230 : 150) * cardScale
         return Color(Theme.backgroundTertiary)
             .frame(height: height)
             .overlay {
@@ -437,17 +463,17 @@ struct ReadView: View {
             .overlay(alignment: .top) {
                 HStack {
                     Text(article.category.label.uppercased())
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        .scaledFont(10, weight: .bold).foregroundStyle(.white)
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(Color(hex: article.category.hex)).clipShape(.capsule)
                     Text(article.levelLabel)
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        .scaledFont(10, weight: .bold).foregroundStyle(.white)
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(Color.white.opacity(0.22)).clipShape(.capsule)
                     Spacer()
                     HStack(spacing: 4) {
-                        Text(article.region.emoji).font(.system(size: 11))
-                        Text(article.region.label).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+                        Text(article.region.emoji).scaledFont(11)
+                        Text(article.region.label).scaledFont(10, weight: .semibold).foregroundStyle(.white)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.black.opacity(0.3)).clipShape(.capsule)
@@ -457,7 +483,7 @@ struct ReadView: View {
             .overlay(alignment: .bottomLeading) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(article.title)
-                        .font(.system(size: hero ? 19 : 15, weight: .bold)).foregroundStyle(.white)
+                        .scaledFont(hero ? 19 : 15, weight: .bold).foregroundStyle(.white)
                         .lineLimit(hero ? 3 : 2).multilineTextAlignment(.leading)
                     if hero && !article.summary.isEmpty {
                         Text(article.summary).font(.footnote).foregroundStyle(.white.opacity(0.85)).lineLimit(2)
@@ -477,17 +503,21 @@ struct ReadView: View {
 
     private var emptyCard: some View {
         VStack(spacing: 12) {
-            Image(systemName: "newspaper").font(.system(size: 30)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "newspaper").scaledFont(30).foregroundStyle(Theme.textMuted)
+                .accessibilityHidden(true)
             Text("No stories here yet").font(.headline).foregroundStyle(Theme.text)
+                .multilineTextAlignment(.center)
             Text("Try another category or region, or refresh.")
-                .font(.footnote).foregroundStyle(Theme.textMuted)
+                .font(.footnote).foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Button { Haptics.tap(); Task { await model.load(level: level) } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise").font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white).padding(.horizontal, 16).frame(minHeight: 44)
+                    .foregroundStyle(.white).padding(.horizontal, 16).frame(minHeight: Theme.minimumHitTarget)
                     .background(Theme.primary).clipShape(.capsule)
             }.buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity).padding(.vertical, 50)
+        .frame(maxWidth: .infinity).padding(.vertical, 50).padding(.horizontal, 24)
         .background(Theme.card).clipShape(.rect(cornerRadius: 16)).padding(.top, 20)
     }
 
@@ -512,7 +542,7 @@ struct ReadView: View {
                         if failure.isRetryable {
                             Button { Haptics.tap(); Task { await runSearch() } } label: {
                                 Label("Try again", systemImage: "arrow.clockwise").font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.white).padding(.horizontal, 16).frame(minHeight: 44)
+                                    .foregroundStyle(.white).padding(.horizontal, 16).frame(minHeight: Theme.minimumHitTarget)
                                     .background(Theme.primary).clipShape(.capsule)
                             }.buttonStyle(.plain)
                         }
@@ -531,9 +561,10 @@ struct ReadView: View {
 
     private func searchMessage(icon: String, title: String, message: String) -> some View {
         VStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 32)).foregroundStyle(Theme.textMuted)
+            Image(systemName: icon).scaledFont(32).foregroundStyle(Theme.textMuted)
+                .accessibilityHidden(true)
             Text(title).font(.headline).foregroundStyle(Theme.text).multilineTextAlignment(.center)
-            Text(message).font(.footnote).foregroundStyle(Theme.textMuted).multilineTextAlignment(.center)
+            Text(message).font(.footnote).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 60).padding(.horizontal, 24)
@@ -573,9 +604,12 @@ private struct LibraryView: View {
                 }
                 if pieces.isEmpty {
                     VStack(spacing: 8) {
-                        Image(systemName: "line.3.horizontal.decrease.circle").font(.system(size: 30)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "line.3.horizontal.decrease.circle").scaledFont(30).foregroundStyle(Theme.textMuted)
+                            .accessibilityHidden(true)
                         Text(readiness == .foundation ? "No short pieces match these filters yet" : "No pieces match your filters")
-                            .font(.subheadline).foregroundStyle(Theme.textMuted)
+                            .font(.subheadline).foregroundStyle(Theme.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }.frame(maxWidth: .infinity).padding(.vertical, 50)
                 }
             }
@@ -586,9 +620,11 @@ private struct LibraryView: View {
 
     private var orderNote: some View {
         HStack(spacing: 6) {
-            Image(systemName: "arrow.up.arrow.down").font(.system(size: 11)).foregroundStyle(Theme.primary)
+            Image(systemName: "arrow.up.arrow.down").scaledFont(11).foregroundStyle(Theme.primary)
+                .accessibilityHidden(true)
             Text("Closest to your level (\(level.rawValue)) first")
                 .font(.footnote).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
         .padding(.top, 8)
@@ -602,11 +638,11 @@ private struct LibraryView: View {
                     let active = regionGroup == group
                     Button { Haptics.tap(); regionGroup = group } label: {
                         HStack(spacing: 5) {
-                            Text(group.emoji).font(.system(size: 12))
+                            Text(group.emoji).scaledFont(12)
                             Text(group.label).font(.footnote.weight(.medium))
                         }
                         .foregroundStyle(active ? Theme.primaryDark : Theme.textSecondary)
-                        .padding(.horizontal, 12).frame(minHeight: 44)
+                        .padding(.horizontal, 12).frame(minHeight: Theme.minimumHitTarget)
                         .background(active ? Theme.primaryLight : Theme.backgroundSecondary)
                         .clipShape(.capsule)
                     }
@@ -627,10 +663,14 @@ private struct LibraryView: View {
                     Button("All levels") { difficulty = nil }
                     ForEach(ReadDifficulty.allCases) { d in Button(d.label) { difficulty = d } }
                 } label: { filterLabel(difficulty?.label ?? "Level", active: difficulty != nil) }
+                    .accessibilityLabel("Filter by level")
+                    .accessibilityValue(difficulty?.label ?? "All levels")
                 Menu {
                     Button("All types") { category = nil }
                     ForEach(ReadCategory.allCases) { c in Button(c.label) { category = c } }
                 } label: { filterLabel(category?.label ?? "Type", active: category != nil) }
+                    .accessibilityLabel("Filter by type")
+                    .accessibilityValue(category?.label ?? "All types")
             }
         }
         .contentMargins(.horizontal, 0, for: .scrollContent)
@@ -640,10 +680,10 @@ private struct LibraryView: View {
     private func filterLabel(_ text: String, active: Bool) -> some View {
         HStack(spacing: 5) {
             Text(text).font(.footnote.weight(.semibold))
-            Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+            Image(systemName: "chevron.down").scaledFont(9, weight: .bold)
         }
         .foregroundStyle(active ? Theme.primary : Theme.textSecondary)
-        .padding(.horizontal, 12).frame(minHeight: 44)
+        .padding(.horizontal, 12).frame(minHeight: Theme.minimumHitTarget)
         .background(active ? Theme.primaryLight : Theme.card)
         .clipShape(.capsule)
         .overlay(Capsule().stroke(active ? .clear : Theme.border, lineWidth: 1))
@@ -653,7 +693,7 @@ private struct LibraryView: View {
         switch ReadingShelf.fit(of: piece.level, for: level) {
         case .atLevel: return ("At your level", Theme.success)
         case .stretch: return ("Stretch", Theme.warning)
-        case .easy: return ("Easy", Theme.textMuted)
+        case .easy: return ("Easy", Theme.textSecondary)
         }
     }
 
@@ -665,18 +705,20 @@ private struct LibraryView: View {
                 Pill(text: piece.category.label, color: piece.tint)
                 if readiness == .unlocked { Pill(text: fit.0, color: fit.1) }
                 Spacer()
-                Label("\(piece.minutes) min", systemImage: "clock").font(.caption).foregroundStyle(Theme.textMuted)
+                Label("\(piece.minutes) min", systemImage: "clock").font(.caption).foregroundStyle(Theme.textSecondary)
             }
             Text(piece.title).font(.headline).foregroundStyle(Theme.text)
-            Text(piece.subtitle).font(.subheadline).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(piece.subtitle).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 5) {
-                Text(piece.region.flag).font(.system(size: 12))
-                Text(piece.region.label).font(.caption).foregroundStyle(Theme.textMuted)
+                Text(piece.region.flag).scaledFont(12)
+                Text(piece.region.label).font(.caption).foregroundStyle(Theme.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle(padding: 16)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(piece.title), level \(piece.level.rawValue), \(piece.minutes) minutes")
+        .accessibilityLabel("\(piece.title), \(piece.category.label), level \(piece.level.rawValue), \(readiness == .unlocked ? fit.0 + ", " : "")\(piece.minutes) minutes, \(piece.region.label)")
     }
 }

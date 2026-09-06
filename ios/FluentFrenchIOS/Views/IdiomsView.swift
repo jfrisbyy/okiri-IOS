@@ -10,6 +10,10 @@ import SwiftUI
 struct IdiomsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 at the default text size; the square emoji tile grows with it so the
+    /// scaled emoji keeps its padding.
+    @ScaledMetric private var typeScale: CGFloat = 1
     @State private var selectedCategory: IdiomCategory? = nil
     @State private var query: String = ""
     @State private var expandedID: String? = nil
@@ -68,14 +72,16 @@ struct IdiomsView: View {
 
     private var searchBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").font(.system(size: 15)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "magnifyingglass").scaledFont(15).foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
             TextField("Search idioms…", text: $query)
-                .font(.system(size: 15)).foregroundStyle(Theme.text)
+                .scaledFont(15).foregroundStyle(Theme.text)
                 .autocorrectionDisabled()
+                .accessibilityLabel("Search idioms")
             if !query.isEmpty {
                 Button { query = "" } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(Theme.textMuted)
-                        .frame(minWidth: 44, minHeight: 44)
+                    Image(systemName: "xmark.circle.fill").scaledFont(15).foregroundStyle(Theme.textSecondary)
+                        .minimumHitTarget()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear search")
@@ -106,38 +112,47 @@ struct IdiomsView: View {
     }
 
     private func chip(label: String, emoji: String?, active: Bool, action: @escaping () -> Void) -> some View {
-        Button { Haptics.tap(); withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { action() } } label: {
+        Button {
+            Haptics.tap()
+            withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion)) { action() }
+        } label: {
             HStack(spacing: 6) {
-                if let emoji { Text(emoji).font(.system(size: 13)) }
-                Text(label).font(.system(size: 13, weight: .medium))
+                if let emoji { Text(emoji).scaledFont(13).accessibilityHidden(true) }
+                Text(label).scaledFont(13, weight: .medium)
             }
             .foregroundStyle(active ? .white : Theme.text)
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(active ? accent : Theme.card)
             .clipShape(.capsule)
             .overlay(Capsule().stroke(active ? Color.clear : Theme.border.opacity(0.7), lineWidth: 0.5))
+            // The chip keeps its drawn size; only the tappable area grows to 44 pt.
+            .minimumHitTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityHint("Filters the idioms by theme")
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 Text("\(filtered.count) idiom\(filtered.count == 1 ? "" : "s")")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    .scaledFont(13).foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 ForEach(filtered) { idiom in
                     idiomCard(idiom)
                 }
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: expandedID)
+                .reducedMotionAnimation(.spring(response: 0.35, dampingFraction: 0.85), value: expandedID)
 
                 if filtered.isEmpty {
                     VStack(spacing: 8) {
-                        Text("No idioms found").font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
-                        Text("Try a different search term").font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                        Text("No idioms found").scaledFont(17, weight: .semibold).foregroundStyle(Theme.text)
+                        Text("Try a different search term").scaledFont(14).foregroundStyle(Theme.textSecondary)
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 60)
+                    .accessibilityElement(children: .combine)
                 }
             }
             .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 44)
@@ -150,23 +165,25 @@ struct IdiomsView: View {
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 Haptics.tap()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.82), reduceMotion: reduceMotion)) {
                     expandedID = expanded ? nil : idiom.id
                 }
             } label: {
                 HStack(alignment: .top, spacing: 12) {
-                    Text(idiom.category.emoji).font(.system(size: 22))
-                        .frame(width: 44, height: 44)
+                    Text(idiom.category.emoji).scaledFont(22)
+                        .frame(width: Theme.minimumHitTarget * typeScale, height: Theme.minimumHitTarget * typeScale)
                         .background(accent.opacity(0.1)).clipShape(.rect(cornerRadius: 12))
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(idiom.french).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
+                        Text(idiom.french).scaledFont(16, weight: .semibold).foregroundStyle(Theme.text)
                             .multilineTextAlignment(.leading)
-                        Text(idiom.meaning).font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                        Text(idiom.meaning).scaledFont(14).foregroundStyle(Theme.textSecondary)
                             .multilineTextAlignment(.leading)
                     }
                     Spacer(minLength: 8)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        .scaledFont(14, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                        .accessibilityHidden(true)
                 }
             }
             .buttonStyle(.plain)
@@ -177,17 +194,21 @@ struct IdiomsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Divider().background(Theme.borderLight)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("LITERAL").font(.system(size: 10, weight: .bold)).foregroundStyle(accent.opacity(0.8)).tracking(0.8)
-                        Text(idiom.literal).font(.system(size: 15)).italic().foregroundStyle(Theme.text)
+                        Text("LITERAL").scaledFont(10, weight: .bold).foregroundStyle(accent).tracking(0.8)
+                        Text(idiom.literal).scaledFont(15).italic().foregroundStyle(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .accessibilityElement(children: .combine)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("EXAMPLE").font(.system(size: 10, weight: .bold)).foregroundStyle(accent.opacity(0.8)).tracking(0.8)
+                        Text("EXAMPLE").scaledFont(10, weight: .bold).foregroundStyle(accent).tracking(0.8)
                         HStack(alignment: .top, spacing: 8) {
-                            Text(idiom.example).font(.system(size: 15, weight: .medium)).foregroundStyle(accent)
+                            Text(idiom.example).scaledFont(15, weight: .medium).foregroundStyle(accent)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 4)
                             SpeakButton(text: idiom.example, size: 30)
                         }
-                        Text(idiom.exampleTranslation).font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                        Text(idiom.exampleTranslation).scaledFont(14).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -196,7 +217,7 @@ struct IdiomsView: View {
                     saveRow(for: idiom)
                 }
                 .padding(.top, 14)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(18)
@@ -219,11 +240,13 @@ struct IdiomsView: View {
                   systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(saved ? Theme.success : accent)
-                .frame(maxWidth: .infinity).frame(minHeight: 44)
+                .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
                 .background(saved ? Theme.successLight : accent.opacity(0.1))
                 .clipShape(.rect(cornerRadius: Radius.chip))
         }
         .buttonStyle(.plain)
         .disabled(saved)
+        .accessibilityLabel(saved ? "Already in your deck" : "Save to my deck")
+        .accessibilityHint(saved ? "" : "Adds this idiom to your practice deck")
     }
 }

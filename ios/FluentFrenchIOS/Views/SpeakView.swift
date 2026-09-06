@@ -17,6 +17,10 @@ import UIKit
 struct SpeakView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The header holds the largest text on the screen, so its height grows with
+    /// the learner's text size instead of clipping the title and the stat row.
+    @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 195
     @State private var mode: Mode = .free
     @State private var selectedDuration = Tuning.speakDefaultDurationMinutes
     @State private var categoryIndex = 0
@@ -98,7 +102,7 @@ struct SpeakView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Speak").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
+                    Text("Speak").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
                     Text("Practice speaking and build fluency").font(.system(.callout)).foregroundStyle(.white.opacity(0.8))
                 }
                 HStack(spacing: 16) {
@@ -113,7 +117,7 @@ struct SpeakView: View {
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
-        .frame(height: 195)
+        .frame(height: headerHeight)
         .clipped()
     }
 
@@ -142,7 +146,7 @@ struct SpeakView: View {
         let active = mode == m
         return Button {
             Haptics.tap()
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { mode = m }
+            withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion)) { mode = m }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(.footnote)).accessibilityHidden(true)
@@ -163,9 +167,9 @@ struct SpeakView: View {
     private var writeSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Write & Get Feedback").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Write & Get Feedback").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
                 Text("Respond in French and get corrections, a fluency note, and a more natural phrasing.")
-                    .font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
+                    .font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
             }
 
             if !feedbackAvailable { unavailableCard(TalkServiceFailure.noKey) }
@@ -173,7 +177,7 @@ struct SpeakView: View {
             // Prompt to respond to
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("RESPOND TO THIS").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("RESPOND TO THIS").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                     Spacer()
                     Button {
                         Haptics.tap()
@@ -194,7 +198,7 @@ struct SpeakView: View {
             ZStack(alignment: .topLeading) {
                 if writeText.isEmpty {
                     Text("Write your answer in French…")
-                        .font(.system(.body)).foregroundStyle(Theme.textMuted)
+                        .font(.system(.body)).foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 14).padding(.vertical, 14)
                         .accessibilityHidden(true)
                 }
@@ -214,9 +218,9 @@ struct SpeakView: View {
                 runFeedback(for: writeText, prompt: prompt.text)
             } label: {
                 HStack(spacing: 10) {
-                    if feedbackLoading { ProgressView().tint(.white) }
+                    if feedbackLoading { ProgressView().tint(.white).accessibilityHidden(true) }
                     else { Image(systemName: "sparkles").font(.system(.body)).accessibilityHidden(true) }
-                    Text(feedbackLoading ? "Analyzing…" : "Get feedback").font(.system(.body, weight: .bold))
+                    Text(feedbackLoading ? "Checking your French…" : "Get feedback").font(.system(.body, weight: .bold))
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity).padding(.vertical, 15)
                 .background(canGetFeedback ? Theme.primary : Theme.textMuted).clipShape(.rect(cornerRadius: 14))
@@ -252,14 +256,14 @@ struct SpeakView: View {
         feedbackTask?.cancel()
         feedbackTask = Task {
             let result = await SpeakFeedbackService.evaluate(response: text, prompt: promptText, level: level, concepts: concepts)
-            // A cancelled request never leaves the button on "Analyzing…" (E26).
+            // A cancelled request never leaves the button on "Checking your French…" (E26).
             guard !Task.isCancelled else { feedbackLoading = false; return }
             feedbackLoading = false
             switch result {
             case .success(let fb):
                 Haptics.success()
                 let outcome = store.recordSpeakFeedback(original: text, feedback: fb, promptText: promptText)
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                     feedback = fb
                     feedbackOutcome = outcome
                 }
@@ -316,7 +320,7 @@ struct SpeakView: View {
             Image(systemName: "bolt.slash.fill").font(.system(.subheadline)).foregroundStyle(Theme.warning).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Feedback isn't available in this build").font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
-                Text("AI feedback needs the tutor service, which isn't included here. You can still practise out loud and review your saved phrases.")
+                Text("AI feedback needs the tutor service, which isn't included here. You can still practice out loud and review your saved phrases.")
                     .font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -398,7 +402,7 @@ struct SpeakView: View {
             let outcome = await recorder.stopAndTranscribe(language: "fra")
             switch outcome {
             case .text(let text):
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { spokenText = text }
+                withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) { spokenText = text }
                 if feedbackAvailable {
                     runFeedback(for: text, prompt: promptText)
                 } else {
@@ -426,7 +430,7 @@ struct SpeakView: View {
                     if state.canOpenSettings {
                         Button { Haptics.tap(); openSettings() } label: {
                             Text("Open Settings").font(.system(.footnote, weight: .bold)).foregroundStyle(Theme.primary)
-                                .frame(minHeight: 44)
+                                .minimumHitTarget()
                         }
                         .buttonStyle(.plain)
                     }
@@ -450,14 +454,14 @@ struct SpeakView: View {
             micNoticeCard
             if recorder.isTranscribing {
                 HStack(spacing: 10) {
-                    ProgressView().tint(Theme.primary)
-                    Text("Transcribing your speech…").font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
+                    ProgressView().tint(Theme.primary).accessibilityHidden(true)
+                    Text("Transcribing your speech…").font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
                 }
                 .accessibilityElement(children: .combine)
             }
             if !spokenText.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("YOU SAID").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("YOU SAID").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                     Text(spokenText).font(.system(.body, weight: .medium)).foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -467,8 +471,8 @@ struct SpeakView: View {
             }
             if feedbackLoading {
                 HStack(spacing: 10) {
-                    ProgressView().tint(Theme.primary)
-                    Text("Getting feedback…").font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
+                    ProgressView().tint(Theme.primary).accessibilityHidden(true)
+                    Text("Getting feedback…").font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -479,15 +483,17 @@ struct SpeakView: View {
     private func feedbackCard(_ f: SpeakFeedback) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("FEEDBACK").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                Text("FEEDBACK").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                 Spacer()
                 HStack(spacing: 6) {
                     Image(systemName: "gauge.with.dots.needle.50percent").font(.system(.footnote)).foregroundStyle(scoreColor(f.score))
                         .accessibilityHidden(true)
                     Text("\(f.score)").font(.system(.callout, weight: .heavy)).foregroundStyle(scoreColor(f.score))
-                    Text("fluency").font(.system(.caption)).foregroundStyle(Theme.textMuted)
+                    Text("fluency").font(.system(.caption)).foregroundStyle(Theme.textSecondary)
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Fluency")
+                .accessibilityValue("\(f.score) out of 100")
             }
             feedbackRow("checkmark.circle.fill", Theme.success, "Corrected", f.corrected, speakable: true)
             if !f.natural.isEmpty {
@@ -500,7 +506,9 @@ struct SpeakView: View {
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.6), lineWidth: 0.5))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(reduceMotion
+                    ? AnyTransition.opacity
+                    : AnyTransition.move(edge: .bottom).combined(with: .opacity))
     }
 
     private func feedbackRow(_ icon: String, _ color: Color, _ label: String, _ text: String, speakable: Bool) -> some View {
@@ -536,9 +544,9 @@ struct SpeakView: View {
     private var freeSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Session Length").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Session Length").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
                 Text("Speak freely about anything — recording stops automatically at the length you pick.")
-                    .font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
+                    .font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
             }
             HStack(spacing: 10) {
                 ForEach(SpeakingData.freeDurations, id: \.value) { d in
@@ -548,7 +556,7 @@ struct SpeakView: View {
                     } label: {
                         VStack(spacing: 4) {
                             Text(d.label).font(.system(.headline, weight: .bold)).foregroundStyle(active ? Theme.primaryDark : Theme.text)
-                            Text(d.description).font(.system(.caption2)).foregroundStyle(active ? Theme.primary : Theme.textMuted).multilineTextAlignment(.center)
+                            Text(d.description).font(.system(.caption2)).foregroundStyle(active ? Theme.primary : Theme.textSecondary).multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 14)
                         .background(active ? Theme.primaryLight : Theme.card)
@@ -584,8 +592,8 @@ struct SpeakView: View {
     private var guidedSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Choose a Category").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("Targeted prompts to expand your vocabulary").font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
+                Text("Choose a Category").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
+                Text("Targeted prompts to expand your vocabulary").font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
             }
 
             ScrollView(.horizontal) {
@@ -602,7 +610,7 @@ struct SpeakView: View {
                                     .accessibilityHidden(true)
                                 Text(cat.name).font(.system(.subheadline, weight: .semibold)).foregroundStyle(active ? .white : Theme.text)
                                 Text(cat.cefr + "+").font(.system(.caption2, weight: .bold))
-                                    .foregroundStyle(active ? .white : Theme.textMuted)
+                                    .foregroundStyle(active ? .white : Theme.textSecondary)
                                     .padding(.horizontal, 6).padding(.vertical, 2)
                                     .background(active ? Color.white.opacity(0.25) : Theme.backgroundSecondary)
                                     .clipShape(.capsule)
@@ -641,7 +649,7 @@ struct SpeakView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text(prompt.text).font(.system(.title3, weight: .semibold)).foregroundStyle(Theme.text).lineSpacing(3)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("KEY VOCABULARY").font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("KEY VOCABULARY").font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                     FlowChips(items: prompt.vocabularyFocus, color: category.color)
                 }
             }
@@ -656,7 +664,7 @@ struct SpeakView: View {
         HStack {
             Button {
                 Haptics.tap()
-                if promptIndex > 0 { withAnimation { promptIndex -= 1 } }
+                if promptIndex > 0 { withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { promptIndex -= 1 } }
             } label: {
                 Image(systemName: "chevron.left").font(.system(.title2, weight: .semibold))
                     .foregroundStyle(promptIndex == 0 ? Theme.textMuted : Theme.text)
@@ -675,7 +683,7 @@ struct SpeakView: View {
             Spacer()
             Button {
                 Haptics.tap()
-                if promptIndex < category.prompts.count - 1 { withAnimation { promptIndex += 1 } }
+                if promptIndex < category.prompts.count - 1 { withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { promptIndex += 1 } }
             } label: {
                 Image(systemName: "chevron.right").font(.system(.title2, weight: .semibold))
                     .foregroundStyle(promptIndex == category.prompts.count - 1 ? Theme.textMuted : Theme.text)
@@ -716,7 +724,7 @@ struct SpeakView: View {
                         .accessibilityHidden(true)
                     Text(title)
                         .font(.system(.headline, weight: .semibold)).foregroundStyle(.white)
-                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .lineLimit(2).minimumScaleFactor(0.8).multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 8)
                 .background(recording ? Theme.error : (!usable ? Theme.textMuted : (mode == .guided ? category.color : Theme.primary)))

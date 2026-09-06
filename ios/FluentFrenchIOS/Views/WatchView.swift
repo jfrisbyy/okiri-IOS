@@ -63,6 +63,10 @@ final class WatchModel {
 
 struct WatchView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The header carries the screen title, the mode chips and the search field,
+    /// so it grows with the learner's text size instead of clipping them.
+    @ScaledMetric(relativeTo: .largeTitle) private var headerHeight: CGFloat = 210
     @State private var model = WatchModel()
     @State private var reachability = NetworkReachability.shared
     @State private var nativeMode = false
@@ -110,12 +114,12 @@ struct WatchView: View {
 
     private var header: some View {
         LinearGradient(colors: [Color(hex: "1A0F0A"), Color(hex: "2D1810"), Color(hex: "1A0F0A")], startPoint: .top, endPoint: .bottom)
-            .frame(height: searching ? 220 : 210)
+            .frame(height: searching ? headerHeight + 10 : headerHeight)
             .overlay(alignment: .bottom) {
                 VStack(spacing: 14) {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Watch & Learn").font(.serifDisplay(28, weight: .bold)).foregroundStyle(.white)
+                            Text("Watch & Learn").scaledSerifDisplay(28, weight: .bold).foregroundStyle(.white)
                             Text("Immerse yourself in French video").font(.footnote).foregroundStyle(.white.opacity(0.6))
                         }
                         Spacer()
@@ -132,14 +136,16 @@ struct WatchView: View {
 
                     Button {
                         Haptics.tap()
-                        withAnimation { searching.toggle() }
+                        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching.toggle() }
                     } label: {
                         HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass").font(.callout).foregroundStyle(.white.opacity(0.4))
+                            Image(systemName: "magnifyingglass").font(.callout).foregroundStyle(.white.opacity(0.55))
+                                .accessibilityHidden(true)
                             Text(searching ? "Close search" : "Search YouTube in French…")
-                                .font(.subheadline).foregroundStyle(.white.opacity(0.4))
+                                .font(.subheadline).foregroundStyle(.white.opacity(0.55))
                             Spacer()
-                            Image(systemName: searching ? "xmark" : "chevron.right").font(.footnote).foregroundStyle(.white.opacity(0.3))
+                            Image(systemName: searching ? "xmark" : "chevron.right").font(.footnote).foregroundStyle(.white.opacity(0.45))
+                                .accessibilityHidden(true)
                         }
                         .padding(.horizontal, 16).frame(minHeight: 46)
                         .background(Color.white.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
@@ -175,7 +181,7 @@ struct WatchView: View {
     private var searchBarInline: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.5)).accessibilityHidden(true)
-            TextField("", text: $searchText, prompt: Text("Search in French…").foregroundColor(.white.opacity(0.4)))
+            TextField("", text: $searchText, prompt: Text("Search in French…").foregroundColor(.white.opacity(0.7)))
                 .foregroundStyle(.white).font(.subheadline).autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { Task { await runSearch() } }
@@ -221,8 +227,8 @@ struct WatchView: View {
                 VStack(spacing: 16) { suggestedGrid }.padding(.top, 8)
             case .loading:
                 HStack(spacing: 10) {
-                    ProgressView().tint(.white)
-                    Text("Searching…").font(.footnote).foregroundStyle(.white.opacity(0.6))
+                    ProgressView().tint(.white).accessibilityHidden(true)
+                    Text("Searching…").font(.footnote).foregroundStyle(.white.opacity(0.75))
                 }
                 .padding(.vertical, 40)
                 .accessibilityElement(children: .combine)
@@ -253,7 +259,7 @@ struct WatchView: View {
                     Text(video.title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2).multilineTextAlignment(.leading)
                     Text(video.channel).font(.caption).foregroundStyle(.white.opacity(0.5))
                     if !video.viewsLabel.isEmpty {
-                        Text(video.viewsLabel).font(.caption2).foregroundStyle(.white.opacity(0.4))
+                        Text(video.viewsLabel).font(.caption2).foregroundStyle(.white.opacity(0.7))
                     }
                 }
                 Spacer()
@@ -324,28 +330,29 @@ struct WatchView: View {
         let videos = section.videos
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Text(category.emoji).font(.title3)
+                Text(category.emoji).font(.title3).minimumScaleFactor(0.6)
                     .frame(width: 36, height: 36).background(Color.white.opacity(0.08)).clipShape(.rect(cornerRadius: 10))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(section.isCurated ? category.name : "Trending \(category.name)").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(.white)
+                    Text(section.isCurated ? category.name : "Trending \(category.name)").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(.white)
                     Text(section.isCurated ? (videos.isEmpty ? VideoFeedCopy.unavailableLabel : VideoFeedCopy.curatedLabel) : "Popular in France")
                         .font(.caption).foregroundStyle(.white.opacity(0.5))
                 }
                 Spacer()
                 if !videos.isEmpty && !section.isCurated {
                     HStack(spacing: 4) {
-                        Image(systemName: "flame.fill").font(.caption2).foregroundStyle(Theme.primary)
+                        Image(systemName: "flame.fill").font(.caption2).foregroundStyle(Theme.primary).accessibilityHidden(true)
                         Text("\(videos.count)").font(.caption2.weight(.bold)).foregroundStyle(Theme.primary)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.primary.opacity(0.15)).clipShape(.capsule)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(videos.count) videos")
                 }
             }
             .padding(.horizontal, 20)
 
             if videos.isEmpty {
-                Text(VideoFeedCopy.emptyCategory).font(.footnote).foregroundStyle(.white.opacity(0.4))
+                Text(VideoFeedCopy.emptyCategory).font(.footnote).foregroundStyle(.white.opacity(0.7))
                     .padding(.horizontal, 20).padding(.vertical, 20)
             } else {
                 ScrollView(.horizontal) {
@@ -369,7 +376,7 @@ struct WatchView: View {
                     Text(video.channel).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                     if !video.viewsLabel.isEmpty {
                         Circle().fill(.white.opacity(0.4)).frame(width: 3, height: 3)
-                        Text(video.viewsLabel).font(.caption2).foregroundStyle(.white.opacity(0.45))
+                        Text(video.viewsLabel).font(.caption2).foregroundStyle(.white.opacity(0.7))
                     }
                 }
                 .frame(width: 250, alignment: .leading)
@@ -410,13 +417,13 @@ struct WatchView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "chart.line.uptrend.xyaxis").font(.subheadline).foregroundStyle(Theme.primary).accessibilityHidden(true)
-                Text("Suggested Searches").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(.white)
+                Text("Suggested Searches").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(.white)
             }
             .padding(.horizontal, 20)
             if YouTubeService.hasKey {
                 suggestedGrid
             } else {
-                Text(VideoFeedCopy.searchMessage(.noKey)).font(.footnote).foregroundStyle(.white.opacity(0.5))
+                Text(VideoFeedCopy.searchMessage(.noKey)).font(.footnote).foregroundStyle(.white.opacity(0.75))
                     .padding(.horizontal, 20)
             }
         }
@@ -428,7 +435,7 @@ struct WatchView: View {
                 Button {
                     Haptics.tap()
                     searchText = s.query
-                    if !searching { withAnimation { searching = true } }
+                    if !searching { withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching = true } }
                     Task { await runSearch() }
                 } label: {
                     HStack(spacing: 8) {
@@ -455,7 +462,7 @@ struct WatchView: View {
                 Image(systemName: icon).font(.footnote).foregroundStyle(Theme.warning).accessibilityHidden(true)
                 Text(title).font(.subheadline.weight(.bold)).foregroundStyle(.white)
             }
-            Text(message).font(.footnote).foregroundStyle(.white.opacity(0.6))
+            Text(message).font(.footnote).foregroundStyle(.white.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
             if let retry {
                 Button { Haptics.tap(); retry() } label: {

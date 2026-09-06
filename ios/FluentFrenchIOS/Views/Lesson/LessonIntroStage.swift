@@ -12,6 +12,13 @@ struct LessonIntroStage: View {
     let model: LessonViewModel
     let onClose: () -> Void
     @Environment(AppStore.self) private var store
+    /// The small initial discs grow with the type ratio so the initials keep
+    /// their proportions at large text sizes (G1).
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
+    /// The hero disc follows the large-title curve its glyph uses, clamped so it
+    /// never outgrows the narrowest phone.
+    @ScaledMetric(relativeTo: .largeTitle) private var heroDiscSize: CGFloat = 96
+    private var heroDisc: CGFloat { min(heroDiscSize, 150) }
 
     private let previewCount = 4
 
@@ -24,7 +31,9 @@ struct LessonIntroStage: View {
             ScrollView {
                 VStack(spacing: Space.lg) {
                     ZStack {
-                        Circle().fill(Theme.primaryGradient).frame(width: 96, height: 96).softLift(radius: 18, y: 8, strength: 2)
+                        Circle().fill(Theme.primaryGradient)
+                            .frame(width: heroDisc, height: heroDisc)
+                            .softLift(radius: 18, y: 8, strength: 2)
                         Image(systemName: model.isCapstone ? "flag.checkered" : "graduationcap.fill")
                             .font(.largeTitle).foregroundStyle(.white)
                     }
@@ -98,7 +107,8 @@ struct LessonIntroStage: View {
         return VStack(spacing: 8) {
             ForEach(shown.prefix(previewCount)) { gap in
                 HStack(spacing: 10) {
-                    Circle().fill(gap.category.color.opacity(0.15)).frame(width: 34, height: 34)
+                    Circle().fill(gap.category.color.opacity(0.15))
+                        .frame(width: 34 * Theme.chromeScale(typeScale), height: 34 * Theme.chromeScale(typeScale))
                         .overlay {
                             Text(String(gap.frenchWord.prefix(1)).uppercased())
                                 .font(.subheadline.weight(.bold)).foregroundStyle(gap.category.color)
@@ -106,14 +116,15 @@ struct LessonIntroStage: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(gap.frenchWord).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
-                        Text(gap.englishTranslation).font(.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                        Text(gap.englishTranslation).font(.caption).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                 }
                 .accessibilityElement(children: .combine)
             }
             if shown.count > previewCount {
-                Text("+ \(shown.count - previewCount) more").font(.footnote.weight(.medium)).foregroundStyle(Theme.textMuted)
+                Text("+ \(shown.count - previewCount) more").font(.footnote.weight(.medium)).foregroundStyle(Theme.textSecondary)
             }
         }
         .padding(Space.lg)
@@ -165,6 +176,11 @@ struct LessonGeneratingStage: View {
     let model: LessonViewModel
     let onClose: () -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The hero disc follows the large-title curve its glyph uses, clamped so it
+    /// never outgrows the narrowest phone.
+    @ScaledMetric(relativeTo: .largeTitle) private var heroDiscSize: CGFloat = 92
+    private var heroDisc: CGFloat { min(heroDiscSize, 150) }
 
     var body: some View {
         VStack(spacing: Space.lg) {
@@ -174,9 +190,11 @@ struct LessonGeneratingStage: View {
             }
             Spacer()
             ZStack {
-                Circle().fill(Theme.primaryGradient).frame(width: 92, height: 92).softLift(radius: 18, y: 8, strength: 2)
+                Circle().fill(Theme.primaryGradient)
+                    .frame(width: heroDisc, height: heroDisc)
+                    .softLift(radius: 18, y: 8, strength: 2)
                 Image(systemName: "sparkles").font(.largeTitle).foregroundStyle(.white)
-                    .symbolEffect(.variableColor.iterative, options: .repeating)
+                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reduceMotion)
             }
             .accessibilityHidden(true)
             Text("Crafting your lesson…").font(LessonFont.display).foregroundStyle(Theme.text)

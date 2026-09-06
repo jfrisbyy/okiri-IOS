@@ -10,6 +10,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
@@ -107,6 +108,16 @@ final class LessonViewModel {
         return q.kind == .match ? "Match all to continue" : "Check"
     }
 
+    // MARK: Motion (G3)
+
+    /// The animation to use for a stage change or a flash, honouring Reduce
+    /// Motion. A view model has no SwiftUI environment, so the setting is read
+    /// from UIKit; `Theme.motion` turns every spring into a short cross-fade
+    /// when the learner has asked for less movement.
+    private func motion(_ animation: Animation) -> Animation? {
+        Theme.motion(animation, reduceMotion: UIAccessibility.isReduceMotionEnabled)
+    }
+
     // MARK: Stage intents
 
     /// "Start" on the intro: capstones go straight to practice, everything else teaches first.
@@ -115,7 +126,7 @@ final class LessonViewModel {
         if isCapstone {
             startPractice(store: store)
         } else {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { stage = .teaching }
+            withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { stage = .teaching }
             startPrefetch(store: store)
         }
     }
@@ -148,7 +159,7 @@ final class LessonViewModel {
             launch(ai: [], store: store)
             return
         }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { stage = .generating }
+        withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { stage = .generating }
         generation = Task { [weak self] in
             let ai = await prefetch.value ?? []
             guard !Task.isCancelled, let self else { return }
@@ -171,12 +182,12 @@ final class LessonViewModel {
         guard !schedule.isEmpty else {
             // Nothing could be asked (e.g. probes without options): an honest empty completion, no bookkeeping.
             summary = session.summary
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { stage = .complete }
+            withAnimation(motion(.spring(response: 0.45, dampingFraction: 0.85))) { stage = .complete }
             return
         }
         timer.start(at: Date())
         loadQuestion()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { stage = .practice }
+        withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { stage = .practice }
     }
 
     private func loadQuestion() {
@@ -269,7 +280,7 @@ final class LessonViewModel {
             return
         }
         if session.advance() {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { loadQuestion() }
+            withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { loadQuestion() }
         } else {
             finish(store: store)
         }
@@ -291,7 +302,7 @@ final class LessonViewModel {
                 ?? (outcome.endedByHearts
                     ? LessonFeedback(tone: .incorrect, title: "Out of hearts", detail: "Let's look at what slipped.")
                     : nil)
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { revealed = true }
+            withAnimation(motion(.spring(response: 0.35, dampingFraction: 0.8))) { revealed = true }
         }
         if let word = outcome.masteredWord { showMastery(word) }
         if let conceptId = outcome.releasedConceptId {
@@ -337,7 +348,7 @@ final class LessonViewModel {
             }
         }
         summary = result
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { stage = .complete }
+        withAnimation(motion(.spring(response: 0.45, dampingFraction: 0.85))) { stage = .complete }
     }
 
     /// The learner confirmed a quit (C13): abandoned bookkeeping when anything was answered.
@@ -408,7 +419,7 @@ final class LessonViewModel {
         masteryFlash = nil
         timer = LessonTimer()
         loadQuestion()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { stage = .intro }
+        withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { stage = .intro }
     }
 
     // MARK: Teaching fallback (C17)
@@ -436,22 +447,22 @@ final class LessonViewModel {
     // MARK: Transient flashes
 
     private func flashWrongRight(_ gapId: String) {
-        withAnimation { matchWrongRight = gapId }
+        withAnimation(motion(.default)) { matchWrongRight = gapId }
         wrongFlash?.cancel()
         wrongFlash = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let self else { return }
-            withAnimation { self.matchWrongRight = nil }
+            withAnimation(self.motion(.default)) { self.matchWrongRight = nil }
         }
     }
 
     private func showMastery(_ word: String) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { masteryFlash = word }
+        withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.6))) { masteryFlash = word }
         masteryTask?.cancel()
         masteryTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Tuning.lessonFlashSeconds))
             guard !Task.isCancelled, let self else { return }
-            withAnimation { self.masteryFlash = nil }
+            withAnimation(self.motion(.default)) { self.masteryFlash = nil }
         }
     }
 

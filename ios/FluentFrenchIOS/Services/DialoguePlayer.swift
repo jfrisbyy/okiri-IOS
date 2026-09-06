@@ -3,22 +3,26 @@
 //  FluentFrenchIOS
 //
 //  Plays a French listening scenario turn-by-turn with natural, human-sounding
-//  ElevenLabs voices (distinct voice per speaker), falling back to the system
-//  AVSpeechSynthesizer when the voice service is unavailable. Tracks the current
-//  line for subtitles and supports play/pause, skip, and playback speed.
+//  ElevenLabs voices (distinct voice per speaker), falling back to the built-in
+//  AVSpeechSynthesizer — and saying so — when the voice service is unavailable.
+//  All transport state lives in `PlaybackState` (testable, view-free): pausing
+//  or jumping clears buffering and drops the clip in flight, every fetch is
+//  bounded by `Tuning.ttsFetchTimeout`, and "Skip the wait" is always offered
+//  while a clip buffers (E17).
 //
 
 import AVFoundation
+import Foundation
 import SwiftUI
 
 @MainActor
 @Observable
 final class DialoguePlayer: NSObject {
     private(set) var turns: [ListeningTurn] = []
-    private(set) var currentIndex = 0
-    private(set) var isPlaying = false
-    private(set) var didFinish = false
-    private(set) var isBuffering = false
+    private(set) var state = PlaybackState()
+    /// Which voice is speaking this dialogue. Starts natural when a key exists and
+    /// switches (with a reason) the first time a natural clip cannot be played.
+    private(set) var voiceSource: VoiceSource = ElevenLabsTTS.hasKey ? .natural : .system(.noKey)
 
     /// Plain playback-speed multiplier (1.0 = normal).
     var rate: Float = 1.0
@@ -27,17 +31,19 @@ final class DialoguePlayer: NSObject {
     private var audioPlayer: AVAudioPlayer?
     private var voiceA: AVSpeechSynthesisVoice?
     private var voiceB: AVSpeechSynthesisVoice?
-    /// Monotonic token to ignore stale async audio fetches after skip/stop.
-    private var playToken = 0
+    /// Once the learner skips a wait (or the service is unavailable) the rest of
+    /// the dialogue uses the built-in voice — no more spinners for this session.
+    private var preferSystemVoice = !ElevenLabsTTS.hasKey
 
-    var progress: Double {
-        guard !turns.isEmpty else { return 0 }
-        return Double(currentIndex) / Double(turns.count)
-    }
+    var currentIndex: Int { state.currentIndex }
+    var isPlaying: Bool { state.isPlaying }
+    var didFinish: Bool { state.didFinish }
+    var isBuffering: Bool { state.isBuffering }
+    var progress: Double { state.progress }
 
     var currentTurn: ListeningTurn? {
-        guard turns.indices.contains(currentIndex) else { return nil }
-        return turns[currentIndex]
+        guard turns.indices.contains(state.currentIndex) else { return nil }
+        return turns[state.currentIndex]
     }
 
     override init() {
@@ -50,36 +56,35 @@ final class DialoguePlayer: NSObject {
     }
 
     func load(_ item: ListeningItem) {
-        stop()
+        stopAudio()
         turns = item.turns
-        currentIndex = 0
-        didFinish = false
+        state.load(turnCount: item.turns.count)
+        preferSystemVoice = !ElevenLabsTTS.hasKey
+        voiceSource = ElevenLabsTTS.hasKey ? .natural : .system(.noKey)
     }
 
     func togglePlay() {
-        if isPlaying { pause() } else { play() }
+        if state.isPlaying { pause() } else { play() }
     }
 
     func play() {
-        guard !turns.isEmpty else { return }
-        didFinish = false
-        // Resume a paused MP3 clip if we have one.
+        // Play after the end starts the dialogue over.
+        if state.didFinish { _ = state.jump(to: 0) }
+        guard state.play() else { return }
+        // Resume a paused clip / utterance if we have one.
         if let audioPlayer, !audioPlayer.isPlaying, audioPlayer.currentTime > 0 {
             audioPlayer.play()
-            isPlaying = true
             return
         }
         if synthesizer.isPaused {
             synthesizer.continueSpeaking()
-            isPlaying = true
             return
         }
-        isPlaying = true
         speakCurrent()
     }
 
     func pause() {
-        isPlaying = false
+        state.pause()
         audioPlayer?.pause()
         if synthesizer.isSpeaking {
             synthesizer.pauseSpeaking(at: .word)
@@ -87,69 +92,84 @@ final class DialoguePlayer: NSObject {
     }
 
     func stop() {
-        isPlaying = false
-        playToken += 1
-        isBuffering = false
-        audioPlayer?.stop()
-        audioPlayer = nil
-        if synthesizer.isSpeaking || synthesizer.isPaused {
-            synthesizer.stopSpeaking(at: .immediate)
-        }
+        state.stop()
+        stopAudio()
     }
 
     func skipForward() {
-        guard currentIndex < turns.count - 1 else { return }
-        jump(to: currentIndex + 1)
+        guard state.currentIndex < turns.count - 1 else { return }
+        jump(to: state.currentIndex + 1)
     }
 
     func skipBackward() {
-        jump(to: max(0, currentIndex - 1))
+        jump(to: max(0, state.currentIndex - 1))
     }
 
     func jump(to index: Int) {
-        let wasPlaying = isPlaying
-        playToken += 1
-        audioPlayer?.stop()
-        audioPlayer = nil
-        synthesizer.stopSpeaking(at: .immediate)
-        currentIndex = min(max(0, index), turns.count - 1)
-        didFinish = false
-        if wasPlaying {
-            isPlaying = true
+        stopAudio()
+        if state.jump(to: index) {
             speakCurrent()
         }
     }
 
     func replayCurrent() {
-        playToken += 1
-        audioPlayer?.stop()
-        audioPlayer = nil
-        synthesizer.stopSpeaking(at: .immediate)
-        isPlaying = true
-        speakCurrent()
+        stopAudio()
+        if state.replay() {
+            speakCurrent()
+        }
     }
 
-    private func speakCurrent() {
-        guard turns.indices.contains(currentIndex) else { return }
-        let turn = turns[currentIndex]
-        playToken += 1
-        let token = playToken
-
-        // Try natural ElevenLabs audio first; fall back to the system voice.
-        if ElevenLabsTTS.hasKey {
-            isBuffering = true
-            Task {
-                let data = await ElevenLabsTTS.shared.audio(for: turn.french, voice: NaturalVoiceID.forSpeaker(turn.speaker))
-                guard token == playToken, isPlaying else { return }
-                isBuffering = false
-                if let data, playNatural(data) {
-                    return
-                }
-                speakSynth(turn)
-            }
-        } else {
+    /// "Skip the wait": stop buffering the natural clip and speak this line —
+    /// and the rest of the dialogue — with the built-in voice right now.
+    func skipBuffering() {
+        guard state.isBuffering else { return }
+        preferSystemVoice = true
+        voiceSource = .system(.skippedWait)
+        if state.skipBuffering(), let turn = currentTurn {
+            _ = state.beginTurn()
             speakSynth(turn)
         }
+    }
+
+    // MARK: - Speaking
+
+    private func speakCurrent() {
+        guard let turn = currentTurn else { return }
+        guard !preferSystemVoice else {
+            _ = state.beginTurn()
+            speakSynth(turn)
+            return
+        }
+        let token = state.beginFetch()
+        let voice = NaturalVoiceID.forSpeaker(turn.speaker)
+        let text = turn.french
+        Task {
+            let fetched = await Deadline.run(seconds: Tuning.ttsFetchTimeout) {
+                await ElevenLabsTTS.shared.fetch(text, voice: voice)
+            }
+            // Clears buffering for this token whether or not we still play.
+            guard state.finishFetch(token: token) else { return }
+            switch fetched {
+            case .audio(let data)?:
+                if playNatural(data) {
+                    voiceSource = .natural
+                    return
+                }
+                fallBack(.serviceError, turn)
+            case .unavailable(let failure)?:
+                fallBack(SystemVoiceReason(failure), turn)
+            case nil:
+                fallBack(.serviceError, turn)
+            }
+        }
+    }
+
+    private func fallBack(_ reason: SystemVoiceReason, _ turn: ListeningTurn) {
+        voiceSource = .system(reason)
+        // A missing key or a dead connection will not fix itself mid-dialogue;
+        // a single service hiccup may, so keep trying natural clips after one.
+        if reason != .serviceError { preferSystemVoice = true }
+        speakSynth(turn)
     }
 
     private func playNatural(_ data: Data) -> Bool {
@@ -177,14 +197,18 @@ final class DialoguePlayer: NSObject {
         synthesizer.speak(utterance)
     }
 
+    private func stopAudio() {
+        audioPlayer?.stop()
+        audioPlayer = nil
+        if synthesizer.isSpeaking || synthesizer.isPaused {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+    }
+
     private func advanceAfterTurn() {
-        guard isPlaying else { return }
-        if currentIndex < turns.count - 1 {
-            currentIndex += 1
-            speakCurrent()
-        } else {
-            isPlaying = false
-            didFinish = true
+        switch state.turnFinished() {
+        case .speakNext: speakCurrent()
+        case .finished, .ignore: break
         }
     }
 }

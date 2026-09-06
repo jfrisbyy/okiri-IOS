@@ -284,9 +284,12 @@ struct SimulatedRun {
     /// routed as a true beginner; anyone else answers the staircase. The store's
     /// gaps are then replaced with the synthetic Foundation seed so the run never
     /// depends on bundled content.
-    mutating func place(declaredBeginner: Bool, gapsPerConcept: Int = 6, bank: [AssessmentQuestion]? = nil) {
+    /// `seed` fixes the staircase's own randomness (item choice among equals, option
+    /// order) so a run replays exactly; the learner's answers are seeded separately.
+    mutating func place(declaredBeginner: Bool, gapsPerConcept: Int = 6, bank: [AssessmentQuestion]? = nil,
+                        seed: UInt64? = nil) {
         let store = driver.store
-        var engine = PlacementEngine(bank: bank ?? Self.placementBank(for: store))
+        var engine = PlacementEngine(bank: bank ?? Self.placementBank(for: store), seed: seed)
         if declaredBeginner {
             engine.declareBeginner()
         } else {

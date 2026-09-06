@@ -21,14 +21,21 @@ struct ScenariosView: View {
     @State private var activeTab: Tab = .phrases
     @State private var saved: [SavedScenario] = []
     @State private var customPhrases: [ScenarioPhrase] = []
-    @State private var errorText: String? = nil
+    /// Why the last guide request failed (E26): shown with its own title, copy and — when it can help — Retry.
+    @State private var failure: TalkServiceFailure? = nil
     @State private var playingId: String? = nil
+    @State private var generateTask: Task<Void, Never>? = nil
 
     // Mini translator
     @State private var translatorOpen = false
     @State private var translateInput = ""
     @State private var translateResult: ScenarioPhrase? = nil
     @State private var isTranslating = false
+    @State private var translateNotice: String? = nil
+
+    /// Guides need the AI service; without a key the surface says so up front
+    /// and still serves saved guides.
+    private var serviceAvailable: Bool { ScenariosService.hasKey }
 
     @FocusState private var inputFocused: Bool
 
@@ -69,6 +76,25 @@ struct ScenariosView: View {
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
         .onAppear { saved = ScenarioStore.load() }
+        .onDisappear {
+            NaturalVoice.shared.stop()
+            generateTask?.cancel()
+        }
+    }
+
+    /// The build has no AI key: an explicit state instead of a dead search box (E26).
+    private var unavailableCard: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "bolt.slash.fill").font(.system(.subheadline)).foregroundStyle(Theme.warning).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("New guides aren't available in this build").font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
+                Text("Building a guide needs the AI service, which isn't included here. Guides you saved earlier still open below.")
+                    .font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warningLight).clipShape(.rect(cornerRadius: Radius.card))
     }
 
     private var header: some View {
@@ -84,14 +110,17 @@ struct ScenariosView: View {
 
     private var searchView: some View {
         VStack(alignment: .leading, spacing: 22) {
+            if !serviceAvailable { unavailableCard }
+
             HStack(spacing: 10) {
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 16)).foregroundStyle(Theme.textMuted)
+                    Image(systemName: "magnifyingglass").font(.system(.body)).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
                     TextField("Describe your situation…", text: $query)
-                        .font(.system(size: 15)).foregroundStyle(Theme.text)
+                        .font(.system(.callout)).foregroundStyle(Theme.text)
                         .focused($inputFocused)
                         .submitLabel(.search)
                         .onSubmit { generate(query) }
+                        .disabled(!serviceAvailable)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 14)
                 .background(Theme.card)
@@ -101,18 +130,20 @@ struct ScenariosView: View {
                 Button {
                     generate(query)
                 } label: {
-                    Image(systemName: "sparkles").font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                    Image(systemName: "sparkles").font(.system(.headline, weight: .semibold)).foregroundStyle(.white)
                         .frame(width: 50, height: 50)
                         .background(Theme.secondary).clipShape(.rect(cornerRadius: Radius.chip))
                         .softLift(radius: 10, y: 4, strength: 0.7)
                 }
                 .buttonStyle(.plain)
-                .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
-                .opacity(query.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
+                .disabled(!serviceAvailable || query.trimmingCharacters(in: .whitespaces).isEmpty)
+                .opacity(!serviceAvailable || query.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
+                .accessibilityLabel("Build a guide")
             }
+            .opacity(serviceAvailable ? 1 : 0.6)
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("QUICK SCENARIOS").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
+                Text("QUICK SCENARIOS").font(.system(.caption, weight: .semibold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                     ForEach(quickPicks) { pick in
                         Button {
@@ -121,9 +152,9 @@ struct ScenariosView: View {
                             generate(pick.label)
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: pick.icon).font(.system(size: 15)).foregroundStyle(pick.color)
+                                Image(systemName: pick.icon).font(.system(.callout)).foregroundStyle(pick.color)
                                     .frame(width: 30, height: 30).background(pick.color.opacity(0.12)).clipShape(.rect(cornerRadius: 8))
-                                Text(pick.label).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
+                                Text(pick.label).font(.system(.footnote, weight: .medium)).foregroundStyle(Theme.text)
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                             }
@@ -134,19 +165,25 @@ struct ScenariosView: View {
                         }
                         .buttonStyle(.plain)
                         .pressable()
+                        .disabled(!serviceAvailable)
+                        .opacity(serviceAvailable ? 1 : 0.6)
                     }
                 }
             }
 
-            if let errorText {
+            if let failure {
                 VStack(spacing: 10) {
-                    Text(errorText).font(.system(size: 14)).foregroundStyle(Theme.error).multilineTextAlignment(.center)
-                    Button { generate(currentQuery.isEmpty ? query : currentQuery) } label: {
-                        Text("Retry").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
-                            .padding(.horizontal, 20).padding(.vertical, 8)
-                            .background(Theme.error).clipShape(.capsule)
+                    Text(failure.title).font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
+                    Text(failure.message).font(.system(.subheadline)).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if failure.isRetryable {
+                        Button { generate(currentQuery.isEmpty ? query : currentQuery) } label: {
+                            Text("Retry").font(.system(.subheadline, weight: .semibold)).foregroundStyle(.white)
+                                .padding(.horizontal, 20).frame(minHeight: 44)
+                                .background(Theme.error).clipShape(.capsule)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(18).background(Theme.errorLight).clipShape(.rect(cornerRadius: Radius.card))
@@ -156,26 +193,28 @@ struct ScenariosView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Label("Saved Scenarios", systemImage: "clock.fill")
-                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
+                            .font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text)
                         Spacer()
-                        Text("\(saved.count)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        Text("\(saved.count)").font(.system(.caption, weight: .semibold)).foregroundStyle(Theme.textMuted)
                     }
                     ForEach(saved) { item in
                         Button { openSaved(item) } label: {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.guide.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
-                                    Text(item.guide.titleFrench).font(.system(size: 12)).foregroundStyle(Theme.textMuted).lineLimit(1)
+                                    Text(item.guide.title).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                                    Text(item.guide.titleFrench).font(.system(.caption)).foregroundStyle(Theme.textMuted).lineLimit(1)
                                 }
                                 Spacer()
                                 Button {
                                     deleteSaved(item)
                                 } label: {
-                                    Image(systemName: "trash").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-                                        .frame(width: 30, height: 30)
+                                    Image(systemName: "trash").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
+                                        .frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.plain)
-                                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                                .accessibilityLabel("Delete saved guide \(item.guide.title)")
+                                Image(systemName: "chevron.right").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
+                                    .accessibilityHidden(true)
                             }
                             .padding(14)
                             .background(Theme.card)
@@ -192,8 +231,8 @@ struct ScenariosView: View {
     private var loadingCard: some View {
         VStack(spacing: 12) {
             ProgressView().tint(Theme.secondary).scaleEffect(1.4)
-            Text("Building your guide…").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text).padding(.top, 6)
-            Text("Preparing phrases, tips & answers").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+            Text("Building your guide…").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.text).padding(.top, 6)
+            Text("Preparing phrases, tips & answers").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 48)
         .background(Theme.card).clipShape(.rect(cornerRadius: Radius.hero)).softLift()
@@ -208,22 +247,23 @@ struct ScenariosView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(guide.title).font(.serifDisplay(24, weight: .bold)).foregroundStyle(Theme.text)
-                    Text(guide.titleFrench).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.secondary)
+                    Text(guide.titleFrench).font(.system(.callout, weight: .medium)).foregroundStyle(Theme.secondary)
                 }
                 Spacer()
                 Button {
                     toggleSave(guide)
                 } label: {
                     Image(systemName: isCurrentSaved ? "bookmark.fill" : "bookmark")
-                        .font(.system(size: 18)).foregroundStyle(isCurrentSaved ? Theme.secondary : Theme.textSecondary)
-                        .frame(width: 42, height: 42)
+                        .font(.system(.body)).foregroundStyle(isCurrentSaved ? Theme.secondary : Theme.textSecondary)
+                        .frame(width: 44, height: 44)
                         .background(isCurrentSaved ? Theme.secondaryLight : Theme.backgroundSecondary)
                         .clipShape(.rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isCurrentSaved ? "Remove from saved guides" : "Save this guide")
             }
 
-            Text(guide.summary).font(.system(size: 14)).foregroundStyle(Theme.textSecondary).lineSpacing(3)
+            Text(guide.summary).font(.system(.subheadline)).foregroundStyle(Theme.textSecondary).lineSpacing(3)
 
             tabBar
 
@@ -233,14 +273,16 @@ struct ScenariosView: View {
             case .tips: tipsTab(guide)
             }
 
-            translatorBlock
+            // The translator uses the same key as guide generation; without it the
+            // block would only ever show the not-configured notice, so hide it.
+            if serviceAvailable { translatorBlock }
 
             Button {
                 Haptics.tap()
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { resetToSearch() }
             } label: {
                 Label("New Scenario", systemImage: "magnifyingglass")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.secondary)
+                    .font(.system(.callout, weight: .semibold)).foregroundStyle(Theme.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(Theme.secondaryLight).clipShape(.rect(cornerRadius: Radius.chip))
             }
@@ -256,7 +298,7 @@ struct ScenariosView: View {
                     Haptics.tap()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { activeTab = tab }
                 } label: {
-                    Text(tab.rawValue).font(.system(size: 13, weight: .semibold))
+                    Text(tab.rawValue).font(.system(.footnote, weight: .semibold))
                         .foregroundStyle(active ? Theme.secondary : Theme.textMuted)
                         .frame(maxWidth: .infinity).padding(.vertical, 10)
                         .background(active ? Theme.card : .clear)
@@ -299,21 +341,21 @@ struct ScenariosView: View {
             HStack(alignment: .top, spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8).fill(accent.opacity(0.14)).frame(width: 28, height: 28)
-                    if let index { Text("\(index)").font(.system(size: 12, weight: .bold)).foregroundStyle(accent) }
-                    else { Image(systemName: "sparkle").font(.system(size: 11)).foregroundStyle(accent) }
+                    if let index { Text("\(index)").font(.system(.caption, weight: .bold)).foregroundStyle(accent) }
+                    else { Image(systemName: "sparkle").font(.system(.caption2)).foregroundStyle(accent) }
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(phrase.french).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                    Text(phrase.english).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                    Text(phrase.french).font(.system(.callout, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text(phrase.english).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
                     if !phrase.context.isEmpty {
                         HStack(alignment: .top, spacing: 6) {
                             Circle().fill(accent).frame(width: 4, height: 4).padding(.top, 6)
-                            Text(phrase.context).font(.system(size: 12)).italic().foregroundStyle(Theme.textMuted)
+                            Text(phrase.context).font(.system(.caption)).italic().foregroundStyle(Theme.textMuted)
                         }
                     }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "speaker.wave.2.fill").font(.system(size: 13))
+                Image(systemName: "speaker.wave.2.fill").font(.system(.footnote))
                     .foregroundStyle(playingId == pid ? accent : Theme.textMuted)
                     .frame(width: 30, height: 30)
                     .background(playingId == pid ? accent.opacity(0.14) : Theme.backgroundSecondary)
@@ -331,7 +373,7 @@ struct ScenariosView: View {
 
     private func qaTab(_ guide: ScenarioGuide) -> some View {
         VStack(spacing: 10) {
-            Text("Tap any phrase to hear it spoken").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            Text("Tap any phrase to hear it spoken").font(.system(.caption)).foregroundStyle(Theme.textMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(Array(guide.questionsAndAnswers.enumerated()), id: \.element.id) { i, qa in
                 VStack(spacing: 0) {
@@ -352,15 +394,15 @@ struct ScenariosView: View {
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text(badge).font(.system(size: 10, weight: .bold)).foregroundStyle(badgeColor)
+                    Text(badge).font(.system(.caption2, weight: .bold)).foregroundStyle(badgeColor)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(badgeColor.opacity(0.12)).clipShape(.capsule)
                     Spacer()
-                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 11))
+                    Image(systemName: "speaker.wave.2.fill").font(.system(.caption2))
                         .foregroundStyle(playingId == id ? badgeColor : Theme.textMuted)
                 }
-                Text(french).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                Text(english).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                Text(french).font(.system(.callout, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(english).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -373,10 +415,10 @@ struct ScenariosView: View {
             ForEach(guide.tips) { tip in
                 let style = tipStyle(tip.category)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(style.label).font(.system(size: 10, weight: .bold)).foregroundStyle(style.color)
+                    Text(style.label).font(.system(.caption2, weight: .bold)).foregroundStyle(style.color)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(style.color.opacity(0.12)).clipShape(.capsule)
-                    Text(tip.tip).font(.system(size: 14)).foregroundStyle(Theme.text).lineSpacing(2)
+                    Text(tip.tip).font(.system(.subheadline)).foregroundStyle(Theme.text).lineSpacing(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
@@ -400,8 +442,8 @@ struct ScenariosView: View {
         HStack(spacing: 10) {
             Rectangle().fill(color.opacity(0.3)).frame(height: 1)
             HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 11)).foregroundStyle(color)
-                Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(color)
+                Image(systemName: icon).font(.system(.caption2)).foregroundStyle(color)
+                Text(text).font(.system(.caption2, weight: .semibold)).foregroundStyle(color)
             }
             .padding(.horizontal, 10).padding(.vertical, 4)
             .background(color.opacity(0.12)).clipShape(.capsule)
@@ -417,18 +459,24 @@ struct ScenariosView: View {
         if translatorOpen {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Label("Quick Translator", systemImage: "character.bubble").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.secondary)
+                    Label("Quick Translator", systemImage: "character.bubble").font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.secondary)
                     Spacer()
                     Button {
-                        withAnimation { translatorOpen = false; translateInput = ""; translateResult = nil }
+                        withAnimation { translatorOpen = false; translateInput = ""; translateResult = nil; translateNotice = nil }
                     } label: {
-                        Image(systemName: "xmark").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "xmark").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Close translator")
+                }
+                if let translateNotice {
+                    Text(translateNotice).font(.system(.footnote)).foregroundStyle(Theme.error)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 10) {
                     TextField("Type in English…", text: $translateInput)
-                        .font(.system(size: 15)).foregroundStyle(Theme.text)
+                        .font(.system(.callout)).foregroundStyle(Theme.text)
                         .padding(.horizontal, 12).padding(.vertical, 12)
                         .background(Theme.background)
                         .clipShape(.rect(cornerRadius: Radius.chip))
@@ -440,13 +488,14 @@ struct ScenariosView: View {
                     } label: {
                         ZStack {
                             if isTranslating { ProgressView().tint(.white) }
-                            else { Image(systemName: "character.bubble").font(.system(size: 15)).foregroundStyle(.white) }
+                            else { Image(systemName: "character.bubble").font(.system(.callout)).foregroundStyle(.white) }
                         }
                         .frame(width: 46, height: 46).background(Theme.secondary).clipShape(.rect(cornerRadius: Radius.chip))
                     }
                     .buttonStyle(.plain)
                     .disabled(translateInput.trimmingCharacters(in: .whitespaces).isEmpty || isTranslating)
                     .opacity(translateInput.trimmingCharacters(in: .whitespaces).isEmpty ? 0.5 : 1)
+                    .accessibilityLabel(isTranslating ? "Translating" : "Translate to French")
                 }
                 if let translateResult {
                     HStack(alignment: .top, spacing: 10) {
@@ -454,11 +503,11 @@ struct ScenariosView: View {
                             play(translateResult.french, id: "translate-result")
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(translateResult.french).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
-                                Text(translateResult.english).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                                Text(translateResult.french).font(.system(.callout, weight: .semibold)).foregroundStyle(Theme.text)
+                                Text(translateResult.english).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
                                 HStack(spacing: 4) {
-                                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 10))
-                                    Text("Tap to hear").font(.system(size: 11))
+                                    Image(systemName: "speaker.wave.2.fill").font(.system(.caption2))
+                                    Text("Tap to hear").font(.system(.caption2))
                                 }
                                 .foregroundStyle(playingId == "translate-result" ? Theme.secondary : Theme.textMuted)
                                 .padding(.top, 2)
@@ -469,7 +518,7 @@ struct ScenariosView: View {
                         Button {
                             addTranslatedPhrase()
                         } label: {
-                            Label("Add", systemImage: "plus").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                            Label("Add", systemImage: "plus").font(.system(.footnote, weight: .semibold)).foregroundStyle(.white)
                                 .padding(.horizontal, 12).padding(.vertical, 8)
                                 .background(Theme.primary).clipShape(.capsule)
                         }
@@ -490,7 +539,7 @@ struct ScenariosView: View {
                 withAnimation { translatorOpen = true }
             } label: {
                 Label("Translate & Add Phrase", systemImage: "character.bubble")
-                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.secondary)
+                    .font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(Theme.card).clipShape(.rect(cornerRadius: Radius.chip))
                     .overlay(RoundedRectangle(cornerRadius: Radius.chip).stroke(Theme.secondary.opacity(0.3), lineWidth: 1))
@@ -501,30 +550,35 @@ struct ScenariosView: View {
 
     // MARK: - Actions
 
+    /// Build a guide. Bounded by `Tuning.scenarioGuideTimeout`; every failure
+    /// resolves to a learner-facing state (no key / offline / service / bad reply).
     private func generate(_ q: String) {
         let clean = q.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        guard !clean.isEmpty, !isGenerating else { return }
+        guard serviceAvailable else { failure = .noKey; return }
         Haptics.select()
         inputFocused = false
         currentQuery = clean
-        errorText = nil
+        failure = nil
         customPhrases = []
         translatorOpen = false
         translateInput = ""
         translateResult = nil
+        translateNotice = nil
         withAnimation { isGenerating = true; guide = nil }
-        Task {
+        generateTask?.cancel()
+        generateTask = Task {
             let result = await ScenariosService.generate(for: clean)
-            await MainActor.run {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                    isGenerating = false
-                    if let result {
-                        guide = result
-                        activeTab = .phrases
-                        Haptics.success()
-                    } else {
-                        errorText = "Failed to generate scenario. Please try again."
-                    }
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                isGenerating = false
+                switch result {
+                case .success(let built):
+                    guide = built
+                    activeTab = .phrases
+                    Haptics.success()
+                case .failure(let why):
+                    failure = why
                 }
             }
         }
@@ -532,12 +586,27 @@ struct ScenariosView: View {
 
     private func runTranslate() async {
         let text = translateInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !isTranslating else { return }
         isTranslating = true
-        let french = await TranslationService.translate(text, from: .english, to: .french)
+        translateNotice = nil
+        // Typed API: a failure is a `TranslationFailure`, never a string that could be
+        // mistaken for French, spoken aloud, or added to a saved guide.
+        let outcome = await TranslationService.translation(of: text, from: .english, to: .french)
         withAnimation {
-            translateResult = ScenarioPhrase(french: french, english: text, context: "Added from translator")
             isTranslating = false
+            switch outcome {
+            case .translated(let raw):
+                let french = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if french.isEmpty || PhraseKey.same(french, text) {
+                    translateResult = nil
+                    translateNotice = TranslationFailure.serviceError.message
+                } else {
+                    translateResult = ScenarioPhrase(french: french, english: text, context: "Added from translator")
+                }
+            case .unavailable(let failure):
+                translateResult = nil
+                translateNotice = failure.message
+            }
         }
     }
 
@@ -599,6 +668,7 @@ struct ScenariosView: View {
         translatorOpen = false
         translateInput = ""
         translateResult = nil
-        errorText = nil
+        translateNotice = nil
+        failure = nil
     }
 }

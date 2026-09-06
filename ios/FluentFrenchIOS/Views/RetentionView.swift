@@ -2,7 +2,11 @@
 //  RetentionView.swift
 //  FluentFrenchIOS
 //
-//  Full retention breakdown with tabs for At risk / Fading / Fresh / Mastered.
+//  Full retention breakdown with tabs for At risk / Fading / Fresh / New /
+//  Mastered. Buckets come from `store.retention` (probes excluded); "New" lists
+//  never-reviewed gaps (B4) — nothing to review, they are taught in lessons;
+//  "Mastered" keeps its due-check button (B3). An empty review shows the
+//  selector's headline instead of a dead tap (C23).
 //
 
 import SwiftUI
@@ -11,9 +15,11 @@ struct RetentionView: View {
     @Environment(AppStore.self) private var store
     @State private var tab: Tab = .atRisk
     @State private var scopedLesson: AssembledLesson? = nil
+    /// The selector's headline when "Review these now" had nothing to offer.
+    @State private var emptyHeadline: String? = nil
 
     enum Tab: String, CaseIterable, Identifiable {
-        case atRisk = "At risk", fading = "Fading", fresh = "Fresh", mastered = "Mastered"
+        case atRisk = "At risk", fading = "Fading", fresh = "Fresh", new = "New", mastered = "Mastered"
         var id: String { rawValue }
 
         /// The selection scope this tab declares when the learner taps "Review these now".
@@ -22,27 +28,42 @@ struct RetentionView: View {
             case .atRisk: return .atRisk
             case .fading: return .fading
             case .fresh: return .fresh
+            case .new: return .new
             case .mastered: return .mastered
             }
         }
     }
 
-    private var items: [GapItem] {
-        let b = store.retention
-        switch tab {
+    private func bucketItems(_ t: Tab, in b: AppStore.RetentionBuckets) -> [GapItem] {
+        switch t {
         case .atRisk: return b.atRisk
         case .fading: return b.fading
         case .fresh: return b.fresh
+        case .new: return b.new.sorted { $0.nextReviewAt < $1.nextReviewAt }
         case .mastered: return b.mastered
         }
     }
+
+    private var items: [GapItem] { bucketItems(tab, in: store.retention) }
 
     private var tint: Color {
         switch tab {
         case .atRisk: return Theme.error
         case .fading: return Theme.warning
         case .fresh: return Theme.success
+        case .new: return Theme.primary
         case .mastered: return Theme.secondary
+        }
+    }
+
+    /// Why a tab is empty — honest, per bucket.
+    private var emptyCopy: String {
+        switch tab {
+        case .atRisk: return "Nothing is slipping right now."
+        case .fading: return "Nothing is fading right now."
+        case .fresh: return "No fresh recalls yet — review something and it lands here."
+        case .new: return "No new cards waiting. Lessons and captures add them."
+        case .mastered: return "Nothing mastered yet — \(Tuning.gapMasteryStreak) correct in a row earns the badge."
         }
     }
 
@@ -55,21 +76,25 @@ struct RetentionView: View {
                             let count = countFor(t)
                             Button { withAnimation { tab = t } } label: {
                                 Text("\(t.rawValue) \(count)")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(tab == t ? .white : Theme.textSecondary)
                                     .padding(.horizontal, 14).padding(.vertical, 9)
+                                    .frame(minHeight: 44)
                                     .background(tab == t ? Theme.primary : Theme.card)
                                     .clipShape(.capsule)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("\(t.rawValue), \(count)")
+                            .accessibilityAddTraits(tab == t ? .isSelected : [])
                         }
                     }
                     .padding(.horizontal, 20)
                 }
 
                 if items.isEmpty {
-                    Text("Nothing here right now.").font(.system(size: 14)).foregroundStyle(Theme.textMuted)
-                        .padding(.vertical, 40)
+                    Text(emptyCopy).font(.subheadline).foregroundStyle(Theme.textMuted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32).padding(.vertical, 40)
                 } else {
                     VStack(spacing: 10) {
                         ForEach(items) { gap in
@@ -77,19 +102,33 @@ struct RetentionView: View {
                         }
                     }
                     .padding(.horizontal, 20)
-                    if tab == .atRisk || tab == .fading {
+                    switch tab {
+                    case .atRisk, .fading:
                         reviewNowButton
-                    } else if tab == .mastered {
+                    case .new:
+                        // Never-reviewed cards are taught by lessons, not drilled here (B4).
+                        Text("New cards are taught in your lessons — the first \(Tuning.foundationSeedBatch) or so come due each day.")
+                            .font(.footnote).foregroundStyle(Theme.textMuted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    case .mastered:
                         // Mastery is a badge, not retirement (B3): the schedule can
                         // still want a check, and only those items are reviewed.
                         let dueCount = store.dueMasteredGaps(at: Date()).count
                         if dueCount > 0 {
                             Text("\(dueCount) due for a check — mastered words stay on the schedule.")
-                                .font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                                .font(.footnote).foregroundStyle(Theme.textMuted)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 20)
                             reviewNowButton
+                        } else {
+                            Text("None due for a check right now — mastered words stay on the schedule.")
+                                .font(.footnote).foregroundStyle(Theme.textMuted)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 20)
                         }
+                    case .fresh:
+                        EmptyView()
                     }
                 }
             }
@@ -100,11 +139,23 @@ struct RetentionView: View {
         .fullScreenCover(item: $scopedLesson) { lesson in
             LessonView(gaps: lesson.gaps, assembled: lesson)
         }
+        .alert("Nothing to review", isPresented: Binding(
+            get: { emptyHeadline != nil },
+            set: { if !$0 { emptyHeadline = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(emptyHeadline ?? "")
+        }
     }
 
     private var reviewNowButton: some View {
         Button {
-            scopedLesson = LessonPipeline(store: store).lesson(for: .retention(tab.bucket))
+            Haptics.select()
+            switch LessonPipeline(store: store).outcome(for: .retention(tab.bucket)) {
+            case .lesson(let lesson): scopedLesson = lesson
+            case .empty(let headline): emptyHeadline = headline
+            }
         } label: {
             Text("Review these now").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
                 .frame(maxWidth: .infinity).padding(.vertical, 15)
@@ -115,13 +166,7 @@ struct RetentionView: View {
     }
 
     private func countFor(_ t: Tab) -> Int {
-        let b = store.retention
-        switch t {
-        case .atRisk: return b.atRisk.count
-        case .fading: return b.fading.count
-        case .fresh: return b.fresh.count
-        case .mastered: return b.mastered.count
-        }
+        bucketItems(t, in: store.retention).count
     }
 
     private func retentionRow(_ gap: GapItem) -> some View {
@@ -133,9 +178,16 @@ struct RetentionView: View {
                 Text(gap.englishTranslation).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
             }
             Spacer()
-            Text("\(r)%").font(.system(size: 15, weight: .bold)).foregroundStyle(tint)
+            if tab == .new {
+                Text("new").font(.footnote.weight(.semibold)).foregroundStyle(tint)
+            } else {
+                Text("\(r)%").font(.system(size: 15, weight: .bold)).foregroundStyle(tint)
+            }
         }
         .cardStyle(padding: 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(gap.frenchWord), \(gap.englishTranslation)")
+        .accessibilityValue(tab == .new ? "Not reviewed yet" : "\(r) percent recall")
     }
 }
 
@@ -171,6 +223,7 @@ struct ErrorPatternDetailView: View {
     @Environment(AppStore.self) private var store
     let pattern: AppStore.ErrorPattern
     @State private var scopedLesson: AssembledLesson? = nil
+    @State private var emptyHeadline: String? = nil
 
     private var explanation: String {
         switch pattern.category {
@@ -219,7 +272,11 @@ struct ErrorPatternDetailView: View {
         .navigationTitle("Pattern").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Button {
-                scopedLesson = LessonPipeline(store: store).lesson(for: .errorPattern(id: pattern.id))
+                Haptics.select()
+                switch LessonPipeline(store: store).outcome(for: .errorPattern(id: pattern.id)) {
+                case .lesson(let lesson): scopedLesson = lesson
+                case .empty(let headline): emptyHeadline = headline
+                }
             } label: {
                 Text("Practice this pattern").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
                     .frame(maxWidth: .infinity).padding(.vertical, 16)
@@ -232,10 +289,19 @@ struct ErrorPatternDetailView: View {
         .fullScreenCover(item: $scopedLesson) { lesson in
             LessonView(gaps: lesson.gaps, assembled: lesson)
         }
+        .alert("Nothing to practice", isPresented: Binding(
+            get: { emptyHeadline != nil },
+            set: { if !$0 { emptyHeadline = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(emptyHeadline ?? "")
+        }
     }
 
     private func relativeDate(_ date: Date) -> String {
-        let days = Int(-date.timeIntervalSinceNow / 86_400)
+        let days = store.calendar.dateComponents([.day], from: store.calendar.startOfDay(for: date),
+                                                 to: store.calendar.startOfDay(for: Date())).day ?? 0
         if days <= 0 { return "today" }
         if days == 1 { return "yesterday" }
         return "\(days)d ago"

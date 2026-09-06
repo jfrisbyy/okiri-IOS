@@ -103,6 +103,57 @@ nonisolated struct ReadingPiece: Identifiable, Hashable {
     var tint: Color { difficulty.color }
 }
 
+// MARK: - Level-aware shelf (E20 / D5)
+
+/// Which curated pieces a learner sees, and in what order, given the reading
+/// gate and their level. Pure so the harness tests it; the Library view only
+/// renders what this returns.
+nonisolated enum ReadingShelf {
+    /// How a piece relates to the learner's level, for honest labelling.
+    enum Fit: Equatable {
+        case atLevel        // within `Tuning.readingLevelWindow` bands
+        case stretch        // above the window
+        case easy           // below the window
+    }
+
+    /// The pieces the learner may open. In the bridge (`.foundation`) state only
+    /// short curated pieces at or below `Tuning.readingBridgeMaxLevel` are shown,
+    /// easiest first; when reading is unlocked every piece is shown, closest to
+    /// the learner's level first (ties: shorter first). A locked gate shows nothing.
+    static func pieces(for learnerLevel: CEFRLevel, readiness: ModalityReadiness,
+                       from library: [ReadingPiece] = ReadingLibrary.pieces) -> [ReadingPiece] {
+        switch readiness {
+        case .locked:
+            return []
+        case .foundation:
+            return library
+                .filter { rank($0.level) <= rank(Tuning.readingBridgeMaxLevel) }
+                .sorted { a, b in
+                    if a.level != b.level { return rank(a.level) < rank(b.level) }
+                    return a.minutes < b.minutes
+                }
+        case .unlocked:
+            return library.sorted { a, b in
+                let da = abs(rank(a.level) - rank(learnerLevel)), db = abs(rank(b.level) - rank(learnerLevel))
+                if da != db { return da < db }
+                if a.level != b.level { return rank(a.level) < rank(b.level) }
+                return a.minutes < b.minutes
+            }
+        }
+    }
+
+    /// Where a piece sits relative to the learner.
+    static func fit(of level: CEFRLevel, for learnerLevel: CEFRLevel) -> Fit {
+        let delta = rank(level) - rank(learnerLevel)
+        if abs(delta) <= Tuning.readingLevelWindow { return .atLevel }
+        return delta > 0 ? .stretch : .easy
+    }
+
+    static func rank(_ level: CEFRLevel) -> Int {
+        CEFRLevel.allCases.firstIndex(of: level) ?? 0
+    }
+}
+
 nonisolated enum ReadingLibrary {
     static let pieces: [ReadingPiece] = [
         ReadingPiece(id: "r1", title: "Un café à Montmartre", subtitle: "A morning in Paris", category: .story, region: .france, difficulty: .easy, minutes: 4, level: .A2,

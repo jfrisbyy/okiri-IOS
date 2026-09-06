@@ -35,7 +35,8 @@ struct ArticleReaderView: View {
         WordReader(
             title: article.title,
             subtitle: "\(article.source) · \(article.timeAgo)",
-            level: .B1,
+            level: article.level,
+            levelLabel: article.levelLabel,
             tint: Color(hex: article.category.hex),
             categoryLabel: article.category.label,
             regionLabel: article.region.label,
@@ -79,7 +80,10 @@ struct WordReader: View {
 
     let title: String
     var subtitle: String? = nil
+    /// The level captures from this text are filed under (E7).
     let level: CEFRLevel
+    /// What the level pill says — "≈ B1" when the level is an estimate.
+    var levelLabel: String? = nil
     let tint: Color
     var categoryLabel: String? = nil
     var regionLabel: String? = nil
@@ -134,7 +138,8 @@ struct WordReader: View {
                 term: t.term,
                 context: t.context,
                 sourceTab: sourceTab,
-                alreadySaved: savedTerms.contains(t.term.lowercased())
+                sourceLevel: level,
+                alreadySaved: savedTerms.contains(t.term.lowercased()) || store.hasGap(forWord: t.term)
             ) {
                 savedTerms.insert(t.term.lowercased())
             }
@@ -179,7 +184,7 @@ struct WordReader: View {
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(tint).clipShape(.capsule)
                         }
-                        Text(level.rawValue)
+                        Text(levelLabel ?? level.rawValue)
                             .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.white.opacity(0.22)).clipShape(.capsule)
@@ -216,8 +221,10 @@ struct WordReader: View {
                     .frame(width: 38, height: 38)
                     .background(.black.opacity(0.32)).clipShape(.circle)
                     .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 0.5))
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Back")
             Spacer()
             SpeakButton(text: text, size: 38)
                 .background(.black.opacity(0.32), in: .circle)
@@ -230,7 +237,7 @@ struct WordReader: View {
 
     private var meta: some View {
         HStack(spacing: 8) {
-            Pill(text: level.rawValue, color: tint, filled: true)
+            Pill(text: levelLabel ?? level.rawValue, color: tint, filled: true)
             if let categoryLabel { Pill(text: categoryLabel, color: tint) }
             Spacer()
         }
@@ -353,7 +360,7 @@ struct WordReader: View {
                         let saved = savedTerms.contains(word.lowercased())
                         Button {
                             Haptics.tap()
-                            target = GlossTarget(term: word, context: text)
+                            present(term: word)
                         } label: {
                             HStack(spacing: 5) {
                                 Text(word).font(.system(size: 14, weight: .semibold))
@@ -364,8 +371,10 @@ struct WordReader: View {
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(saved ? Theme.successLight : tint.opacity(0.1))
                             .clipShape(.capsule)
+                            .frame(minHeight: 44)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(saved ? "\(word), saved to your deck" : "\(word), look up")
                     }
                 }
             }
@@ -476,10 +485,12 @@ struct WordReader: View {
         return ""
     }
 
+    /// Open the gloss for a term with the sentence it was met in as context
+    /// (E5) — never the whole article.
     private func present(term: String) {
         let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
-        target = GlossTarget(term: clean, context: text)
+        target = GlossTarget(term: clean, context: SentenceExtractor.sentence(containing: clean, in: text))
     }
 
     private func endSelection() {
@@ -627,20 +638,28 @@ struct FlowLayout: Layout {
 
 // MARK: - Gloss popover (live translation + capture)
 
+/// The reader's word sheet. Every lookup outcome is explicit — loading
+/// (bounded by `Tuning.glossTimeoutSeconds`), a real gloss, or a named failure
+/// with a retry — and Save is disabled until there is something real to save.
+/// When the lookup fails the learner can still "Save now, translate later": the
+/// gap is stored with the sentence and `needsTranslation`, never a placeholder,
+/// and the store fills the meaning in the next time a lookup succeeds (E4).
 struct GlossSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     let term: String
+    /// The sentence the word was met in (`SentenceExtractor`), used for the lookup and the capture context.
     let context: String
     let sourceTab: String
+    /// The level of the text the word came from (nil → the learner's level).
+    var sourceLevel: CEFRLevel? = nil
     let alreadySaved: Bool
     var onSave: () -> Void
 
-    @State private var gloss: WordGloss? = nil
-    @State private var isLoading = true
+    @State private var lookup: LookupState = .loading
+    @State private var attempt = 0
     @State private var note = ""
-    @State private var saved = false
     @State private var path: [WordRoute] = []
 
     var body: some View {
@@ -652,9 +671,25 @@ struct GlossSheet: View {
                         accent: Theme.primary,
                         sourceType: .reading,
                         sourceTab: sourceTab,
-                        onPush: { path.append($0) }
+                        onPush: { path.append($0) },
+                        sourceLevel: sourceLevel
                     )
                 }
+        }
+    }
+
+    /// What Save would store right now: the gloss (with the learner's note), or —
+    /// after a failed lookup — the bare word with its sentence for later.
+    private var draft: CaptureDraft? {
+        switch lookup {
+        case .loading:
+            return nil
+        case .loaded(let g):
+            return CaptureDraft(gloss: g, sourceType: .reading, sourceTab: sourceTab,
+                                contextSentence: context, sourceLevel: sourceLevel, note: note)
+        case .failed:
+            return CaptureDraft(untranslated: term, sourceType: .reading, sourceTab: sourceTab,
+                                contextSentence: context, sourceLevel: sourceLevel, note: note)
         }
     }
 
@@ -662,10 +697,14 @@ struct GlossSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.lg) {
                 header
-                if isLoading {
-                    loadingState
-                } else if let gloss {
+                switch lookup {
+                case .loading:
+                    LookupLoadingView(accent: Theme.primary)
+                case .loaded(let gloss):
                     glossContent(gloss)
+                case .failed(let failure):
+                    LookupUnavailableView(failure: failure, accent: Theme.primary, onRetry: { attempt += 1 })
+                    if !context.isEmpty { contextBlock }
                 }
                 noteField
                 Color.clear.frame(height: 8)
@@ -676,7 +715,7 @@ struct GlossSheet: View {
         .background(Theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) { saveBar }
-        .task { await loadGloss() }
+        .task(id: attempt) { await loadGloss() }
     }
 
     private var header: some View {
@@ -686,7 +725,7 @@ struct GlossSheet: View {
                     .font(.serifDisplay(term.count > 22 ? 22 : 28, weight: .bold))
                     .foregroundStyle(Theme.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let g = gloss, !g.pronunciation.isEmpty {
+                if let g = lookup.gloss, !g.pronunciation.isEmpty {
                     PhoneticLine(text: g.pronunciation)
                 }
             }
@@ -695,38 +734,24 @@ struct GlossSheet: View {
         }
     }
 
-    private var loadingState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SkeletonBlock(width: 160, height: 18)
-            SkeletonBlock(height: 14)
-            SkeletonBlock(width: 220, height: 14)
-            HStack(spacing: 6) {
-                ProgressView().tint(Theme.primary).scaleEffect(0.8)
-                Text(TranslationService.hasKey ? "Translating…" : "Preparing…")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-            }
-            .padding(.top, 4)
-        }
-    }
-
     private func glossContent(_ g: WordGloss) -> some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("MEANING").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
-                Text(g.translation).font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("MEANING").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+                Text(g.translation).font(.headline).foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
             GlossRichDetail(gloss: g, accent: Theme.primary, onTermTap: { path.append(WordRoute(term: $0, context: "")) })
             if !g.example.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text("Example").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.secondary)
+                        Text("Example").font(.caption.weight(.bold)).foregroundStyle(Theme.secondary)
                         SpeakButton(text: g.example, size: 28)
                     }
-                    Text(g.example).font(.system(size: 16, weight: .medium)).italic().foregroundStyle(Theme.text)
+                    Text(g.example).font(.body.weight(.medium)).italic().foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                     if !g.exampleTranslation.isEmpty {
-                        Text(g.exampleTranslation).font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                        Text(g.exampleTranslation).font(.subheadline).foregroundStyle(Theme.textMuted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -735,14 +760,25 @@ struct GlossSheet: View {
                 .background(Theme.secondaryLight)
                 .clipShape(.rect(cornerRadius: Radius.card))
             }
+            if !context.isEmpty, g.example != context { contextBlock }
         }
+    }
+
+    /// The sentence the word was met in — what gets saved as context.
+    private var contextBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("WHERE YOU MET IT").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+            Text(context).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var noteField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("PERSONAL NOTE").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
+            Text("PERSONAL NOTE").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
             TextField("Add a memory hook (optional)", text: $note, axis: .vertical)
-                .font(.system(size: 15))
+                .font(.body)
                 .lineLimit(1...3)
                 .padding(12)
                 .background(Theme.card)
@@ -752,79 +788,27 @@ struct GlossSheet: View {
     }
 
     private var saveBar: some View {
-        Button {
-            capture()
-        } label: {
-            Label(saved || alreadySaved ? "Saved to deck" : "Save to my deck",
-                  systemImage: saved || alreadySaved ? "checkmark.circle.fill" : "plus.circle.fill")
-                .font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                .background(saved || alreadySaved ? Theme.success : Theme.primary)
-                .clipShape(.rect(cornerRadius: 14))
+        SaveToDeckButton(draft: draft, accent: Theme.primary, alreadySaved: alreadySaved, isBusy: lookup == .loading) { outcome in
+            if case .saved = outcome {
+                onSave()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(saved || alreadySaved)
         .padding(.horizontal, Space.xl)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
     private func loadGloss() async {
-        isLoading = true
-        gloss = await TranslationService.gloss(for: term, context: context)
-        isLoading = false
+        lookup = .loading
+        let result = await TranslationService.lookup(term: term, context: context)
+        lookup = LookupState(result)
+        // A successful lookup proves the service is reachable: fill in any
+        // captures that were saved offline (E4).
+        if case .gloss = result, !store.pendingTranslations.isEmpty {
+            await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:))
+        }
     }
-
-    private func capture() {
-        guard !saved && !alreadySaved else { return }
-        Haptics.success()
-        let now = Date()
-        let g = gloss
-        let pron = (g?.pronunciation.isEmpty == false) ? g?.pronunciation : nil
-        let translation = g?.translation.isEmpty == false ? g!.translation : "(tap to translate)"
-        let explanationParts = [g?.explanation, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : "Note: \(note)"]
-            .compactMap { $0 }.filter { !$0.isEmpty }
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: term,
-            englishTranslation: translation,
-            explanation: explanationParts.joined(separator: " · ").ifEmpty("Captured while reading."),
-            exampleSentence: g?.example.ifEmpty(term) ?? term,
-            exampleTranslation: g?.exampleTranslation ?? "",
-            pronunciation: pron,
-            sourceType: .reading,
-            category: term.contains(" ") ? .phrasing : .vocabulary,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: .A2,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: context, translation: nil, sourceTab: sourceTab, capturedAt: now, reExposureCount: 0),
-            confusionLinks: [],
-            partOfSpeech: g?.partOfSpeech.ifEmpty(nil) ?? nil,
-            gender: g?.gender.ifEmpty(nil) ?? nil,
-            article: g?.article.ifEmpty(nil) ?? nil,
-            baseForm: g?.baseForm.ifEmpty(nil) ?? nil,
-            register: g?.register.ifEmpty(nil) ?? nil,
-            relatedWords: (g?.relatedWords.isEmpty == false) ? g?.relatedWords : nil
-        )
-        store.addGap(gap)
-        saved = true
-        onSave()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
-    }
-}
-
-private extension String {
-    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
-    func ifEmpty(_ fallback: String?) -> String? { isEmpty ? fallback : self }
 }
 
 // MARK: - On-device notice

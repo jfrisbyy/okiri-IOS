@@ -23,13 +23,15 @@ nonisolated enum TranslationCache {
 
     private static let table = "translation_cache"
     private static let localKey = "translation_cache_local_v1"
-    private static let localLimit = 600
+    private static var localLimit: Int { Tuning.translationCacheLocalLimit }
 
     // MARK: Fingerprint
 
     /// A stable, normalized fingerprint of the lookup so identical taps collapse
     /// to one cache entry — context-aware, so the same word in a clearly
-    /// different sentence is stored separately.
+    /// different sentence is stored separately. Callers pass the CONTAINING
+    /// SENTENCE (`SentenceExtractor.sentence(containing:in:)`), never a whole
+    /// article, so the same word in the same sentence always hits (E5).
     static func fingerprint(kind: String, term: String, context: String, direction: String) -> String {
         let raw = "\(kind)|\(direction)|\(normalize(term))|\(normalize(context))"
         let digest = SHA256.hash(data: Data(raw.utf8))

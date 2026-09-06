@@ -98,8 +98,10 @@ struct ResourceHeader<Trailing: View>: View {
                             .frame(width: 36, height: 36)
                             .background(.white.opacity(0.16), in: Circle())
                             .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 0.5))
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
                     Spacer()
                     trailing
                 }
@@ -185,8 +187,11 @@ struct SpeakButton: View {
                 .frame(width: size, height: size)
                 .background(Theme.primaryLight)
                 .clipShape(.circle)
+                .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Listen")
+        .accessibilityHint("Reads the French aloud")
     }
 }
 
@@ -341,6 +346,8 @@ struct WordRoute: Hashable {
 /// word, renders the rich detail (with its own tappable chips so you can keep
 /// drilling in), an example, and a Save-to-deck button. Pushed inside a
 /// NavigationStack so the system back button steps through the card history.
+/// Every lookup outcome is explicit: loading (bounded), a gloss, or a named
+/// failure with a retry — and a failed lookup can still be saved for later.
 struct TranslationCardView: View {
     let route: WordRoute
     var accent: Color = Theme.primary
@@ -348,36 +355,55 @@ struct TranslationCardView: View {
     let sourceTab: String
     /// Push a deeper card onto the host navigation stack.
     let onPush: (WordRoute) -> Void
+    /// The level of the material the word came from (nil → the learner's level).
+    var sourceLevel: CEFRLevel? = nil
 
     @Environment(AppStore.self) private var store
-    @State private var gloss: WordGloss? = nil
-    @State private var isLoading = true
-    @State private var saved = false
+    @State private var lookup: LookupState = .loading
+    @State private var attempt = 0
 
     private var alreadySaved: Bool {
-        let key = route.term.lowercased()
-        return saved || store.gaps.contains { $0.frenchWord.lowercased() == key }
+        store.hasGap(forWord: route.term)
+    }
+
+    private var draft: CaptureDraft? {
+        switch lookup {
+        case .loading: return nil
+        case .loaded(let g):
+            return CaptureDraft(gloss: g, sourceType: sourceType, sourceTab: sourceTab,
+                                contextSentence: route.context, sourceLevel: sourceLevel)
+        case .failed:
+            return CaptureDraft(untranslated: route.term, sourceType: sourceType, sourceTab: sourceTab,
+                                contextSentence: route.context, sourceLevel: sourceLevel)
+        }
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if isLoading {
-                    loadingState
-                } else if let g = gloss {
+                switch lookup {
+                case .loading:
+                    LookupLoadingView(accent: accent)
+                case .loaded(let g):
                     GlossRichDetail(gloss: g, accent: accent, onTermTap: { onPush(WordRoute(term: $0, context: "")) })
                     if !g.example.isEmpty { exampleBlock(g) }
+                case .failed(let failure):
+                    LookupUnavailableView(failure: failure, accent: accent, onRetry: { attempt += 1 })
                 }
-                saveButton
+                SaveToDeckButton(draft: draft, accent: accent, alreadySaved: alreadySaved, isBusy: lookup == .loading)
             }
             .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 28)
         }
         .background(Theme.background)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            gloss = await TranslationService.gloss(for: route.term, context: route.context)
-            isLoading = false
+        .task(id: attempt) {
+            lookup = .loading
+            let result = await TranslationService.lookup(term: route.term, context: route.context)
+            lookup = LookupState(result)
+            if case .gloss = result, !store.pendingTranslations.isEmpty {
+                await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:))
+            }
         }
     }
 
@@ -385,10 +411,8 @@ struct TranslationCardView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(route.term).font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
-                if let g = gloss, !g.pronunciation.isEmpty {
-                    PhoneticLine(text: g.pronunciation)
-                }
-                if let g = gloss, !g.translation.isEmpty {
+                if case .loaded(let g) = lookup {
+                    if !g.pronunciation.isEmpty { PhoneticLine(text: g.pronunciation) }
                     Text(g.translation).font(.system(size: 15, weight: .medium)).foregroundStyle(accent)
                 }
             }
@@ -396,30 +420,18 @@ struct TranslationCardView: View {
             HStack(spacing: 8) {
                 Button { Haptics.tap(); NaturalVoice.shared.speak(route.term, rate: 0.6) } label: {
                     Image(systemName: "tortoise.fill").font(.system(size: 14)).foregroundStyle(accent)
-                        .frame(width: 38, height: 38).background(accent.opacity(0.10)).clipShape(.circle)
+                        .frame(width: 44, height: 44).background(accent.opacity(0.10)).clipShape(.circle)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen slowly")
                 Button { Haptics.tap(); NaturalVoice.shared.speak(route.term) } label: {
                     Image(systemName: "speaker.wave.2.fill").font(.system(size: 18)).foregroundStyle(accent)
                         .frame(width: 46, height: 46).background(accent.opacity(0.12)).clipShape(.circle)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen")
             }
         }
-    }
-
-    private var loadingState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SkeletonBlock(width: 180, height: 16)
-            SkeletonBlock(height: 14)
-            SkeletonBlock(width: 140, height: 14)
-            HStack(spacing: 8) {
-                ProgressView().tint(accent).scaleEffect(0.8)
-                Text("Looking it up…").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-            }
-            .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func exampleBlock(_ g: WordGloss) -> some View {
@@ -428,12 +440,16 @@ struct TranslationCardView: View {
                 Text("Example").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
                 Button { Haptics.tap(); NaturalVoice.shared.speak(g.example) } label: {
                     Image(systemName: "speaker.wave.2").font(.system(size: 13)).foregroundStyle(accent)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen to the example")
                 Button { Haptics.tap(); NaturalVoice.shared.speak(g.example, rate: 0.6) } label: {
                     Image(systemName: "tortoise.fill").font(.system(size: 12)).foregroundStyle(accent.opacity(0.8))
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen to the example slowly")
             }
             Text(g.example).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -447,59 +463,239 @@ struct TranslationCardView: View {
         .background(accent.opacity(0.07)).clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(accent.opacity(0.18), lineWidth: 1))
     }
+}
 
-    private var saveButton: some View {
-        Button {
-            guard let g = gloss, !alreadySaved else { return }
-            save(g)
-        } label: {
-            Label(alreadySaved ? "Saved to Deck" : "Save to Deck",
-                  systemImage: alreadySaved ? "checkmark.circle.fill" : "plus.circle.fill")
-                .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                .background(alreadySaved ? Theme.success : accent).clipShape(.rect(cornerRadius: Radius.chip))
+// MARK: - Lookup states (shared by every translation surface — E26)
+
+/// The three explicit states of a word lookup. No surface shows a spinner
+/// without a bound, and no failure is silent.
+enum LookupState: Equatable {
+    case loading
+    case loaded(WordGloss)
+    case failed(TranslationFailure)
+
+    init(_ result: GlossLookup) {
+        switch result {
+        case .gloss(let g): self = .loaded(g)
+        case .unavailable(let f): self = .failed(f)
         }
-        .buttonStyle(.plain)
-        .disabled(isLoading || alreadySaved)
-        .opacity(isLoading ? 0.6 : 1)
     }
 
-    private func save(_ g: WordGloss) {
-        let now = Date()
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: g.term,
-            englishTranslation: g.translation,
-            explanation: g.explanation,
-            exampleSentence: g.example.isEmpty ? route.context : g.example,
-            exampleTranslation: g.exampleTranslation,
-            pronunciation: g.pronunciation.isEmpty ? nil : g.pronunciation,
-            sourceType: sourceType,
-            category: g.isPhrase ? .phrasing : .vocabulary,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: .A2,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: route.context, translation: nil, sourceTab: sourceTab, capturedAt: now, reExposureCount: 0),
-            confusionLinks: [],
-            partOfSpeech: g.partOfSpeech.isEmpty ? nil : g.partOfSpeech,
-            gender: g.gender.isEmpty ? nil : g.gender,
-            article: g.article.isEmpty ? nil : g.article,
-            baseForm: g.baseForm.isEmpty ? nil : g.baseForm,
-            register: g.register.isEmpty ? nil : g.register,
-            relatedWords: g.relatedWords.isEmpty ? nil : g.relatedWords
-        )
-        store.addGap(gap)
-        saved = true
-        Haptics.success()
+    var gloss: WordGloss? {
+        if case .loaded(let g) = self { return g }
+        return nil
+    }
+}
+
+/// Skeleton + "Looking it up…" shown while a lookup is in flight. The request
+/// itself is bounded by `Tuning.glossTimeoutSeconds`, so this never runs forever.
+struct LookupLoadingView: View {
+    var accent: Color = Theme.primary
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SkeletonBlock(width: 180, height: 16)
+            SkeletonBlock(height: 14)
+            SkeletonBlock(width: 140, height: 14)
+            HStack(spacing: 8) {
+                ProgressView().tint(accent).scaleEffect(0.8)
+                Text("Looking it up…").font(.footnote).foregroundStyle(Theme.textMuted)
+            }
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Looking it up")
+    }
+}
+
+/// An explicit, learner-facing failure card: what went wrong, what to do, and a
+/// retry when a retry could help (a missing key never gets one).
+struct LookupUnavailableView: View {
+    let failure: TranslationFailure
+    var accent: Color = Theme.primary
+    var onRetry: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.subheadline.weight(.bold)).foregroundStyle(Theme.warning)
+                Text(failure.title).font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
+            }
+            Text(failure.message).font(.footnote).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if failure.isRetryable, let onRetry {
+                Button { Haptics.tap(); onRetry() } label: {
+                    Label("Try again", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(accent)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.warningLight)
+        .clipShape(.rect(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.warning.opacity(0.25), lineWidth: 1))
+    }
+
+    private var icon: String {
+        switch failure {
+        case .notConfigured: return "key.slash"
+        case .offline: return "wifi.slash"
+        case .serviceError: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+// MARK: - Save to deck (the ONE capture affordance — E4 / E6 / E25)
+
+/// The save button every capture surface uses. It is disabled until there is
+/// something real to save (`draft == nil` while a lookup is in flight), offers
+/// "Save now, translate later" when the draft has no meaning yet, and reports
+/// "Saved" / "Already in your deck" from the store's own outcome — the store,
+/// not the view, dedupes and builds the gap.
+struct SaveToDeckButton: View {
+    let draft: CaptureDraft?
+    var accent: Color = Theme.primary
+    var alreadySaved: Bool = false
+    var isBusy: Bool = false
+    var onSaved: ((CaptureOutcome) -> Void)? = nil
+
+    @Environment(AppStore.self) private var store
+    @State private var outcome: CaptureOutcome? = nil
+
+    private var isDone: Bool {
+        if alreadySaved { return true }
+        switch outcome {
+        case .saved?, .duplicate?: return true
+        default: return false
+        }
+    }
+
+    private var title: String {
+        if case .duplicate? = outcome { return "Already in your deck" }
+        if isDone { return "Saved to deck" }
+        if isBusy || draft == nil { return "Save to my deck" }
+        if draft?.needsTranslation == true { return "Save now, translate later" }
+        return "Save to my deck"
+    }
+
+    private var symbol: String {
+        if isDone { return "checkmark.circle.fill" }
+        if draft?.needsTranslation == true { return "clock.badge.checkmark" }
+        return "plus.circle.fill"
+    }
+
+    private var isDisabled: Bool { isDone || isBusy || draft == nil }
+
+    var body: some View {
+        Button {
+            guard let draft, !isDisabled else { return }
+            let result = store.capture(draft)
+            outcome = result
+            if case .saved = result { Haptics.success() } else { Haptics.tap() }
+            onSaved?(result)
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.body.weight(.bold)).foregroundStyle(.white)
+                .frame(maxWidth: .infinity).frame(minHeight: 50)
+                .background(isDone ? Theme.success : accent)
+                .clipShape(.rect(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled && !isDone ? 0.55 : 1)
+        .accessibilityHint(draft?.needsTranslation == true ? "Saves the word without a meaning; it is translated once translation is available" : "")
+    }
+}
+
+/// A small capture card for reference content whose meaning is already known
+/// (idioms, tenses, accent words — E25): shows the French, the meaning, the
+/// example and a note field, then saves through `SaveToDeckButton`.
+struct CaptureSheet: View {
+    let draft: CaptureDraft
+    var accent: Color = Theme.primary
+
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var note = ""
+
+    private var draftWithNote: CaptureDraft {
+        var d = draft
+        d.note = note
+        return d
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(draft.frenchWord)
+                            .font(.serifDisplay(draft.frenchWord.count > 22 ? 22 : 28, weight: .bold))
+                            .foregroundStyle(accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let p = draft.pronunciation, !p.isEmpty { PhoneticLine(text: p) }
+                    }
+                    Spacer()
+                    SpeakButton(text: draft.frenchWord, size: 38)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MEANING").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+                    Text(draft.englishTranslation).font(.headline).foregroundStyle(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !draft.explanation.isEmpty {
+                    Text(draft.explanation).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !draft.exampleSentence.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Text("Example").font(.caption.weight(.bold)).foregroundStyle(accent)
+                            SpeakButton(text: draft.exampleSentence, size: 28)
+                        }
+                        Text(draft.exampleSentence).font(.body.weight(.medium)).italic().foregroundStyle(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !draft.exampleTranslation.isEmpty {
+                            Text(draft.exampleTranslation).font(.subheadline).foregroundStyle(Theme.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Space.lg)
+                    .background(accent.opacity(0.07))
+                    .clipShape(.rect(cornerRadius: Radius.card))
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PERSONAL NOTE").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+                    TextField("Add a memory hook (optional)", text: $note, axis: .vertical)
+                        .font(.body)
+                        .lineLimit(1...3)
+                        .padding(12)
+                        .background(Theme.card)
+                        .clipShape(.rect(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
+                }
+                Color.clear.frame(height: 8)
+            }
+            .padding(Space.xl)
+            .padding(.top, 8)
+        }
+        .background(Theme.background)
+        .safeAreaInset(edge: .bottom) {
+            SaveToDeckButton(draft: draftWithNote, accent: accent, alreadySaved: store.hasGap(forWord: draft.frenchWord)) { outcome in
+                if case .saved = outcome {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
+                }
+            }
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 

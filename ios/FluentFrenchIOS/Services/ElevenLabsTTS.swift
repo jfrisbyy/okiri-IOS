@@ -3,10 +3,11 @@
 //  FluentFrenchIOS
 //
 //  Natural, human-sounding French text-to-speech via ElevenLabs (public client
-//  key from Config). Audio is fetched as MP3, cached in-memory per (text,voice),
-//  and played with AVAudioPlayer. Every call gracefully falls back to the
-//  built-in AVSpeechSynthesizer when no key/network is available, so playback
-//  never breaks.
+//  key from Config). Audio is fetched as MP3, cached in memory per (text, voice)
+//  and on disk, and played with AVAudioPlayer. Every fetch answers with a typed
+//  result — audio, or an explicit `MediaServiceFailure` (no key, offline,
+//  service error) — and is bounded by `Tuning.ttsFetchTimeout`, so a caller
+//  can fall back to the built-in voice and SAY so (E26).
 //
 
 import AVFoundation
@@ -37,10 +38,7 @@ actor ElevenLabsTTS {
     static let shared = ElevenLabsTTS()
 
     private var cache: [String: Data] = [:]
-    private var inFlight: [String: Task<Data?, Never>] = [:]
-
-    /// Max number of clips kept on disk before the oldest are trimmed.
-    private let maxDiskFiles = 400
+    private var inFlight: [String: Task<NaturalVoiceFetch, Never>] = [:]
 
     private let cacheDir: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -52,29 +50,36 @@ actor ElevenLabsTTS {
     nonisolated static var apiKey: String { Config.EXPO_PUBLIC_ELEVENLABS_API_KEY }
     nonisolated static var hasKey: Bool { !apiKey.isEmpty }
 
-    /// Returns MP3 audio for the text, or nil when unavailable (caller should
-    /// fall back to the system synthesizer).
-    func audio(for text: String, voice: NaturalVoiceID) async -> Data? {
+    /// Natural audio for the text, or the reason there is none. A cached clip is
+    /// returned even without a key or a connection.
+    func fetch(_ text: String, voice: NaturalVoiceID) async -> NaturalVoiceFetch {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Self.hasKey, !clean.isEmpty else { return nil }
+        guard !clean.isEmpty else { return .unavailable(.serviceError) }
         let key = "\(voice.rawValue)|\(clean)"
 
-        if let cached = cache[key] { return cached }
+        if let cached = cache[key] { return .audio(cached) }
         if let disk = readDisk(key) {
             cache[key] = disk
-            return disk
+            return .audio(disk)
         }
+        guard Self.hasKey else { return .unavailable(.noKey) }
         if let existing = inFlight[key] { return await existing.value }
 
-        let task = Task<Data?, Never> { await Self.fetch(text: clean, voice: voice) }
+        let task = Task<NaturalVoiceFetch, Never> { await Self.download(text: clean, voice: voice) }
         inFlight[key] = task
-        let data = await task.value
+        let result = await task.value
         inFlight[key] = nil
-        if let data {
+        if case .audio(let data) = result {
             cache[key] = data
             writeDisk(key, data)
         }
-        return data
+        return result
+    }
+
+    /// Legacy convenience: the audio, or nil when unavailable for any reason.
+    func audio(for text: String, voice: NaturalVoiceID) async -> Data? {
+        if case .audio(let data) = await fetch(text, voice: voice) { return data }
+        return nil
     }
 
     // MARK: - Disk cache
@@ -102,24 +107,29 @@ actor ElevenLabsTTS {
     /// Keeps the on-disk cache bounded by removing the least-recently-used clips.
     private func trimDiskIfNeeded() {
         let keys: [URLResourceKey] = [.contentModificationDateKey]
+        let limit = Tuning.ttsDiskCacheFiles
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: cacheDir, includingPropertiesForKeys: keys
-        ), files.count > maxDiskFiles else { return }
+        ), files.count > limit else { return }
         let sorted = files.sorted { a, b in
             let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             return da < db
         }
-        for url in sorted.prefix(files.count - maxDiskFiles) {
+        for url in sorted.prefix(files.count - limit) {
             try? FileManager.default.removeItem(at: url)
         }
     }
 
-    private static func fetch(text: String, voice: NaturalVoiceID) async -> Data? {
-        guard let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voice.rawValue)") else { return nil }
+    // MARK: - Network
+
+    private static func download(text: String, voice: NaturalVoiceID) async -> NaturalVoiceFetch {
+        guard let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voice.rawValue)") else {
+            return .unavailable(.serviceError)
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = Tuning.ttsFetchTimeout
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
@@ -136,27 +146,36 @@ actor ElevenLabsTTS {
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200, !data.isEmpty else { return nil }
-            return data
+            guard let http = response as? HTTPURLResponse else { return .unavailable(.serviceError) }
+            if let failure = MediaServiceFailure.classify(statusCode: http.statusCode) { return .unavailable(failure) }
+            guard !data.isEmpty else { return .unavailable(.serviceError) }
+            return .audio(data)
         } catch {
-            return nil
+            return .unavailable(MediaServiceFailure.classify(error))
         }
     }
 }
 
 /// Simple one-shot speaker for single utterances, used across every tap-to-hear
 /// surface. Plays a natural ElevenLabs clip when possible, otherwise the system
-/// voice in the requested language. Supports a slow-speed replay rate.
+/// voice in the requested language — and records WHICH voice spoke last in
+/// `source`, so a surface can label the fallback. Supports a slow replay rate.
 @MainActor
 @Observable
 final class NaturalVoice: NSObject {
     static let shared = NaturalVoice()
 
     /// Key ("voice|text") currently being fetched, so UI can show a spinner.
+    /// Cleared within `Tuning.ttsFetchTimeout` no matter what.
     private(set) var loadingKey: String? = nil
+
+    /// The voice that spoke (or is speaking) the last utterance.
+    private(set) var source: VoiceSource = ElevenLabsTTS.hasKey ? .natural : .system(.noKey)
 
     private var player: AVAudioPlayer?
     private var token = 0
+
+    var isLoading: Bool { loadingKey != nil }
 
     /// Speaks `text` with a natural voice.
     /// - Parameters:
@@ -166,27 +185,40 @@ final class NaturalVoice: NSObject {
     func speak(_ text: String, voice: NaturalVoiceID = .female, rate: Float = 1.0, fallbackLanguage: String = "fr-FR") {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
+        stop()
         token += 1
         let current = token
-        stop()
         let key = "\(voice.rawValue)|\(clean)"
         loadingKey = key
         Task {
-            let data = await ElevenLabsTTS.shared.audio(for: clean, voice: voice)
+            let fetched = await Deadline.run(seconds: Tuning.ttsFetchTimeout) {
+                await ElevenLabsTTS.shared.fetch(clean, voice: voice)
+            }
             guard current == token else { return }
             loadingKey = nil
-            if let data, play(data, rate: rate) {
-                return
+            switch fetched {
+            case .audio(let data)?:
+                if play(data, rate: rate) {
+                    source = .natural
+                    return
+                }
+                source = .system(.serviceError)
+            case .unavailable(let failure)?:
+                source = .system(SystemVoiceReason(failure))
+            case nil:
+                source = .system(.serviceError)
             }
             FrenchSpeech.shared.speakAny(clean, language: fallbackLanguage, rate: synthRate(for: rate))
         }
     }
 
+    /// Silence whichever voice is speaking and drop any clip still loading.
     func stop() {
+        token += 1
         player?.stop()
         player = nil
         loadingKey = nil
-        FrenchSpeech.shared.speak("")
+        FrenchSpeech.shared.stop()
     }
 
     @discardableResult

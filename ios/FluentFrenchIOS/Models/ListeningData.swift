@@ -12,6 +12,21 @@ import Foundation
 nonisolated enum ListeningDifficulty: String, Codable, CaseIterable {
     case beginner, intermediate, advanced
     var label: String { rawValue.capitalized }
+
+    /// The CEFR band this difficulty spans (used to match dialogues to the
+    /// learner's level — the shelf order and "Your level" / "Stretch" labels).
+    var cefrLevels: [CEFRLevel] {
+        switch self {
+        case .beginner: return [.A1, .A2]
+        case .intermediate: return [.B1, .B2]
+        case .advanced: return [.C1, .C2]
+        }
+    }
+
+    /// The level a line captured from a dialogue of this difficulty is filed under
+    /// (E7): the band's entry level, so a capture is never marked harder than the
+    /// dialogue it came from.
+    var captureLevel: CEFRLevel { cefrLevels[0] }
 }
 
 nonisolated enum ListeningType: String, Codable, CaseIterable {

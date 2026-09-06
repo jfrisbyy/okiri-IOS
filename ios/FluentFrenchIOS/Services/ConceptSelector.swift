@@ -218,9 +218,18 @@ struct ConceptSelector {
     /// unmastered, or mastered and due for a check — B3) and it is not evidence of
     /// a prerequisite-blocked concept. Gaps of mastered concepts stay practicable
     /// when FSRS says they are due (item schedule ≠ concept mastery); untagged
-    /// gaps carry no prerequisite chain and stay practicable.
+    /// gaps carry no prerequisite chain and stay practicable. A gap the LEARNER
+    /// captured (reading, listening, speaking — anything but Foundation content)
+    /// is never prerequisite-blocked either (E2): they met the word, so it is
+    /// theirs to practice even when the heuristic tagger filed it under a concept
+    /// they are not "ready" for. A gap captured WITHOUT a meaning yet
+    /// (`needsTranslation`, E4) waits until `resolvePendingTranslations` fills it
+    /// in — it keeps its schedule, but a blank meaning can never become a lesson
+    /// option or a match pair.
     func isPracticable(_ gap: GapItem, at now: Date = Date()) -> Bool {
         guard gap.isPracticable(at: now) else { return false }
+        if gap.needsTranslation { return false }
+        if gap.sourceType != .foundation { return true }
         guard let cid = gap.conceptId, let concept = store.concept(cid) else { return true }
         return !isPrerequisiteBlocked(concept)
     }

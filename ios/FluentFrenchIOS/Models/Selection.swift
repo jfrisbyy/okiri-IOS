@@ -90,6 +90,9 @@ nonisolated struct SelectionRequest: Hashable {
 /// Retention buckets as the Retention screen tabs name them.
 nonisolated enum RetentionBucket: String, Hashable, Codable, CaseIterable {
     case atRisk, fading, fresh, mastered
+    /// Never reviewed: no recall evidence yet (B4). Listed, never "reviewed now" —
+    /// new material is taught by the lesson, not drilled as retention.
+    case new
 
     var label: String {
         switch self {
@@ -97,6 +100,7 @@ nonisolated enum RetentionBucket: String, Hashable, Codable, CaseIterable {
         case .fading: return "Fading"
         case .fresh: return "Fresh"
         case .mastered: return "Mastered"
+        case .new: return "New"
         }
     }
 }
@@ -112,6 +116,9 @@ nonisolated enum SelectionScope: Hashable {
     case reviewQueue
     /// Gaps overdue by more than a day (Deck "Review Critical Gaps").
     case critical
+    /// Everything "Due now" — `AppStore.dueNow(at:)`: unmastered gaps at or past their
+    /// review time plus mastered gaps due for a check (Deck "Review due now", D13).
+    case dueNow
     /// All active gaps (Deck "Start Practice").
     case mixed
     /// A retention bucket (Retention "Review these now").
@@ -128,6 +135,7 @@ nonisolated enum SelectionScope: Hashable {
         case .dueInCategory(let c): return c.label
         case .reviewQueue: return "Spaced Repetition"
         case .critical: return "Critical Gaps"
+        case .dueNow: return "Due now"
         case .mixed: return "Mixed Practice"
         case .retention(let b): return b.label
         case .errorPattern: return "Error pattern"

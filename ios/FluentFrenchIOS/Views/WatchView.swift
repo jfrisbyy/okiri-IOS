@@ -2,41 +2,81 @@
 //  WatchView.swift
 //  FluentFrenchIOS
 //
-//  Live French YouTube browser, mirroring the Expo Watch screen: a dark
-//  cinematic header with a content/subtitles toggle and a search bar, trending
-//  videos grouped into themed horizontal carousels, and a suggested-searches
-//  grid. Tapping a video opens it; search opens a results list.
+//  French YouTube browser: a dark cinematic header with a content/subtitles
+//  toggle and a search bar, trending videos grouped into themed carousels, and
+//  a suggested-searches grid. Every state is explicit (E26): live results, the
+//  curated shelf with the reason live results are missing (no key, offline,
+//  service error), an honest empty category, and a search that says when it
+//  cannot run. Loads are bounded by `Tuning.videoFeedTimeout`.
 //
 
+import Foundation
 import SwiftUI
 
 @MainActor
 @Observable
 final class WatchModel {
-    var sections: [(category: YTCategory, videos: [YTVideo])] = []
-    var isLoading = false
+    struct Section: Identifiable {
+        let category: YTCategory
+        let result: VideoFeedResult
+        var id: String { category.id }
+        var videos: [YTVideo] { result.videos }
+        var isCurated: Bool { result.failure != nil }
+    }
 
+    private(set) var sections: [Section] = []
+    private(set) var isLoading = false
+    /// Why live results are missing (nil when every section is live).
+    private(set) var feedFailure: MediaServiceFailure? = nil
+
+    /// Loads every category at once, so the wait is bounded by ONE
+    /// `Tuning.videoFeedTimeout` rather than one per category (EM-7). Sections
+    /// come back in `YouTubeService.categories` order.
     func load() async {
+        guard !isLoading else { return }
         isLoading = true
-        var result: [(YTCategory, [YTVideo])] = []
-        for cat in YouTubeService.categories {
-            let videos = await YouTubeService.trending(categoryId: cat.id)
-            result.append((cat, videos))
+        defer { isLoading = false }
+        let categories = YouTubeService.categories
+        let feeds: [String: VideoFeedResult] = await withTaskGroup(of: (String, VideoFeedResult).self) { group in
+            for category in categories {
+                let id = category.id
+                group.addTask {
+                    let feed = await YouTubeService.trending(categoryId: id)
+                    return (id, feed)
+                }
+            }
+            var byId: [String: VideoFeedResult] = [:]
+            for await (id, feed) in group { byId[id] = feed }
+            return byId
+        }
+        var result: [Section] = []
+        var failure: MediaServiceFailure? = nil
+        for category in categories {
+            let feed = feeds[category.id] ?? .curated(WatchCatalog.curated(for: category.id), reason: .serviceError)
+            if let f = feed.failure, failure == nil || f == .noKey { failure = f }
+            result.append(Section(category: category, result: feed))
         }
         sections = result
-        isLoading = false
+        feedFailure = failure
     }
 }
 
 struct WatchView: View {
     @Environment(AppStore.self) private var store
     @State private var model = WatchModel()
+    @State private var reachability = NetworkReachability.shared
     @State private var nativeMode = false
     @State private var searching = false
     @State private var searchText = ""
-    @State private var searchResults: [YTVideo] = []
-    @State private var isSearchLoading = false
+    @State private var search: SearchState = .idle
     @State private var playingVideo: YTVideo? = nil
+
+    private enum SearchState: Equatable {
+        case idle
+        case loading
+        case results([YTVideo])
+        case unavailable(MediaServiceFailure)
+    }
 
     var body: some View {
         NavigationStack {
@@ -60,7 +100,10 @@ struct WatchView: View {
             WatchPlayerView(video: video, learnMode: nativeMode)
                 .environment(store)
         }
-        .task { if model.sections.isEmpty { await model.load() } }
+        .task {
+            reachability.start()
+            if model.sections.isEmpty { await model.load() }
+        }
     }
 
     // MARK: - Header
@@ -73,11 +116,12 @@ struct WatchView: View {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Watch & Learn").font(.serifDisplay(28, weight: .bold)).foregroundStyle(.white)
-                            Text("Immerse yourself in French video").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                            Text("Immerse yourself in French video").font(.footnote).foregroundStyle(.white.opacity(0.6))
                         }
                         Spacer()
-                        Image(systemName: "play.tv.fill").font(.system(size: 24)).foregroundStyle(Theme.primary)
+                        Image(systemName: "play.tv.fill").font(.title2).foregroundStyle(Theme.primary)
                             .frame(width: 50, height: 50).background(Theme.primary.opacity(0.15)).clipShape(.rect(cornerRadius: 16))
+                            .accessibilityHidden(true)
                     }
 
                     HStack(spacing: 10) {
@@ -91,17 +135,18 @@ struct WatchView: View {
                         withAnimation { searching.toggle() }
                     } label: {
                         HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass").font(.system(size: 16)).foregroundStyle(.white.opacity(0.4))
+                            Image(systemName: "magnifyingglass").font(.callout).foregroundStyle(.white.opacity(0.4))
                             Text(searching ? "Close search" : "Search YouTube in French…")
-                                .font(.system(size: 14)).foregroundStyle(.white.opacity(0.4))
+                                .font(.subheadline).foregroundStyle(.white.opacity(0.4))
                             Spacer()
-                            Image(systemName: searching ? "xmark" : "chevron.right").font(.system(size: 13)).foregroundStyle(.white.opacity(0.3))
+                            Image(systemName: searching ? "xmark" : "chevron.right").font(.footnote).foregroundStyle(.white.opacity(0.3))
                         }
-                        .padding(.horizontal, 16).padding(.vertical, 13)
+                        .padding(.horizontal, 16).frame(minHeight: 46)
                         .background(Color.white.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.08), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(searching ? "Close search" : "Search YouTube in French")
                 }
                 .padding(.horizontal, 20).padding(.bottom, 16)
             }
@@ -112,55 +157,89 @@ struct WatchView: View {
             Haptics.tap(); action()
         } label: {
             HStack(spacing: 6) {
-                if let emoji { Text(emoji).font(.system(size: 13)) }
-                if let icon { Image(systemName: icon).font(.system(size: 12)).foregroundStyle(active ? .white : .white.opacity(0.5)) }
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(active ? .white : .white.opacity(0.5))
+                if let emoji { Text(emoji).font(.footnote).accessibilityHidden(true) }
+                if let icon { Image(systemName: icon).font(.caption).foregroundStyle(active ? .white : .white.opacity(0.5)).accessibilityHidden(true) }
+                Text(title).font(.footnote.weight(.semibold)).foregroundStyle(active ? .white : .white.opacity(0.5))
             }
-            .padding(.horizontal, 14).frame(height: 40)
+            .padding(.horizontal, 14).frame(minHeight: 44)
             .background(active ? Theme.primary : .clear)
             .clipShape(.capsule)
             .overlay(Capsule().stroke(active ? .clear : Color.white.opacity(0.25), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
     // MARK: - Search
 
     private var searchBarInline: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.5))
+            Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.5)).accessibilityHidden(true)
             TextField("", text: $searchText, prompt: Text("Search in French…").foregroundColor(.white.opacity(0.4)))
-                .foregroundStyle(.white).font(.system(size: 15)).autocorrectionDisabled()
+                .foregroundStyle(.white).font(.subheadline).autocorrectionDisabled()
+                .submitLabel(.search)
                 .onSubmit { Task { await runSearch() } }
+                .accessibilityLabel("Search YouTube in French")
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
+        .padding(.horizontal, 14).frame(minHeight: 46)
         .background(Color.white.opacity(0.1)).clipShape(.rect(cornerRadius: 12))
         .padding(.horizontal, 20).padding(.top, 16)
     }
 
+    /// Search runs only when it can; otherwise the state says why (E26).
     private func runSearch() async {
         let q = searchText.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
-        isSearchLoading = true
-        searchResults = await YouTubeService.search(q)
-        isSearchLoading = false
+        guard YouTubeService.hasKey else { search = .unavailable(.noKey); return }
+        guard reachability.isReachable else { search = .unavailable(.offline); return }
+        search = .loading
+        switch await YouTubeService.search(q) {
+        case .results(let videos): search = .results(videos)
+        case .unavailable(let failure): search = .unavailable(failure)
+        }
+    }
+
+    private func retrySearch() {
+        Task {
+            reachability.refresh()
+            await runSearch()
+        }
+    }
+
+    private func retryFeed() {
+        Task {
+            reachability.refresh()
+            await model.load()
+        }
     }
 
     private var searchResultsView: some View {
         VStack(spacing: 16) {
             searchBarInline
-            if isSearchLoading {
-                ProgressView().tint(.white).padding(.vertical, 40)
-            } else if searchResults.isEmpty {
-                VStack(spacing: 16) {
+            switch search {
+            case .idle:
+                VStack(spacing: 16) { suggestedGrid }.padding(.top, 8)
+            case .loading:
+                HStack(spacing: 10) {
+                    ProgressView().tint(.white)
+                    Text("Searching…").font(.footnote).foregroundStyle(.white.opacity(0.6))
+                }
+                .padding(.vertical, 40)
+                .accessibilityElement(children: .combine)
+            case .results(let videos):
+                if videos.isEmpty {
+                    notice(title: "No videos found", message: "Nothing matched “\(searchText)”. Try one of the suggested searches.", icon: "magnifyingglass", retry: nil)
                     suggestedGrid
+                } else {
+                    VStack(spacing: 14) {
+                        ForEach(videos) { video in listRow(video) }
+                    }
+                    .padding(.horizontal, 20)
                 }
-                .padding(.top, 8)
-            } else {
-                VStack(spacing: 14) {
-                    ForEach(searchResults) { video in listRow(video) }
-                }
-                .padding(.horizontal, 20)
+            case .unavailable(let failure):
+                notice(title: VideoFeedCopy.searchTitle(failure), message: VideoFeedCopy.searchMessage(failure),
+                       icon: icon(for: failure), retry: failure.isRetryable ? retrySearch : nil)
+                if failure == .noKey { suggestedGrid.opacity(0.5).disabled(true) }
             }
         }
         .padding(.bottom, 40)
@@ -171,16 +250,19 @@ struct WatchView: View {
             HStack(spacing: 12) {
                 thumbnail(video, width: 130, height: 74)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(video.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white).lineLimit(2).multilineTextAlignment(.leading)
-                    Text(video.channel).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                    Text(video.title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2).multilineTextAlignment(.leading)
+                    Text(video.channel).font(.caption).foregroundStyle(.white.opacity(0.5))
                     if !video.viewsLabel.isEmpty {
-                        Text(video.viewsLabel).font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+                        Text(video.viewsLabel).font(.caption2).foregroundStyle(.white.opacity(0.4))
                     }
                 }
                 Spacer()
             }
+            .frame(minHeight: 74)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(video.title), \(video.channel)\(video.durationLabel.isEmpty ? "" : ", \(video.durationLabel)")")
+        .accessibilityHint("Opens the video")
     }
 
     // MARK: - Feed
@@ -190,8 +272,12 @@ struct WatchView: View {
             if model.isLoading && model.sections.isEmpty {
                 feedSkeleton
             } else {
-                ForEach(model.sections, id: \.category.id) { section in
-                    sectionView(section.category, section.videos)
+                if let failure = model.feedFailure {
+                    notice(title: VideoFeedCopy.title(failure), message: VideoFeedCopy.message(failure),
+                           icon: icon(for: failure), retry: failure.isRetryable ? retryFeed : nil)
+                }
+                ForEach(model.sections) { section in
+                    sectionView(section)
                 }
             }
             suggestedSection
@@ -229,30 +315,37 @@ struct WatchView: View {
                 }
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading videos")
     }
 
-    private func sectionView(_ category: YTCategory, _ videos: [YTVideo]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func sectionView(_ section: WatchModel.Section) -> some View {
+        let category = section.category
+        let videos = section.videos
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Text(category.emoji).font(.system(size: 18))
+                Text(category.emoji).font(.title3)
                     .frame(width: 36, height: 36).background(Color.white.opacity(0.08)).clipShape(.rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Trending \(category.name)").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(.white)
-                    Text("Popular in France").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                    Text(section.isCurated ? category.name : "Trending \(category.name)").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(.white)
+                    Text(section.isCurated ? (videos.isEmpty ? VideoFeedCopy.unavailableLabel : VideoFeedCopy.curatedLabel) : "Popular in France")
+                        .font(.caption).foregroundStyle(.white.opacity(0.5))
                 }
                 Spacer()
-                if !videos.isEmpty {
+                if !videos.isEmpty && !section.isCurated {
                     HStack(spacing: 4) {
-                        Image(systemName: "flame.fill").font(.system(size: 10)).foregroundStyle(Theme.primary)
-                        Text("\(videos.count)").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.primary)
+                        Image(systemName: "flame.fill").font(.caption2).foregroundStyle(Theme.primary)
+                        Text("\(videos.count)").font(.caption2.weight(.bold)).foregroundStyle(Theme.primary)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.primary.opacity(0.15)).clipShape(.capsule)
+                    .accessibilityLabel("\(videos.count) videos")
                 }
             }
             .padding(.horizontal, 20)
 
             if videos.isEmpty {
-                Text("No trending videos available").font(.system(size: 13)).foregroundStyle(.white.opacity(0.4))
+                Text(VideoFeedCopy.emptyCategory).font(.footnote).foregroundStyle(.white.opacity(0.4))
                     .padding(.horizontal, 20).padding(.vertical, 20)
             } else {
                 ScrollView(.horizontal) {
@@ -270,19 +363,21 @@ struct WatchView: View {
         Button { open(video) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 thumbnail(video, width: 250, height: 140)
-                Text(video.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                Text(video.title).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                     .lineLimit(2).multilineTextAlignment(.leading).frame(width: 250, alignment: .leading)
                 HStack(spacing: 6) {
-                    Text(video.channel).font(.system(size: 12)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                    Text(video.channel).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
                     if !video.viewsLabel.isEmpty {
                         Circle().fill(.white.opacity(0.4)).frame(width: 3, height: 3)
-                        Text(video.viewsLabel).font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                        Text(video.viewsLabel).font(.caption2).foregroundStyle(.white.opacity(0.45))
                     }
                 }
                 .frame(width: 250, alignment: .leading)
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(video.title), \(video.channel)\(video.durationLabel.isEmpty ? "" : ", \(video.durationLabel)")")
+        .accessibilityHint("Opens the video")
     }
 
     private func thumbnail(_ video: YTVideo, width: CGFloat, height: CGFloat) -> some View {
@@ -292,32 +387,38 @@ struct WatchView: View {
                 AsyncImage(url: URL(string: video.thumbnailUrl)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
-                    Image(systemName: "play.rectangle.fill").font(.system(size: 28)).foregroundStyle(.white.opacity(0.3))
+                    Image(systemName: "play.rectangle.fill").font(.title).foregroundStyle(.white.opacity(0.3))
                 }
                 .allowsHitTesting(false)
             }
             .overlay(alignment: .center) {
-                Image(systemName: "play.fill").font(.system(size: 16)).foregroundStyle(.white)
+                Image(systemName: "play.fill").font(.callout).foregroundStyle(.white)
                     .frame(width: 36, height: 36).background(Color.black.opacity(0.5)).clipShape(.circle)
             }
             .overlay(alignment: .bottomTrailing) {
                 if !video.durationLabel.isEmpty {
-                    Text(video.durationLabel).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                    Text(video.durationLabel).font(.caption2.weight(.semibold)).foregroundStyle(.white)
                         .padding(.horizontal, 6).padding(.vertical, 2).background(Color.black.opacity(0.7)).clipShape(.rect(cornerRadius: 4))
                         .padding(6)
                 }
             }
             .clipShape(.rect(cornerRadius: 12))
+            .accessibilityHidden(true)
     }
 
     private var suggestedSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Image(systemName: "chart.line.uptrend.xyaxis").font(.system(size: 15)).foregroundStyle(Theme.primary)
+                Image(systemName: "chart.line.uptrend.xyaxis").font(.subheadline).foregroundStyle(Theme.primary).accessibilityHidden(true)
                 Text("Suggested Searches").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(.white)
             }
             .padding(.horizontal, 20)
-            suggestedGrid
+            if YouTubeService.hasKey {
+                suggestedGrid
+            } else {
+                Text(VideoFeedCopy.searchMessage(.noKey)).font(.footnote).foregroundStyle(.white.opacity(0.5))
+                    .padding(.horizontal, 20)
+            }
         }
     }
 
@@ -331,18 +432,53 @@ struct WatchView: View {
                     Task { await runSearch() }
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.primary)
-                        Text(s.label).font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                        Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(Theme.primary).accessibilityHidden(true)
+                        Text(s.label).font(.footnote.weight(.medium)).foregroundStyle(.white)
                         Spacer()
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .padding(.horizontal, 14).frame(minHeight: 44)
                     .background(Color.white.opacity(0.06)).clipShape(.rect(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.08), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Search \(s.label)")
             }
         }
         .padding(.horizontal, 20)
+    }
+
+    // MARK: - Explicit states (E26)
+
+    private func notice(title: String, message: String, icon: String, retry: (() -> Void)?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.footnote).foregroundStyle(Theme.warning).accessibilityHidden(true)
+                Text(title).font(.subheadline.weight(.bold)).foregroundStyle(.white)
+            }
+            Text(message).font(.footnote).foregroundStyle(.white.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+            if let retry {
+                Button { Haptics.tap(); retry() } label: {
+                    Label("Try again", systemImage: "arrow.clockwise")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.primary)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.white.opacity(0.06)).clipShape(.rect(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.warning.opacity(0.25), lineWidth: 1))
+        .padding(.horizontal, 20)
+    }
+
+    private func icon(for failure: MediaServiceFailure) -> String {
+        switch failure {
+        case .noKey: return "key.slash"
+        case .offline: return "wifi.slash"
+        case .serviceError: return "exclamationmark.triangle.fill"
+        }
     }
 
     private func open(_ video: YTVideo) {

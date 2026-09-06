@@ -2,23 +2,36 @@
 //  ListenView.swift
 //  FluentFrenchIOS
 //
-//  Audio comprehension practice. Browse French dialogues & stories filtered by
-//  type and level, then play them with natural voices, subtitles, speed control,
-//  and a hold-to-capture tool that saves a segment to the deck.
+//  Audio comprehension practice. Browse French dialogues & stories ordered for
+//  the learner's level, then play them with natural voices (or the built-in
+//  voice, labelled as such), subtitles, speed control, and a hold-to-capture
+//  tool that saves each selected line to the deck as its own card (E8).
 //
 
-import SwiftUI
 import AVFoundation
+import Foundation
+import SwiftUI
 
 struct ListenView: View {
     @Environment(AppStore.self) private var store
 
     @State private var typeFilter: TypeFilter = .all
-    @State private var levelFilter: LevelFilter = .all
+    @State private var levelFilter: LevelFilter = .forYou
     @State private var selected: ListeningItem? = nil
 
     private enum TypeFilter: String, CaseIterable { case all = "All", dialogues = "Dialogues", stories = "Stories" }
-    private enum LevelFilter: String, CaseIterable { case all = "All", beginner = "Beginner", intermediate = "Intermediate", advanced = "Advanced" }
+    private enum LevelFilter: String, CaseIterable {
+        case forYou = "For you", beginner = "Beginner", intermediate = "Intermediate", advanced = "Advanced"
+
+        var difficulty: ListeningDifficulty? {
+            switch self {
+            case .forYou: return nil
+            case .beginner: return .beginner
+            case .intermediate: return .intermediate
+            case .advanced: return .advanced
+            }
+        }
+    }
 
     private static let violetGradient = LinearGradient(
         colors: [Color(hex: "8B5CF6"), Color(hex: "6D28D9")],
@@ -26,23 +39,29 @@ struct ListenView: View {
     )
     private static let violet = Color(hex: "7C3AED")
 
-    private var filtered: [ListeningItem] {
-        ListeningData.items.filter { item in
-            let typeOK: Bool
+    /// The engine's one notion of level, not a local rule.
+    private var learnerLevel: CEFRLevel { store.learnerLevel }
+
+    /// Type filter, then level filter; "For you" keeps every band but orders the
+    /// learner's own band first (E20-style honesty: the shelf really is level-aware).
+    private var shelf: [ListeningItem] {
+        let byType = ListeningData.items.filter { item in
             switch typeFilter {
-            case .all: typeOK = true
-            case .dialogues: typeOK = item.type == .dialogue
-            case .stories: typeOK = item.type == .story
+            case .all: return true
+            case .dialogues: return item.type == .dialogue
+            case .stories: return item.type == .story
             }
-            let levelOK: Bool
-            switch levelFilter {
-            case .all: levelOK = true
-            case .beginner: levelOK = item.difficulty == .beginner
-            case .intermediate: levelOK = item.difficulty == .intermediate
-            case .advanced: levelOK = item.difficulty == .advanced
-            }
-            return typeOK && levelOK
         }
+        if let difficulty = levelFilter.difficulty {
+            return byType.filter { $0.difficulty == difficulty }
+        }
+        return ListeningShelf.ordered(byType, learnerLevel: learnerLevel)
+    }
+
+    private var levelCopy: String {
+        store.hasCompletedAssessment
+            ? "Ordered for your level (\(learnerLevel.rawValue))"
+            : "Easiest first until you're placed"
     }
 
     var body: some View {
@@ -51,9 +70,21 @@ struct ListenView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     filterBar
-                    LazyVStack(spacing: 12) {
-                        ForEach(filtered) { item in
-                            scenarioCard(item)
+                    if levelFilter == .forYou {
+                        HStack(spacing: 6) {
+                            Image(systemName: "line.3.horizontal.decrease.circle").font(.caption).accessibilityHidden(true)
+                            Text(levelCopy).font(.caption)
+                        }
+                        .foregroundStyle(Theme.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if shelf.isEmpty {
+                        emptyShelf
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(shelf) { item in
+                                scenarioCard(item)
+                            }
                         }
                     }
                 }
@@ -75,9 +106,10 @@ struct ListenView: View {
             Circle()
                 .fill(RadialGradient(colors: [.white.opacity(0.18), .clear], center: .center, startRadius: 0, endRadius: 150))
                 .frame(width: 240, height: 240).offset(x: 130, y: -30)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Listen").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
-                Text("Train your ear with real French audio").font(.system(size: 15)).foregroundStyle(.white.opacity(0.85))
+                Text("Train your ear with French dialogues and stories").font(.subheadline).foregroundStyle(.white.opacity(0.85))
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
@@ -100,13 +132,14 @@ struct ListenView: View {
                     Haptics.tap()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { onSelect(option) }
                 } label: {
-                    Text(label(option)).font(.system(size: 13, weight: .semibold))
+                    Text(label(option)).font(.footnote.weight(.semibold))
                         .foregroundStyle(active ? .white : Theme.textSecondary)
-                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                        .frame(maxWidth: .infinity).frame(minHeight: 36)
                         .background(active ? Self.violet : .clear)
                         .clipShape(.rect(cornerRadius: 9))
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(active ? [.isSelected] : [])
             }
         }
         .padding(4)
@@ -115,8 +148,19 @@ struct ListenView: View {
         .overlay(RoundedRectangle(cornerRadius: Radius.chip).stroke(Theme.border, lineWidth: 0.5))
     }
 
+    private var emptyShelf: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "waveform.slash").font(.title2).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+            Text("Nothing here yet").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+            Text("No \(levelFilter.rawValue.lowercased()) \(typeFilter == .stories ? "stories" : "dialogues") in this set — try another filter.")
+                .font(.footnote).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 32)
+    }
+
     private func scenarioCard(_ item: ListeningItem) -> some View {
-        Button {
+        let fit = ListeningShelf.fit(item.difficulty, learnerLevel: learnerLevel)
+        return Button {
             Haptics.select()
             selected = item
         } label: {
@@ -124,19 +168,24 @@ struct ListenView: View {
                 Text(item.emoji).font(.system(size: 30))
                     .frame(width: 54, height: 54)
                     .background(Self.violet.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
-                    Text(item.titleEnglish).font(.system(size: 13)).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    Text(item.title).font(.callout.weight(.semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(item.titleEnglish).font(.footnote).foregroundStyle(Theme.textMuted).lineLimit(1)
                     HStack(spacing: 6) {
                         Pill(text: item.difficulty.label, color: difficultyColor(item.difficulty))
+                        if levelFilter == .forYou {
+                            Pill(text: fit.rawValue, color: fitColor(fit), filled: fit == .atLevel)
+                        }
                         Pill(text: item.type.label, color: Self.violet)
                         Label("\(item.durationSeconds)s", systemImage: "clock")
-                            .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textMuted)
+                            .font(.caption2.weight(.medium)).foregroundStyle(Theme.textMuted)
                     }
                     .padding(.top, 2)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "play.circle.fill").font(.system(size: 26)).foregroundStyle(Self.violet)
+                Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(Self.violet)
+                    .accessibilityHidden(true)
             }
             .padding(14)
             .background(Theme.card)
@@ -146,6 +195,8 @@ struct ListenView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("\(item.title), \(item.titleEnglish). \(item.difficulty.label) \(item.type.label.lowercased()), \(fit.rawValue), \(item.durationSeconds) seconds")
+        .accessibilityHint("Opens the player")
     }
 
     private func difficultyColor(_ d: ListeningDifficulty) -> Color {
@@ -153,6 +204,14 @@ struct ListenView: View {
         case .beginner: return Theme.success
         case .intermediate: return Theme.warning
         case .advanced: return Theme.error
+        }
+    }
+
+    private func fitColor(_ fit: ListeningFit) -> Color {
+        switch fit {
+        case .atLevel: return Self.violet
+        case .easy: return Theme.secondary
+        case .stretch: return Theme.warning
         }
     }
 }
@@ -171,8 +230,9 @@ private struct ListenPlayerView: View {
     @State private var speedIndex = 2
     @State private var capturing = false
     @State private var captureStart = 0
-    @State private var captured: CapturedSegment? = nil
-    @State private var savedCapture = false
+    @State private var captured: CapturedSelection? = nil
+    /// The dialogue was playing when the capture sheet opened: resume it on dismiss (EM-5).
+    @State private var resumeAfterCapture = false
 
     private let speeds: [(label: String, rate: Float)] = [
         ("0.7x", 0.7),
@@ -182,10 +242,10 @@ private struct ListenPlayerView: View {
         ("1.3x", 1.3),
     ]
 
-    private struct CapturedSegment: Identifiable {
+    /// The lines a hold-to-capture gesture selected, one per turn (E8).
+    private struct CapturedSelection: Identifiable {
         let id = UUID()
-        let french: String
-        let english: String
+        let specs: [ListeningCaptureSpec]
     }
 
     var body: some View {
@@ -206,9 +266,15 @@ private struct ListenPlayerView: View {
         .ignoresSafeArea(edges: .top)
         .onAppear { player.load(item) }
         .onDisappear { player.stop() }
-        .sheet(item: $captured) { segment in
-            captureSheet(segment)
-                .presentationDetents([.medium])
+        .sheet(item: $captured, onDismiss: {
+            if resumeAfterCapture {
+                resumeAfterCapture = false
+                player.play()
+            }
+        }) { selection in
+            ListeningCaptureSheet(item: item, specs: selection.specs, accent: accent)
+                .environment(store)
+                .presentationDetents([.medium, .large])
         }
     }
 
@@ -217,13 +283,14 @@ private struct ListenPlayerView: View {
             gradient
             VStack(alignment: .leading, spacing: 12) {
                 Button { Haptics.tap(); dismiss() } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 36, height: 36).background(.white.opacity(0.16), in: Circle())
+                    Image(systemName: "chevron.down").font(.callout.weight(.semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(.white.opacity(0.16), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close player")
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title).font(.serifDisplay(24, weight: .bold)).foregroundStyle(.white)
-                    Text(item.titleEnglish).font(.system(size: 14)).foregroundStyle(.white.opacity(0.85))
+                    Text(item.titleEnglish).font(.subheadline).foregroundStyle(.white.opacity(0.85))
                 }
             }
             .padding(.horizontal, 22).padding(.top, 54).padding(.bottom, 18)
@@ -239,7 +306,8 @@ private struct ListenPlayerView: View {
                 .overlay(RoundedRectangle(cornerRadius: 30).stroke(accent.opacity(0.2), lineWidth: 1))
                 .scaleEffect(player.isPlaying ? 1.04 : 1)
                 .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: player.isPlaying)
-            Text(item.description).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+            Text(item.description).font(.subheadline).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(.top, 6)
@@ -252,17 +320,17 @@ private struct ListenPlayerView: View {
                 HStack(alignment: .top, spacing: 10) {
                     if turn.speaker != "narrator" {
                         Text(turn.speaker)
-                            .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+                            .font(.caption.weight(.bold)).foregroundStyle(.white)
                             .frame(width: 24, height: 24)
                             .background(turn.speaker == "B" ? Theme.secondary : accent).clipShape(.circle)
                     } else {
-                        Image(systemName: "text.quote").font(.system(size: 12)).foregroundStyle(accent)
+                        Image(systemName: "text.quote").font(.caption).foregroundStyle(accent)
                             .frame(width: 24, height: 24).background(accent.opacity(0.12)).clipShape(.circle)
                     }
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(turn.french).font(.system(size: 15, weight: isCurrent ? .semibold : .regular))
+                        Text(turn.french).font(.subheadline.weight(isCurrent ? .semibold : .regular))
                             .foregroundStyle(isCurrent ? Theme.text : Theme.textSecondary)
-                        Text(turn.english).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Text(turn.english).font(.caption).foregroundStyle(Theme.textMuted)
                     }
                     Spacer(minLength: 0)
                 }
@@ -270,7 +338,12 @@ private struct ListenPlayerView: View {
                 .background(isCurrent ? accent.opacity(0.08) : Color.clear)
                 .clipShape(.rect(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(isCurrent ? accent.opacity(0.3) : .clear, lineWidth: 1))
+                .contentShape(Rectangle())
                 .onTapGesture { player.jump(to: idx) }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Line \(idx + 1)\(turn.speaker == "narrator" ? "" : ", speaker \(turn.speaker)"): \(turn.french). \(turn.english)")
+                .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : [.isButton])
+                .accessibilityHint("Plays from this line")
             }
         }
     }
@@ -287,12 +360,15 @@ private struct ListenPlayerView: View {
                     }
                 }
                 .frame(height: 5)
+                .accessibilityElement()
+                .accessibilityLabel("Progress")
+                .accessibilityValue("Line \(min(player.currentIndex + 1, item.turns.count)) of \(item.turns.count)")
                 HStack {
                     Text("Line \(min(player.currentIndex + 1, item.turns.count)) of \(item.turns.count)")
-                        .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        .font(.caption2).foregroundStyle(Theme.textMuted)
                     Spacer()
                     if player.didFinish {
-                        Text("Finished").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.success)
+                        Text("Finished").font(.caption2.weight(.semibold)).foregroundStyle(Theme.success)
                     }
                 }
             }
@@ -300,9 +376,11 @@ private struct ListenPlayerView: View {
             // Transport
             HStack(spacing: 28) {
                 Button { Haptics.tap(); player.skipBackward() } label: {
-                    Image(systemName: "backward.fill").font(.system(size: 20)).foregroundStyle(Theme.text)
+                    Image(systemName: "backward.fill").font(.title3).foregroundStyle(Theme.text)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Previous line")
                 Button {
                     Haptics.select(); player.togglePlay()
                 } label: {
@@ -312,17 +390,22 @@ private struct ListenPlayerView: View {
                             ProgressView().tint(.white)
                         } else {
                             Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 26)).foregroundStyle(.white)
+                                .font(.title).foregroundStyle(.white)
                         }
                     }
                     .softLift(radius: 12, y: 5, strength: 0.8)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(player.isBuffering ? "Loading voice, tap to pause" : (player.isPlaying ? "Pause" : "Play"))
                 Button { Haptics.tap(); player.skipForward() } label: {
-                    Image(systemName: "forward.fill").font(.system(size: 20)).foregroundStyle(Theme.text)
+                    Image(systemName: "forward.fill").font(.title3).foregroundStyle(Theme.text)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Next line")
             }
+
+            voiceStatus
 
             // Options
             HStack(spacing: 10) {
@@ -333,22 +416,25 @@ private struct ListenPlayerView: View {
                     if player.isPlaying { player.replayCurrent() }
                 } label: {
                     Label(speeds[speedIndex].label, systemImage: "speedometer")
-                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
+                        .padding(.horizontal, 12).frame(minHeight: 44)
                         .background(Theme.backgroundSecondary).clipShape(.capsule)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Playback speed \(speeds[speedIndex].label)")
+                .accessibilityHint("Cycles to the next speed")
                 Button {
                     Haptics.tap()
                     withAnimation { showSubtitles.toggle() }
                 } label: {
                     Label("Subtitles", systemImage: showSubtitles ? "captions.bubble.fill" : "captions.bubble")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(showSubtitles ? accent : Theme.textSecondary)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .padding(.horizontal, 12).frame(minHeight: 44)
                         .background(showSubtitles ? accent.opacity(0.12) : Theme.backgroundSecondary).clipShape(.capsule)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(showSubtitles ? "Hide subtitles" : "Show subtitles")
             }
 
             captureButton
@@ -358,14 +444,48 @@ private struct ListenPlayerView: View {
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
     }
 
+    /// Which voice is speaking, and — while a natural clip buffers — a way out
+    /// of the wait (E17 / E26). The wait itself is bounded by `Tuning.ttsFetchTimeout`.
+    @ViewBuilder
+    private var voiceStatus: some View {
+        if player.isBuffering {
+            HStack(spacing: 10) {
+                Text("Loading the natural voice…").font(.footnote).foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 0)
+                Button { Haptics.tap(); player.skipBuffering() } label: {
+                    Text("Skip the wait").font(.footnote.weight(.semibold)).foregroundStyle(accent)
+                        .padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(accent.opacity(0.12)).clipShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Plays this dialogue with the built-in voice instead")
+            }
+        } else if let notice = player.voiceSource.notice {
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.wave.1").font(.caption).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+                Text(notice).font(.caption).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform").font(.caption).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+                Text(player.voiceSource.label).font(.caption).foregroundStyle(Theme.textMuted)
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     private var captureButton: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Radius.chip)
                 .fill(capturing ? accent : accent.opacity(0.12))
             HStack(spacing: 8) {
-                Image(systemName: capturing ? "waveform" : "hand.tap.fill").font(.system(size: 15))
-                Text(capturing ? "Release to capture…" : "Hold to Capture")
-                    .font(.system(size: 14, weight: .semibold))
+                Image(systemName: capturing ? "waveform" : "hand.tap.fill").font(.subheadline)
+                Text(capturing ? "Release to capture…" : "Hold to capture lines")
+                    .font(.subheadline.weight(.semibold))
             }
             .foregroundStyle(capturing ? .white : accent)
         }
@@ -384,90 +504,155 @@ private struct ListenPlayerView: View {
                     finishCapture()
                 }
         )
+        .accessibilityElement()
+        .accessibilityLabel("Capture the current line")
+        .accessibilityHint("Hold while lines play to select several; each line is saved as its own card")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            captureStart = player.currentIndex
+            finishCapture()
+        }
     }
 
+    /// One card per selected turn — never a joined passage (E8). The dialogue
+    /// pauses first so the sheet's own replay never speaks over it, and resumes
+    /// when the sheet closes if it was playing (EM-5).
     private func finishCapture() {
-        let lo = min(captureStart, player.currentIndex)
-        let hi = max(captureStart, player.currentIndex)
-        let slice = item.turns[lo...hi]
-        let french = slice.map { $0.french }.joined(separator: " ")
-        let english = slice.map { $0.english }.joined(separator: " ")
-        savedCapture = false
+        let specs = ListeningCapture.specs(for: item, from: captureStart, to: player.currentIndex)
+        guard !specs.isEmpty else { return }
+        resumeAfterCapture = player.isPlaying
+        if resumeAfterCapture { player.pause() }
         Haptics.success()
-        captured = CapturedSegment(french: french, english: english)
+        captured = CapturedSelection(specs: specs)
+    }
+}
+
+// MARK: - Capture sheet (one card per line)
+
+private struct ListeningCaptureSheet: View {
+    let item: ListeningItem
+    let specs: [ListeningCaptureSpec]
+    let accent: Color
+
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    /// Lines saved from this sheet (the store's own outcome, keyed by turn index).
+    @State private var outcomes: [Int: CaptureOutcome] = [:]
+
+    private func isDone(_ spec: ListeningCaptureSpec) -> Bool {
+        if outcomes[spec.turnIndex] != nil { return true }
+        return store.hasGap(forWord: spec.french)
     }
 
-    private func captureSheet(_ segment: CapturedSegment) -> some View {
+    private func status(_ spec: ListeningCaptureSpec) -> String {
+        switch outcomes[spec.turnIndex] {
+        case .saved?: return "Saved"
+        case .duplicate?: return "Already in your deck"
+        case .rejected?: return "Couldn't save"
+        case nil: return store.hasGap(forWord: spec.french) ? "Already in your deck" : "Save"
+        }
+    }
+
+    private var pending: [ListeningCaptureSpec] { specs.filter { !isDone($0) } }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Captured Segment", systemImage: "scissors").font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.text)
+                Label(specs.count == 1 ? "Captured line" : "Captured \(specs.count) lines", systemImage: "scissors")
+                    .font(.callout.weight(.bold)).foregroundStyle(Theme.text)
                 Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 44, height: 44).background(Theme.backgroundSecondary, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
             }
             .padding(.top, 8)
-            VStack(alignment: .leading, spacing: 10) {
-                Text(segment.french).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.text)
-                Text(segment.english).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(accent.opacity(0.08)).clipShape(.rect(cornerRadius: Radius.card))
-            .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(accent.opacity(0.2), lineWidth: 1))
+            Text("Each line becomes its own card, with its own translation.")
+                .font(.footnote).foregroundStyle(Theme.textSecondary)
 
-            HStack(spacing: 12) {
-                Button {
-                    NaturalVoice.shared.speak(segment.french)
-                } label: {
-                    Label("Replay", systemImage: "speaker.wave.2.fill").font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(accent).frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(accent.opacity(0.12)).clipShape(.rect(cornerRadius: Radius.chip))
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(specs) { spec in lineCard(spec) }
                 }
-                .buttonStyle(.plain)
-                Button {
-                    saveCapture(segment)
-                } label: {
-                    Label(savedCapture ? "Saved" : "Save to Deck", systemImage: savedCapture ? "checkmark.circle.fill" : "plus.circle.fill")
-                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(savedCapture ? Theme.success : accent).clipShape(.rect(cornerRadius: Radius.chip))
-                }
-                .buttonStyle(.plain)
-                .disabled(savedCapture)
             }
-            Spacer()
+            .scrollIndicators(.hidden)
+
+            if pending.count > 1 {
+                Button {
+                    let outcome = store.captureListeningTurns(pending, from: item)
+                    for gap in outcome.savedGaps {
+                        if let spec = specs.first(where: { $0.french.caseInsensitiveCompare(gap.frenchWord) == .orderedSame }) {
+                            outcomes[spec.turnIndex] = .saved(gap)
+                        }
+                    }
+                    for spec in pending where outcomes[spec.turnIndex] == nil {
+                        if let existing = store.existingGap(forWord: spec.french) {
+                            outcomes[spec.turnIndex] = .duplicate(existing)
+                        }
+                    }
+                    if outcome.savedCount > 0 { Haptics.success() } else { Haptics.tap() }
+                } label: {
+                    Label("Save all \(pending.count) lines", systemImage: "plus.circle.fill")
+                        .font(.body.weight(.bold)).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).frame(minHeight: 50)
+                        .background(accent).clipShape(.rect(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 20).padding(.bottom, 16)
+        .background(Theme.background)
     }
 
-    private func saveCapture(_ segment: CapturedSegment) {
-        guard !savedCapture else { return }
-        Haptics.success()
-        let now = Date()
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: segment.french,
-            englishTranslation: segment.english,
-            explanation: "Captured while listening to “\(item.title)”.",
-            exampleSentence: segment.french,
-            exampleTranslation: segment.english,
-            pronunciation: nil,
-            sourceType: .listening,
-            category: .phrasing,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: .A2,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: segment.french, translation: segment.english, sourceTab: "listen", capturedAt: now, reExposureCount: 0),
-            confusionLinks: []
-        )
-        store.addGap(gap)
-        savedCapture = true
+    private func lineCard(_ spec: ListeningCaptureSpec) -> some View {
+        let done = isDone(spec)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                if spec.speaker != "narrator" {
+                    Text(spec.speaker).font(.caption.weight(.bold)).foregroundStyle(.white)
+                        .frame(width: 24, height: 24)
+                        .background(spec.speaker == "B" ? Theme.secondary : accent).clipShape(.circle)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(spec.french).font(.callout.weight(.semibold)).foregroundStyle(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !spec.english.isEmpty {
+                        Text(spec.english).font(.footnote).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 10) {
+                Button { Haptics.tap(); NaturalVoice.shared.speak(spec.french, voice: NaturalVoiceID.forSpeaker(spec.speaker)) } label: {
+                    Label("Replay", systemImage: "speaker.wave.2.fill").font(.footnote.weight(.semibold))
+                        .foregroundStyle(accent).padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(accent.opacity(0.12)).clipShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Replay this line")
+                Spacer(minLength: 0)
+                Button {
+                    let result = store.captureListeningTurn(spec, from: item)
+                    outcomes[spec.turnIndex] = result
+                    if case .saved = result { Haptics.success() } else { Haptics.tap() }
+                } label: {
+                    Label(status(spec), systemImage: done ? "checkmark.circle.fill" : "plus.circle.fill")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(done ? Theme.success : accent).clipShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .disabled(done)
+                .accessibilityLabel(done ? status(spec) : "Save this line to my deck")
+            }
+        }
+        .padding(14)
+        .background(Theme.card)
+        .clipShape(.rect(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(accent.opacity(0.2), lineWidth: 1))
     }
 }

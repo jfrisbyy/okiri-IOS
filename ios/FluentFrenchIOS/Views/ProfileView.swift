@@ -61,35 +61,51 @@ struct ProfileView: View {
                 }
             }
             HStack(spacing: 20) {
-                statBlock("\(store.activeGaps.count)", "Active gaps")
+                statBlock("\(store.visibleGaps.count)", "Active gaps")
                 statBlock("\(store.masteredGaps.count)", "Mastered")
-                statBlock("θ \(String(format: "%.1f", store.abilityTheta))", "Ability")
+                statBlock("\(store.xp)", "XP")
             }
         }
         .frame(maxWidth: .infinity)
         .cardStyle(padding: 20)
     }
 
+    /// ONE displayed level (`store.learnerLevel`, the ranker's view — the same
+    /// number Home shows), with the placement result as the secondary line (D12).
+    /// Before placement: "Not placed". Retaking is "Recalibrate": it blends new
+    /// evidence in and never lowers what was earned (D8).
     private var levelCard: some View {
-        Button {
+        let placed = store.hasCompletedAssessment
+        let level = store.learnerLevel.rawValue
+        let placedAt = store.assessedLevel.rawValue
+        return Button {
             Haptics.select(); showAssessment = true
         } label: {
             HStack(spacing: 14) {
                 ZStack {
                     Circle().fill(Theme.primaryGradient).frame(width: 48, height: 48)
-                    Text(store.assessedLevel.rawValue).font(.system(size: 16, weight: .heavy)).foregroundStyle(.white)
+                    Text(placed ? level : "—").font(.system(size: 16, weight: .heavy)).foregroundStyle(.white)
                 }
+                .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Your level: \(store.assessedLevel.rawValue)").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
-                    Text("Re-take the placement check to recalibrate").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    Text(placed ? "Your level: \(level)" : "Not placed")
+                        .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text(placed
+                         ? "Placed at \(placedAt) · Recalibrate any time — a retake only adds evidence"
+                         : "Take the placement check to set your starting point")
+                        .font(.footnote).foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Image(systemName: "arrow.clockwise").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.primary)
+                    .accessibilityHidden(true)
             }
             .cardStyle(padding: 16)
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel(placed ? "Your level \(level), placed at \(placedAt)" : "Not placed")
+        .accessibilityHint(placed ? "Recalibrate your level. A retake blends in new evidence and never lowers what you've earned." : "Take the placement check.")
     }
 
     private var preferencesCard: some View {
@@ -265,8 +281,9 @@ struct ProfileView: View {
     private func statBlock(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
             Text(value).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.primary)
-            Text(label).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var errorPatternsSection: some View {
@@ -334,31 +351,53 @@ struct ProfileView: View {
 
 // MARK: - Mastery streak card
 
+/// Streak + weekly goal. Never celebrates a streak of 0 (D19): a fresh record
+/// reads "Start your streak today", and the flame only lights once there is one.
+/// The weekly goal (D11) counts days with a completed lesson this week against
+/// `preferences.daysPerWeekGoal`.
 struct MasteryStreakCard: View {
     @Environment(AppStore.self) private var store
 
     private var last7: [(date: Date, active: Bool)] {
-        (0..<7).reversed().map { offset in
-            let d = Date().addingTimeInterval(-Double(offset) * 86_400)
+        let today = Date()
+        return (0..<7).reversed().map { offset in
+            let d = store.calendar.date(byAdding: .day, value: -offset, to: today) ?? today
             return (d, store.masteredOn(d))
         }
     }
 
     var body: some View {
+        let streak = store.currentStreak
+        let best = store.longestStreak
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Image(systemName: "flame.fill").foregroundStyle(Theme.primary)
+                Image(systemName: streak > 0 ? "flame.fill" : "flame")
+                    .foregroundStyle(streak > 0 ? Theme.primary : Theme.textMuted)
+                    .accessibilityHidden(true)
                 Text("Mastery streak").font(.serifDisplay(19, weight: .semibold)).foregroundStyle(Theme.text)
                 Spacer()
-                Text("Best: \(store.longestStreak)d")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primaryDark)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Theme.primaryLight).clipShape(.capsule)
+                if best > 0 {
+                    Text("Best: \(best)d")
+                        .font(.caption.weight(.semibold)).foregroundStyle(Theme.primaryDark)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Theme.primaryLight).clipShape(.capsule)
+                }
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                Text("\(store.currentStreak)").font(.system(size: 40, weight: .heavy)).foregroundStyle(Theme.primary)
-                Text("days in a row")
-                    .font(.system(size: 14)).foregroundStyle(Theme.textMuted).padding(.bottom, 8)
+            if streak > 0 {
+                HStack(alignment: .bottom, spacing: 8) {
+                    Text("\(streak)").font(.system(size: 40, weight: .heavy)).foregroundStyle(Theme.primary)
+                    Text(streak == 1 ? "day — keep it going" : "days in a row")
+                        .font(.subheadline).foregroundStyle(Theme.textMuted).padding(.bottom, 8)
+                }
+                .accessibilityElement(children: .combine)
+            } else {
+                Text("Start your streak today")
+                    .font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.text)
+                Text("Master a word in a lesson and day one is yours.")
+                    .font(.subheadline).foregroundStyle(Theme.textMuted)
+            }
+            if let goal = store.weeklyGoalProgress {
+                weeklyGoalRow(done: goal.done, goal: goal.goal)
             }
             HStack(spacing: 8) {
                 ForEach(Array(last7.enumerated()), id: \.offset) { _, day in
@@ -375,14 +414,42 @@ struct MasteryStreakCard: View {
                 }
             }
             Text("Counts only days you mastered a word — not minutes spent.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                .font(.caption).foregroundStyle(Theme.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle(padding: 18)
     }
 
+    /// "3 of 5 days this week" with a bar; met goals read as done, never inflated.
+    private func weeklyGoalRow(done: Int, goal: Int) -> some View {
+        let fraction = goal > 0 ? min(1, Double(done) / Double(goal)) : 0
+        let met = done >= goal
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(met ? "Weekly goal met" : "Weekly goal")
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
+                Spacer()
+                Text("\(done) of \(goal) days this week")
+                    .font(.footnote).foregroundStyle(met ? Theme.success : Theme.textMuted)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.border.opacity(0.6)).frame(height: 6)
+                    Capsule().fill(met ? Theme.success : Theme.secondary).frame(width: geo.size.width * fraction, height: 6)
+                }
+            }
+            .frame(height: 6)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Weekly goal")
+        .accessibilityValue("\(done) of \(goal) days this week")
+    }
+
     private func weekday(_ date: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "EEEEE"
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = store.calendar
+        f.dateFormat = "EEEEE"
         return f.string(from: date)
     }
 }
@@ -421,12 +488,13 @@ struct RetentionCard: View {
             }
 
             Divider()
+            // The only two "due" numbers the app shows (D13).
             HStack {
                 retentionStat("\(store.masteredThisWeek)", "mastered this week")
                 Spacer()
-                retentionStat("\(store.dueGaps.count + store.criticalGaps.count)", "due now")
+                retentionStat("\(store.dueNow.count)", "Due now")
                 Spacer()
-                retentionStat("\(buckets.atRisk.count)", "slipping back")
+                retentionStat("\(store.upcoming.count)", "Coming up")
             }
             NavigationLink { RetentionView() } label: {
                 HStack {
@@ -454,8 +522,9 @@ struct RetentionCard: View {
     private func retentionStat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 1) {
             Text(value).font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.text)
-            Text(label).font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
         }
+        .accessibilityElement(children: .combine)
     }
 }
 

@@ -9,9 +9,12 @@ import SwiftUI
 
 struct IdiomsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppStore.self) private var store
     @State private var selectedCategory: IdiomCategory? = nil
     @State private var query: String = ""
     @State private var expandedID: String? = nil
+    /// The idiom being saved to the deck (E25) — presented in the shared capture card.
+    @State private var captureDraft: CaptureDraft? = nil
 
     private var filtered: [FrenchIdiom] {
         let base = selectedCategory.map { cat in IdiomData.all.filter { $0.category == cat } } ?? IdiomData.all
@@ -27,6 +30,28 @@ struct IdiomsView: View {
         }
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
+        .sheet(item: $captureDraft) { draft in
+            CaptureSheet(draft: draft, accent: accent)
+        }
+    }
+
+    /// What saving an idiom stores: the expression, its meaning, the literal
+    /// reading as the explanation and the example — filed under the idioms
+    /// concept at its level, through the store's one capture path.
+    private func draft(for idiom: FrenchIdiom) -> CaptureDraft {
+        CaptureDraft(
+            frenchWord: idiom.french,
+            englishTranslation: idiom.meaning,
+            explanation: "Literally: \(idiom.literal)",
+            exampleSentence: idiom.example,
+            exampleTranslation: idiom.exampleTranslation,
+            sourceType: .reading,
+            sourceTab: "idioms",
+            sourceLevel: .B1,
+            category: .phrasing,
+            partOfSpeech: "idiom",
+            conceptId: "idioms"
+        )
     }
 
     private var header: some View {
@@ -50,8 +75,10 @@ struct IdiomsView: View {
             if !query.isEmpty {
                 Button { query = "" } label: {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(Theme.textMuted)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -143,6 +170,8 @@ struct IdiomsView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(idiom.french), \(idiom.meaning)")
+            .accessibilityHint(expanded ? "Collapses the details" : "Shows the literal meaning and an example")
 
             if expanded {
                 VStack(alignment: .leading, spacing: 14) {
@@ -164,6 +193,7 @@ struct IdiomsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Theme.backgroundSecondary)
                     .clipShape(.rect(cornerRadius: Radius.chip))
+                    saveRow(for: idiom)
                 }
                 .padding(.top, 14)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -174,5 +204,26 @@ struct IdiomsView: View {
         .clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(expanded ? accent.opacity(0.4) : Theme.border.opacity(0.5), lineWidth: expanded ? 1 : 0.5))
         .softLift(radius: expanded ? 18 : 12, y: expanded ? 8 : 4, strength: 0.8)
+    }
+
+    /// Save-to-deck affordance (E25): opens the shared capture card, or shows
+    /// that the idiom is already in the deck.
+    private func saveRow(for idiom: FrenchIdiom) -> some View {
+        let saved = store.hasGap(forWord: idiom.french)
+        return Button {
+            guard !saved else { return }
+            Haptics.tap()
+            captureDraft = draft(for: idiom)
+        } label: {
+            Label(saved ? "In your deck" : "Save to my deck",
+                  systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(saved ? Theme.success : accent)
+                .frame(maxWidth: .infinity).frame(minHeight: 44)
+                .background(saved ? Theme.successLight : accent.opacity(0.1))
+                .clipShape(.rect(cornerRadius: Radius.chip))
+        }
+        .buttonStyle(.plain)
+        .disabled(saved)
     }
 }

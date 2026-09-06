@@ -2,35 +2,46 @@
 //  SpeakView.swift
 //  FluentFrenchIOS
 //
-//  Free & Guided speaking practice, mirroring the Expo Speak screen: slate
-//  gradient header with stats, a mode toggle, duration options / category +
-//  prompt carousel, and a sticky Start button. The mic shows the on-device
-//  notice since the cloud simulator has no microphone.
+//  Free, guided and written speaking practice. Recordings are capped by the
+//  session length you pick (E16), transcribed, and sent for feedback; the
+//  corrected and the natural phrasing land in your deck and the concepts the
+//  feedback names become speaking evidence (E13). The microphone reports
+//  exactly why it can't be used (permission / no speech key / no input
+//  device) and every AI call has an explicit no-key / offline / error state.
 //
 
+import Foundation
 import SwiftUI
+import UIKit
 
 struct SpeakView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.openURL) private var openURL
     @State private var mode: Mode = .free
-    @State private var selectedDuration = 2
+    @State private var selectedDuration = Tuning.speakDefaultDurationMinutes
     @State private var categoryIndex = 0
     @State private var promptIndex = 0
-    @State private var recording = false
     @State private var recorder = VoiceRecorder()
     @State private var spokenText = ""
+    @State private var micNotice: String? = nil
+    @State private var showSettingsAlert = false
 
-    // Write & get feedback
+    // Feedback (spoken or written)
     @State private var writeText = ""
     @State private var feedback: SpeakFeedback? = nil
+    @State private var feedbackOutcome: AppStore.SpeakFeedbackOutcome? = nil
     @State private var feedbackLoading = false
-    @State private var feedbackError = false
+    @State private var feedbackFailure: TalkServiceFailure? = nil
+    @State private var lastRequest: (response: String, prompt: String)? = nil
+    @State private var feedbackTask: Task<Void, Never>? = nil
     @FocusState private var writeFocused: Bool
 
     enum Mode { case free, guided, write }
 
     private var category: PromptCategory { SpeakingData.categories[categoryIndex] }
     private var prompt: SpeakingPrompt { category.prompts[min(promptIndex, category.prompts.count - 1)] }
+    private var micState: MicAvailability { recorder.availability }
+    private var feedbackAvailable: Bool { SpeakFeedbackService.hasKey }
 
     var body: some View {
         NavigationStack {
@@ -51,35 +62,51 @@ struct SpeakView: View {
             .ignoresSafeArea(edges: .top)
             .navigationBarHidden(true)
         }
+        .onDisappear {
+            NaturalVoice.shared.stop()
+            recorder.cancel()
+            feedbackTask?.cancel()
+        }
+        .onChange(of: recorder.stoppedAtCap) { _, stopped in
+            if stopped { finishRecording() }
+        }
+        .onChange(of: mode) { _, _ in
+            if recorder.isRecording { recorder.cancel() }
+            NaturalVoice.shared.stop()
+        }
+        .alert(MicAvailability.permissionDenied.title, isPresented: $showSettingsAlert) {
+            Button("Open Settings") { openSettings() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text(MicAvailability.permissionDenied.message(typedAlternative: "use Write to get feedback on typed French"))
+        }
     }
 
-    // MARK: - Header
+    private func openSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+    }
+
+    // MARK: - Header (stats bound to the store — E16)
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
             LinearGradient(colors: [Color(hex: "334155"), Color(hex: "1E293B")], startPoint: .topLeading, endPoint: .bottomTrailing)
             Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color.white.opacity(0.10), Color.white.opacity(0.0)],
-                        center: .center, startRadius: 0, endRadius: 120
-                    )
-                )
+                .fill(RadialGradient(colors: [Color.white.opacity(0.10), Color.white.opacity(0.0)],
+                                     center: .center, startRadius: 0, endRadius: 120))
                 .frame(width: 220, height: 220).offset(x: 120, y: -20)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Speak").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
-                    Text("Practice speaking and build fluency").font(.system(size: 15)).foregroundStyle(.white.opacity(0.8))
+                    Text("Practice speaking and build fluency").font(.system(.callout)).foregroundStyle(.white.opacity(0.8))
                 }
                 HStack(spacing: 16) {
-                    statChip("chart.line.uptrend.xyaxis", "0", "total min")
+                    statChip("chart.line.uptrend.xyaxis", "\(store.totalMinutes(.speaking))", "total min")
                     Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 20)
-                    statChip("clock", "0", "this week")
+                    statChip("clock", "\(store.minutesThisWeek(.speaking))", "this week")
                     Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 20)
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.arrow.circlepath").font(.system(size: 13)).foregroundStyle(.white)
-                        Text("History").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.9))
-                    }
+                    statChip("text.book.closed", "\(store.visibleGaps.filter { $0.sourceType == .speech }.count)", "saved")
                 }
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(Color.white.opacity(0.15)).clipShape(.rect(cornerRadius: 12))
@@ -92,10 +119,11 @@ struct SpeakView: View {
 
     private func statChip(_ icon: String, _ value: String, _ label: String) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 13)).foregroundStyle(.white)
-            Text(value).font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-            Text(label).font(.system(size: 12)).foregroundStyle(.white.opacity(0.8))
+            Image(systemName: icon).font(.system(.footnote)).foregroundStyle(.white).accessibilityHidden(true)
+            Text(value).font(.system(.body, weight: .bold)).foregroundStyle(.white)
+            Text(label).font(.system(.caption)).foregroundStyle(.white.opacity(0.8))
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var modeToggle: some View {
@@ -117,15 +145,17 @@ struct SpeakView: View {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { mode = m }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 13))
-                Text(title).font(.system(size: 14, weight: .semibold))
+                Image(systemName: icon).font(.system(.footnote)).accessibilityHidden(true)
+                Text(title).font(.system(.subheadline, weight: .semibold))
             }
             .foregroundStyle(active ? .white : Theme.text)
-            .frame(maxWidth: .infinity).padding(.vertical, 11)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .background(active ? Theme.primary : .clear)
             .clipShape(.rect(cornerRadius: 9))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(title) mode")
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     // MARK: - Write & get feedback
@@ -134,24 +164,27 @@ struct SpeakView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Write & Get Feedback").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("Respond in French and get instant AI corrections, a fluency note, and a more natural phrasing.")
-                    .font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                Text("Respond in French and get corrections, a fluency note, and a more natural phrasing.")
+                    .font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
             }
+
+            if !feedbackAvailable { unavailableCard(TalkServiceFailure.noKey) }
 
             // Prompt to respond to
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("RESPOND TO THIS").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("RESPOND TO THIS").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
                     Spacer()
                     Button {
                         Haptics.tap()
                         promptIndex = (promptIndex + 1) % category.prompts.count
                     } label: {
-                        Label("New prompt", systemImage: "shuffle").font(.system(size: 12, weight: .semibold)).foregroundStyle(category.color)
+                        Label("New prompt", systemImage: "shuffle").font(.system(.caption, weight: .semibold)).foregroundStyle(category.color)
+                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
                 }
-                Text(prompt.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text).lineSpacing(2)
+                Text(prompt.text).font(.system(.body, weight: .medium)).foregroundStyle(Theme.text).lineSpacing(2)
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(category.color.opacity(0.08)).clipShape(.rect(cornerRadius: 14))
@@ -160,139 +193,301 @@ struct SpeakView: View {
             // Text editor
             ZStack(alignment: .topLeading) {
                 if writeText.isEmpty {
-                    Text("Écris ta réponse en français…")
-                        .font(.system(size: 16)).foregroundStyle(Theme.textMuted)
+                    Text("Write your answer in French…")
+                        .font(.system(.body)).foregroundStyle(Theme.textMuted)
                         .padding(.horizontal, 14).padding(.vertical, 14)
+                        .accessibilityHidden(true)
                 }
                 TextEditor(text: $writeText)
-                    .font(.system(size: 16)).foregroundStyle(Theme.text)
+                    .font(.system(.body)).foregroundStyle(Theme.text)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 120)
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .focused($writeFocused)
                     .autocorrectionDisabled()
+                    .accessibilityLabel("Your answer in French")
             }
             .background(Theme.card).clipShape(.rect(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.border, lineWidth: 1))
 
             Button {
-                getFeedback()
+                runFeedback(for: writeText, prompt: prompt.text)
             } label: {
                 HStack(spacing: 10) {
                     if feedbackLoading { ProgressView().tint(.white) }
-                    else { Image(systemName: "sparkles").font(.system(size: 16)) }
-                    Text(feedbackLoading ? "Analyzing…" : "Get feedback").font(.system(size: 16, weight: .bold))
+                    else { Image(systemName: "sparkles").font(.system(.body)).accessibilityHidden(true) }
+                    Text(feedbackLoading ? "Analyzing…" : "Get feedback").font(.system(.body, weight: .bold))
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity).padding(.vertical, 15)
                 .background(canGetFeedback ? Theme.primary : Theme.textMuted).clipShape(.rect(cornerRadius: 14))
             }
             .buttonStyle(.plain).disabled(!canGetFeedback)
 
-            if feedbackError {
-                Text("Couldn't get feedback right now. Please try again.")
-                    .font(.system(size: 13)).foregroundStyle(Theme.error)
-            }
-            if let feedback { feedbackCard(feedback) }
+            feedbackResults
         }
         .padding(20)
     }
 
     private var canGetFeedback: Bool {
-        !writeText.trimmingCharacters(in: .whitespaces).isEmpty && !feedbackLoading
+        feedbackAvailable && !writeText.trimmingCharacters(in: .whitespaces).isEmpty && !feedbackLoading
     }
 
-    private func getFeedback() {
-        runFeedback(for: writeText, prompt: prompt.text)
-    }
+    // MARK: - Feedback flow (E13 / E26)
 
+    /// Send a response for feedback. Bounded by `Tuning.speakFeedbackTimeout`;
+    /// a failure is shown with its reason and a Retry.
     private func runFeedback(for response: String, prompt promptText: String) {
         let text = response.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !feedbackLoading else { return }
+        guard feedbackAvailable else { feedbackFailure = .noKey; return }
         Haptics.select()
         writeFocused = false
         feedbackLoading = true
-        feedbackError = false
+        feedbackFailure = nil
         feedback = nil
-        let level = store.assessedLevel
-        Task {
-            let result = await SpeakFeedbackService.evaluate(response: text, prompt: promptText, level: level)
+        feedbackOutcome = nil
+        lastRequest = (text, promptText)
+        let level = store.learnerLevel
+        let concepts = store.concepts
+        feedbackTask?.cancel()
+        feedbackTask = Task {
+            let result = await SpeakFeedbackService.evaluate(response: text, prompt: promptText, level: level, concepts: concepts)
+            // A cancelled request never leaves the button on "Analyzing…" (E26).
+            guard !Task.isCancelled else { feedbackLoading = false; return }
             feedbackLoading = false
-            if let result {
+            switch result {
+            case .success(let fb):
                 Haptics.success()
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { feedback = result }
-            } else {
-                feedbackError = true
+                let outcome = store.recordSpeakFeedback(original: text, feedback: fb, promptText: promptText)
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                    feedback = fb
+                    feedbackOutcome = outcome
+                }
+                // The feedback call just succeeded, so the same service is reachable:
+                // fill in any deck cards still waiting for a meaning (this round's
+                // if the model gave none, or older offline captures).
+                if !store.pendingTranslations.isEmpty {
+                    await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:))
+                }
+            case .failure(let failure):
+                feedbackFailure = failure
             }
+        }
+    }
+
+    private func retryFeedback() {
+        guard let lastRequest else { return }
+        runFeedback(for: lastRequest.response, prompt: lastRequest.prompt)
+    }
+
+    @ViewBuilder
+    private var feedbackResults: some View {
+        if let failure = feedbackFailure { failureCard(failure) }
+        if let feedback { feedbackCard(feedback) }
+        if let outcome = feedbackOutcome { outcomeCard(outcome) }
+    }
+
+    private func failureCard(_ failure: TalkServiceFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: failure == .offline ? "wifi.slash" : "exclamationmark.triangle.fill")
+                .font(.system(.subheadline)).foregroundStyle(Theme.error).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(failure.title).font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
+                Text(failure.message).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if failure.isRetryable, lastRequest != nil {
+                Button { Haptics.tap(); retryFeedback() } label: {
+                    Text("Retry").font(.system(.footnote, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(Theme.error).clipShape(.capsule)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.errorLight).clipShape(.rect(cornerRadius: 14))
+    }
+
+    /// The build has no AI key: say so once, plainly, instead of a dead button.
+    private func unavailableCard(_ failure: TalkServiceFailure) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "bolt.slash.fill").font(.system(.subheadline)).foregroundStyle(Theme.warning).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Feedback isn't available in this build").font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
+                Text("AI feedback needs the tutor service, which isn't included here. You can still practise out loud and review your saved phrases.")
+                    .font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warningLight).clipShape(.rect(cornerRadius: 14))
+    }
+
+    /// What the feedback left behind: saved phrases and concept evidence (E13).
+    private func outcomeCard(_ outcome: AppStore.SpeakFeedbackOutcome) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: outcome.savedCount > 0 ? "tray.and.arrow.down.fill" : "checkmark.circle")
+                    .font(.system(.footnote)).foregroundStyle(Theme.success).accessibilityHidden(true)
+                Text(outcomeHeadline(outcome)).font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.text)
+            }
+            if !outcome.missedConceptIds.isEmpty || !outcome.strongConceptIds.isEmpty {
+                FlowChips(items: outcome.missedConceptIds.compactMap { store.concept($0)?.name }.map { "Work on: \($0)" }
+                          + outcome.strongConceptIds.compactMap { store.concept($0)?.name }.map { "Solid: \($0)" },
+                          color: Theme.secondary)
+            }
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.successLight).clipShape(.rect(cornerRadius: 12))
+    }
+
+    private func outcomeHeadline(_ outcome: AppStore.SpeakFeedbackOutcome) -> String {
+        switch (outcome.savedCount, outcome.duplicateCount) {
+        case (0, 0): return "Nothing new to save — your line was already good."
+        case (0, _): return "These phrases are already in your deck."
+        case (1, _): return "Saved 1 phrase to your deck."
+        default: return "Saved \(outcome.savedCount) phrases to your deck."
         }
     }
 
     // MARK: - Microphone (speech-to-text)
 
+    private var currentPromptText: String {
+        mode == .guided ? prompt.text : ""
+    }
+
     private func toggleRecording() {
         if recorder.isRecording {
             Haptics.select()
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { recording = false }
-            let promptText = mode == .guided ? prompt.text : "Tu parles librement de ce que tu veux."
-            Task {
-                let text = await recorder.stopAndTranscribe(language: "fra")
-                if let text, !text.isEmpty {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { spokenText = text }
-                    runFeedback(for: text, prompt: promptText)
-                }
-            }
+            finishRecording()
             return
         }
-        guard recorder.micAvailable else {
-            // Cloud preview has no microphone — keep the existing visual toggle.
+        let state = micState
+        guard state.isReady || state == .permissionDenied else {
             Haptics.tap()
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { recording.toggle() }
+            micNotice = state.message(typedAlternative: "use Write to get feedback on typed French")
             return
         }
         Haptics.tap()
+        micNotice = nil
         spokenText = ""
         feedback = nil
+        feedbackOutcome = nil
+        feedbackFailure = nil
+        NaturalVoice.shared.stop()
+        let cap = mode == .free ? SpeakRecordingCap.seconds(forMinutes: selectedDuration) : Tuning.speakGuidedRecordingSeconds
         Task {
-            let started = await recorder.start()
-            if started { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { recording = true } }
+            let result = await recorder.start(maxSeconds: cap)
+            if case .failure(let failure) = result {
+                switch failure {
+                case .unavailable(.permissionDenied): showSettingsAlert = true
+                case .unavailable(let other): micNotice = other.message(typedAlternative: "use Write to get feedback on typed French")
+                case .audioSessionFailed: micNotice = "The microphone couldn't start. Try again, or use Write."
+                case .alreadyRecording: break
+                }
+            }
+        }
+    }
+
+    /// Stop (or pick up the cap's stop), transcribe, and ask for feedback.
+    private func finishRecording() {
+        let promptText = currentPromptText
+        Task {
+            let outcome = await recorder.stopAndTranscribe(language: "fra")
+            switch outcome {
+            case .text(let text):
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { spokenText = text }
+                if feedbackAvailable {
+                    runFeedback(for: text, prompt: promptText)
+                } else {
+                    feedbackFailure = .noKey
+                }
+            case .nothingHeard, .failed:
+                micNotice = outcome.message
+            }
+        }
+    }
+
+    /// The microphone's state when it is not ready (E14): three distinct
+    /// notices, with the Settings link only where Settings is the fix.
+    @ViewBuilder
+    private var micNoticeCard: some View {
+        let state = micState
+        if !state.isReady {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "mic.slash.fill").font(.system(.subheadline)).foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state.title).font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
+                    Text(state.message(typedAlternative: "use Write to get feedback on typed French"))
+                        .font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if state.canOpenSettings {
+                        Button { Haptics.tap(); openSettings() } label: {
+                            Text("Open Settings").font(.system(.footnote, weight: .bold)).foregroundStyle(Theme.primary)
+                                .frame(minHeight: 44)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: 14))
+        } else if let micNotice {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.circle").font(.system(.subheadline)).foregroundStyle(Theme.error).accessibilityHidden(true)
+                Text(micNotice).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.errorLight).clipShape(.rect(cornerRadius: 14))
         }
     }
 
     private var spokenResultSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            micNoticeCard
             if recorder.isTranscribing {
                 HStack(spacing: 10) {
                     ProgressView().tint(Theme.primary)
-                    Text("Transcribing your speech…").font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                    Text("Transcribing your speech…").font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
                 }
+                .accessibilityElement(children: .combine)
             }
             if !spokenText.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("YOU SAID").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
-                    Text(spokenText).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                    Text("YOU SAID").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text(spokenText).font(.system(.body, weight: .medium)).foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
                 .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: 14))
             }
-            if feedbackError {
-                Text("Couldn't get feedback right now. Please try again.")
-                    .font(.system(size: 13)).foregroundStyle(Theme.error)
+            if feedbackLoading {
+                HStack(spacing: 10) {
+                    ProgressView().tint(Theme.primary)
+                    Text("Getting feedback…").font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
+                }
+                .accessibilityElement(children: .combine)
             }
-            if let feedback { feedbackCard(feedback) }
+            feedbackResults
         }
     }
 
     private func feedbackCard(_ f: SpeakFeedback) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("FEEDBACK").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                Text("FEEDBACK").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
                 Spacer()
                 HStack(spacing: 6) {
-                    Image(systemName: "gauge.with.dots.needle.50percent").font(.system(size: 13)).foregroundStyle(scoreColor(f.score))
-                    Text("\(f.score)").font(.system(size: 15, weight: .heavy)).foregroundStyle(scoreColor(f.score))
-                    Text("fluency").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    Image(systemName: "gauge.with.dots.needle.50percent").font(.system(.footnote)).foregroundStyle(scoreColor(f.score))
+                        .accessibilityHidden(true)
+                    Text("\(f.score)").font(.system(.callout, weight: .heavy)).foregroundStyle(scoreColor(f.score))
+                    Text("fluency").font(.system(.caption)).foregroundStyle(Theme.textMuted)
                 }
+                .accessibilityElement(children: .combine)
             }
             feedbackRow("checkmark.circle.fill", Theme.success, "Corrected", f.corrected, speakable: true)
             if !f.natural.isEmpty {
@@ -311,16 +506,19 @@ struct SpeakView: View {
     private func feedbackRow(_ icon: String, _ color: Color, _ label: String, _ text: String, speakable: Bool) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 13)).foregroundStyle(color)
-                Text(label).font(.system(size: 12, weight: .bold)).foregroundStyle(color)
+                Image(systemName: icon).font(.system(.footnote)).foregroundStyle(color).accessibilityHidden(true)
+                Text(label).font(.system(.caption, weight: .bold)).foregroundStyle(color)
                 Spacer()
                 if speakable {
                     Button { Haptics.tap(); NaturalVoice.shared.speak(text) } label: {
-                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 12)).foregroundStyle(color)
-                    }.buttonStyle(.plain)
+                        Image(systemName: "speaker.wave.2.fill").font(.system(.caption)).foregroundStyle(color)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Hear \(label.lowercased()) phrasing")
                 }
             }
-            Text(text).font(.system(size: 15)).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
+            Text(text).font(.system(.callout)).foregroundStyle(Theme.text).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -328,8 +526,8 @@ struct SpeakView: View {
     }
 
     private func scoreColor(_ score: Int) -> Color {
-        if score >= 75 { return Theme.success }
-        if score >= 50 { return Theme.warning }
+        if score >= Tuning.speakScoreStrongFloor { return Theme.success }
+        if score >= Tuning.speakScoreFairFloor { return Theme.warning }
         return Theme.error
     }
 
@@ -339,7 +537,8 @@ struct SpeakView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Session Length").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("Speak freely about anything — your day, thoughts, or stories").font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                Text("Speak freely about anything — recording stops automatically at the length you pick.")
+                    .font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
             }
             HStack(spacing: 10) {
                 ForEach(SpeakingData.freeDurations, id: \.value) { d in
@@ -348,32 +547,33 @@ struct SpeakView: View {
                         Haptics.tap(); selectedDuration = d.value
                     } label: {
                         VStack(spacing: 4) {
-                            Text(d.label).font(.system(size: 17, weight: .bold)).foregroundStyle(active ? Theme.primaryDark : Theme.text)
-                            Text(d.description).font(.system(size: 10)).foregroundStyle(active ? Theme.primary : Theme.textMuted).multilineTextAlignment(.center)
+                            Text(d.label).font(.system(.headline, weight: .bold)).foregroundStyle(active ? Theme.primaryDark : Theme.text)
+                            Text(d.description).font(.system(.caption2)).foregroundStyle(active ? Theme.primary : Theme.textMuted).multilineTextAlignment(.center)
                         }
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 14)
                         .background(active ? Theme.primaryLight : Theme.card)
                         .clipShape(.rect(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(active ? Theme.primary : Theme.border, lineWidth: 1.5))
                     }
                     .buttonStyle(.plain)
+                    .disabled(recorder.isRecording)
+                    .accessibilityLabel("\(d.label), \(d.description)")
+                    .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
             VStack(alignment: .leading, spacing: 10) {
-                Text("Tips for Free Speech").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Tips for Free Speech").font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text)
                 ForEach(SpeakingData.tips, id: \.self) { tip in
                     HStack(spacing: 8) {
-                        Circle().fill(Theme.primary).frame(width: 5, height: 5)
-                        Text(tip).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                        Circle().fill(Theme.primary).frame(width: 5, height: 5).accessibilityHidden(true)
+                        Text(tip).font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
                     }
                 }
             }
             .padding(16).frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: 14))
 
-            if !recorder.micAvailable {
-                CameraNotice(text: "Install this app on your device via the Rork App to use the microphone for live speech feedback.")
-            }
+            if !feedbackAvailable { unavailableCard(.noKey) }
             spokenResultSection
         }
         .padding(20)
@@ -385,7 +585,7 @@ struct SpeakView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Choose a Category").font(.serifDisplay(20, weight: .semibold)).foregroundStyle(Theme.text)
-                Text("Targeted prompts to expand your vocabulary").font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                Text("Targeted prompts to expand your vocabulary").font(.system(.subheadline)).foregroundStyle(Theme.textMuted)
             }
 
             ScrollView(.horizontal) {
@@ -397,21 +597,23 @@ struct SpeakView: View {
                             categoryIndex = idx; promptIndex = 0
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: cat.icon).font(.system(size: 14))
+                                Image(systemName: cat.icon).font(.system(.subheadline))
                                     .foregroundStyle(active ? .white : cat.color)
-                                Text(cat.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(active ? .white : Theme.text)
-                                Text(cat.cefr + "+").font(.system(size: 10, weight: .bold))
+                                    .accessibilityHidden(true)
+                                Text(cat.name).font(.system(.subheadline, weight: .semibold)).foregroundStyle(active ? .white : Theme.text)
+                                Text(cat.cefr + "+").font(.system(.caption2, weight: .bold))
                                     .foregroundStyle(active ? .white : Theme.textMuted)
                                     .padding(.horizontal, 6).padding(.vertical, 2)
                                     .background(active ? Color.white.opacity(0.25) : Theme.backgroundSecondary)
                                     .clipShape(.capsule)
                             }
-                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .padding(.horizontal, 14).frame(minHeight: 44)
                             .background(active ? cat.color : Theme.card)
                             .clipShape(.rect(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(active ? .clear : Theme.border, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(active ? .isSelected : [])
                     }
                 }
             }
@@ -420,9 +622,7 @@ struct SpeakView: View {
 
             promptCard
             promptNav
-            if !recorder.micAvailable {
-                CameraNotice(text: "Install this app on your device via the Rork App to use the microphone for live speech feedback.")
-            }
+            if !feedbackAvailable { unavailableCard(.noKey) }
             spokenResultSection
         }
         .padding(20)
@@ -431,17 +631,17 @@ struct SpeakView: View {
     private var promptCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("\(promptIndex + 1) of \(category.prompts.count)").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                Text("\(promptIndex + 1) of \(category.prompts.count)").font(.system(.caption, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
                 Spacer()
-                Text(prompt.challenge).font(.system(size: 12, weight: .medium)).foregroundStyle(.white)
+                Text(prompt.challenge).font(.system(.caption, weight: .medium)).foregroundStyle(.white)
             }
             .padding(.horizontal, 14).padding(.vertical, 11)
             .background(category.color)
 
             VStack(alignment: .leading, spacing: 14) {
-                Text(prompt.text).font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.text).lineSpacing(3)
+                Text(prompt.text).font(.system(.title3, weight: .semibold)).foregroundStyle(Theme.text).lineSpacing(3)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("KEY VOCABULARY").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("KEY VOCABULARY").font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.5)
                     FlowChips(items: prompt.vocabularyFocus, color: category.color)
                 }
             }
@@ -458,50 +658,74 @@ struct SpeakView: View {
                 Haptics.tap()
                 if promptIndex > 0 { withAnimation { promptIndex -= 1 } }
             } label: {
-                Image(systemName: "chevron.left").font(.system(size: 22, weight: .semibold))
+                Image(systemName: "chevron.left").font(.system(.title2, weight: .semibold))
                     .foregroundStyle(promptIndex == 0 ? Theme.textMuted : Theme.text)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain).disabled(promptIndex == 0)
+            .accessibilityLabel("Previous prompt")
             Spacer()
             HStack(spacing: 6) {
                 ForEach(0..<category.prompts.count, id: \.self) { i in
                     Circle().fill(i == promptIndex ? category.color : Theme.border).frame(width: 8, height: 8)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Prompt \(promptIndex + 1) of \(category.prompts.count)")
             Spacer()
             Button {
                 Haptics.tap()
                 if promptIndex < category.prompts.count - 1 { withAnimation { promptIndex += 1 } }
             } label: {
-                Image(systemName: "chevron.right").font(.system(size: 22, weight: .semibold))
+                Image(systemName: "chevron.right").font(.system(.title2, weight: .semibold))
                     .foregroundStyle(promptIndex == category.prompts.count - 1 ? Theme.textMuted : Theme.text)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain).disabled(promptIndex == category.prompts.count - 1)
+            .accessibilityLabel("Next prompt")
         }
         .padding(.horizontal, 8).padding(.top, 4)
     }
 
-    // MARK: - Start bar
+    // MARK: - Start bar (real recording state, capped — E15 / E16)
 
     private var startBar: some View {
-        VStack(spacing: 0) {
+        let state = micState
+        let recording = recorder.isRecording
+        let busy = recorder.isTranscribing || feedbackLoading
+        let usable = state.isReady || state == .permissionDenied
+        let title: String
+        if recording {
+            title = "Listening… \(SpeakRecordingCap.countdown(secondsLeft: recorder.secondsLeft)) left · tap to stop"
+        } else if busy {
+            title = recorder.isTranscribing ? "Transcribing…" : "Getting feedback…"
+        } else if !usable {
+            title = state.title
+        } else if state == .permissionDenied {
+            title = "Allow microphone access"
+        } else {
+            title = mode == .free ? "Start Free Speech" : "Start with This Prompt"
+        }
+        return VStack(spacing: 0) {
             Button {
                 toggleRecording()
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: recording ? "stop.fill" : "mic.fill").font(.system(size: 18)).foregroundStyle(.white)
+                    Image(systemName: recording ? "stop.fill" : (usable ? "mic.fill" : "mic.slash.fill")).font(.system(.body)).foregroundStyle(.white)
                         .frame(width: 32, height: 32).background(Color.white.opacity(0.2)).clipShape(.circle)
-                        .scaleEffect(recording ? 1.12 : 1)
-                        .animation(recording ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default, value: recording)
-                    Text(recording ? "Listening… tap to stop" : (mode == .free ? "Start Free Speech" : "Start with This Prompt"))
-                        .font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(.system(.headline, weight: .semibold)).foregroundStyle(.white)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
-                .frame(maxWidth: .infinity).padding(.vertical, 16)
-                .background(recording ? Theme.error : (mode == .guided ? category.color : Theme.primary))
+                .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 8)
+                .background(recording ? Theme.error : (!usable ? Theme.textMuted : (mode == .guided ? category.color : Theme.primary)))
                 .clipShape(.rect(cornerRadius: Radius.card))
             }
             .buttonStyle(.plain)
+            .disabled(!usable || busy)
             .pressable()
+            .accessibilityHint(usable ? "" : state.message(typedAlternative: "use Write to get feedback on typed French"))
         }
         .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
         .background(Theme.background)
@@ -516,7 +740,7 @@ struct FlowChips: View {
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 8) {
             ForEach(items, id: \.self) { word in
-                Text(word).font(.system(size: 12, weight: .medium)).italic()
+                Text(word).font(.system(.caption, weight: .medium)).italic()
                     .foregroundStyle(color)
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(color.opacity(0.12)).clipShape(.rect(cornerRadius: 6))

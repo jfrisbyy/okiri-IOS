@@ -315,30 +315,188 @@ nonisolated struct LessonAssemblyConfig {
 
 nonisolated extension Tuning {
     // MARK: Package C — lesson loop constants
-    // (append `static let` constants here, one-line comment each)
+    /// Correct answers a gap needs inside one lesson to count as "mastered" for the session (questions per ordinary gap).
+    static let masteryTarget: Int = 2
+    /// Consecutive correct answers (gap evidence) from which a gap is asked in production formats (translation / arrange).
+    static let productionEvidenceFloor: Int = 3
+    /// Stepped-down remedial questions a gap can get in one lesson after misses (capstones get none).
+    static let maxRemedialsPerGap: Int = 2
+    /// Seconds the AI question writer may take before the lesson falls back to the local scheduler.
+    static let lessonGenerationTimeout: TimeInterval = 10
+    /// "Show me" reveals a lesson allows before the button is spent (C12).
+    static let hintsPerLesson: Int = 3
+    /// Fewest non-probe gaps with distinct English a lesson needs before a match-the-pairs interstitial is added.
+    static let matchInterstitialMinGaps: Int = 3
+    /// Pairs in a match-the-pairs interstitial.
+    static let matchGroupSize: Int = 4
+    /// Fewest tokens an example sentence needs to be offered as arrange-the-words.
+    static let arrangeMinTokens: Int = 3
+    /// Most tokens an example sentence may have to be offered as arrange-the-words.
+    static let arrangeMaxTokens: Int = 9
+    /// Floor on multiple-choice options regardless of the ability-flexed count.
+    static let minMultipleChoiceOptions: Int = 3
+    /// Combo length from which a correct answer earns `comboMidMultiplier` XP.
+    static let comboMidStreak: Int = 3
+    /// Combo length from which a correct answer earns `comboHighMultiplier` XP.
+    static let comboHighStreak: Int = 5
+    /// XP multiplier at `comboMidStreak`.
+    static let comboMidMultiplier: Double = 1.5
+    /// XP multiplier at `comboHighStreak`.
+    static let comboHighMultiplier: Double = 2.0
+    /// A "Show me" reveal is an admitted "I don't know": recorded as a miss, never a lost heart (C12).
+    static let revealCostsHeart: Bool = false
+    /// A missed blind-spot probe diagnoses an untaught concept; it never costs a heart (C19).
+    static let probeMissCostsHeart: Bool = false
+    /// Questions between a miss and its stepped-down remedial (C6); never past the trailing probes.
+    static let remedialSpacing: Int = 2
+    /// Word cards shown in the teaching stage before practice (never-reviewed items first).
+    static let teachingWordCards: Int = 6
+    /// A stored concept description shorter than this is "thin": the AI summary may replace it only when the content has no teaching block (C17).
+    static let thinExplanationLength: Int = 40
+    /// Seconds a "Mastered!" / "moving on" flash stays on screen during practice.
+    static let lessonFlashSeconds: Double = 1.4
+    /// First-attempt accuracy (percent) from which the completion screen praises the lesson.
+    static let lessonPraiseAccuracy: Int = 80
+    /// First-attempt accuracy (percent) from which the completion screen calls it solid work (below: "keep going").
+    static let lessonEncourageAccuracy: Int = 50
+    /// A lesson that ended at zero hearts counts toward the day's lesson count and earns the finishing XP (it does not: only a lesson played to the end completes).
+    static let outOfHeartsCountsAsComplete: Bool = false
+    /// Most foreground minutes one lesson can credit (lesson time follows the activity rule: nothing under `minActivitySeconds`, rounded, capped) — C14 / D9.
+    static let lessonCreditCapMinutes: Int = 30
 }
 
 nonisolated extension Tuning {
     // MARK: Package D-home — Home screen, daily plan, gates constants
     // (append `static let` constants here, one-line comment each)
+    /// A single activity session can earn at most (plan target × this) minutes — a surface left open never pads the day (D9).
+    static let activityCreditCapMultiplier: Double = 2
+    /// Fewest paced lessons the plan asks for on a day once reading is unlocked (post-unlock pacing floor).
+    static let unlockedLessonsPerDayMin: Int = 1
+    /// Streak length at which Kiri celebrates (trophy pose + festive sparkles) — never below 1.
+    static let kiriCelebrationStreak: Int = 14
+    /// Streak length at which Kiri reads as happy rather than merely encouraging.
+    static let kiriHappyStreak: Int = 3
+    /// Streak length the Home greeting starts calling "momentum".
+    static let streakMomentumDays: Int = 3
+    /// Streak length the Home greeting calls a strong run.
+    static let streakStrongDays: Int = 7
+    /// Seconds a Home toast (empty-lesson headline, capture summary) stays on screen.
+    static let homeToastSeconds: Double = 2.6
 }
 
 nonisolated extension Tuning {
     // MARK: Package D-flow — placement, preferences, deck/gap-map/retention constants
-    // (append `static let` constants here, one-line comment each)
+    /// Days ahead a gap counts as "Coming up" (due within the window, not due now) — D13.
+    static let upcomingWindowDays: Double = 3
+    /// Seeded Foundation items released as due per day, in concept order (≈ two
+    /// concepts' worth); the rest stagger out day by day so day one never shows "380 due" — D3.
+    static let foundationSeedBatch: Int = 20
+    /// Days-per-week goals the preferences screen offers (D11).
+    static let weeklyGoalChoices: [Int] = [3, 4, 5, 6, 7]
+    /// Consecutive lowest-band misses in ONE category (vocabulary or grammar) before the
+    /// placement stops asking that category; the learner is a true beginner only when
+    /// every category has bottomed out — a weak grammar never hides a strong vocabulary (D6/B9).
+    static let placementBottomOutMisses: Int = 2
 }
 
 nonisolated extension Tuning {
     // MARK: Package E-read — reading / capture / tagger constants
-    // (append `static let` constants here, one-line comment each)
+    /// Heuristic tagger confidence (0…1) below which a captured gap is left UNTAGGED (conceptId nil) — E1.
+    static let tagConfidenceFloor: Double = 0.55
+    /// Confidence recorded when the AI matcher (not the heuristic) names an existing concept.
+    static let tagAIConfidence: Double = 0.9
+    /// Confidence recorded on a gap that created (or was folded into) a new concept.
+    static let tagNewConceptConfidence: Double = 0.7
+    /// Tagger score for a French headword that appears verbatim in a concept's content items (a content-named skill).
+    static let tagLexiconWeight: Double = 1.0
+    /// Tagger score for a keyword hit on the concept's trigger list.
+    static let tagKeywordWeight: Double = 0.75
+    /// Tagger score for a part-of-speech signal that points at the concept (sized so POS + category alone stays below the floor).
+    static let tagPartOfSpeechWeight: Double = 0.3
+    /// Tagger score for the gap and concept sharing a category (weak on its own — never enough alone).
+    static let tagCategoryWeight: Double = 0.2
+    /// Tagger score for the gap's level sitting at or next to the concept's level.
+    static let tagLevelWeight: Double = 0.1
+    /// Normalised-name token overlap (Jaccard) at or above which two concept names are near-duplicates — E3.
+    static let tagNearDuplicateSimilarity: Double = 0.6
+    /// Highest curated level Reading shows while the gate is in its bridge state (E20 / D5).
+    static let readingBridgeMaxLevel: CEFRLevel = .A2
+    /// Bands away from the learner's level a piece may sit and still be "at your level" in the library.
+    static let readingLevelWindow: Int = 1
+    /// Seconds a word/phrase lookup may take before the sheet shows an explicit error (bounded spinner — E26).
+    static let glossTimeoutSeconds: TimeInterval = 12
+    /// Seconds a sentence translation may take before the translator shows an explicit error.
+    static let translateTimeoutSeconds: TimeInterval = 15
+    /// Seconds a headline fetch or search may take before the feed shows an explicit error.
+    static let newsTimeoutSeconds: TimeInterval = 10
+    /// Most offline captures the store re-translates in one pass after a gloss succeeds (E4).
+    static let pendingTranslationBatch: Int = 5
+    /// Entries kept in the on-device translation cache (LRU).
+    static let translationCacheLocalLimit: Int = 600
+    /// Sentences per body text (mean words/sentence) at or above which a text reads as B2 rather than B1.
+    static let readabilityB2WordsPerSentence: Double = 20
+    /// Mean words per sentence at or above which a text reads as B1 rather than A2.
+    static let readabilityB1WordsPerSentence: Double = 13
+    /// Mean words per sentence at or above which a text reads as A2 rather than A1.
+    static let readabilityA2WordsPerSentence: Double = 8
+    /// Share of long words (≥ `readabilityLongWordLength` letters) that bumps the estimate one band up.
+    static let readabilityLongWordShare: Double = 0.28
+    /// Letters from which a word counts as "long" for the readability estimate.
+    static let readabilityLongWordLength: Int = 9
 }
 
 nonisolated extension Tuning {
     // MARK: Package E-talk — converse / speaking constants
-    // (append `static let` constants here, one-line comment each)
+    /// Concept ids kept from one speaking-feedback list (mistakes / strengths) — more is noise, not evidence.
+    static let speakFeedbackMaxConcepts: Int = 3
+    /// Seconds the tutor may take to answer one Converse turn before the turn fails as "service unavailable".
+    static let converseReplyTimeout: TimeInterval = 40
+    /// Seconds a Converse hint request may take before it fails.
+    static let converseHintTimeout: TimeInterval = 30
+    /// Seconds the speaking-feedback request may take before it fails.
+    static let speakFeedbackTimeout: TimeInterval = 40
+    /// Seconds a scenario survival-guide request may take before it fails.
+    static let scenarioGuideTimeout: TimeInterval = 45
+    /// Seconds a speech-to-text upload may take before it fails.
+    static let speechToTextTimeout: TimeInterval = 60
+    /// Free-speech session lengths the Speak duration selector offers, in minutes (each is a hard recording cap).
+    static let speakDurationChoicesMinutes: [Int] = [1, 2, 3, 5]
+    /// Free-speech session length selected by default, in minutes.
+    static let speakDefaultDurationMinutes: Int = 2
+    /// Hard recording cap for one guided-prompt answer, in seconds.
+    static let speakGuidedRecordingSeconds: Int = 90
+    /// Hard recording cap for one spoken Converse turn, in seconds.
+    static let converseRecordingSeconds: Int = 45
+    /// Days (including today) the Speak header's "this week" minutes cover.
+    static let speakStatsWindowDays: Int = 7
+    /// Fluency score from which speaking feedback reads as strong (green).
+    static let speakScoreStrongFloor: Int = 75
+    /// Fluency score from which speaking feedback reads as fair (amber); below is weak.
+    static let speakScoreFairFloor: Int = 50
 }
 
 nonisolated extension Tuning {
     // MARK: Package E-media — listening / watching constants
-    // (append `static let` constants here, one-line comment each)
+    /// Seconds a natural-voice clip may take to arrive before the player falls back to the built-in voice (bounded buffering — E17).
+    static let ttsFetchTimeout: TimeInterval = 12
+    /// Natural-voice clips kept on disk before the least-recently-used are trimmed.
+    static let ttsDiskCacheFiles: Int = 400
+    /// Seconds a trending-feed or search request may take before the Watch feed shows an explicit error.
+    static let videoFeedTimeout: TimeInterval = 10
+    /// Seconds one transcript request (captions, translation, backend) may take before it counts as failed.
+    static let transcriptRequestTimeout: TimeInterval = 15
+    /// Seconds the caption waterfall (every provider, plus one retry) may take before the panel shows an error — translation of English captions is budgeted separately.
+    static let transcriptTotalTimeout: TimeInterval = 45
+    /// Seconds to wait before the one retry of an empty transcript pass (transient provider hiccups).
+    static let transcriptRetryDelay: TimeInterval = 0.8
+    /// Caption lines translated per AI request when only English captions exist.
+    static let transcriptTranslationBatch: Int = 20
+    /// Most AI translation requests one transcript may make (× batch = the longest transcript translated in full); lines beyond stay English and the panel says so.
+    static let transcriptTranslationMaxBatches: Int = 40
+    /// Seconds the progressive English → French translation pass may run after captions are shown before remaining lines are left in English.
+    static let transcriptTranslationTimeout: TimeInterval = 120
+    /// Consecutive failed/unreadable translation batches before the pass stops and reports the service.
+    static let transcriptTranslationMaxConsecutiveFailures: Int = 2
+    /// Seconds the Watch skip-back / skip-forward buttons move by (must be a value SF Symbols draws: 5, 10, 15, 30, 45, 60, 75 or 90).
+    static let watchSeekStepSeconds: Double = 5
 }

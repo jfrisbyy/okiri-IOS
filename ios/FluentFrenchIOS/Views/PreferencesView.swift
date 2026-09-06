@@ -5,7 +5,9 @@
 //  A short, ~3-tap setup that sets the FLOOR for the daily plan: which activities
 //  the learner is up for and how much time they have. Reused for first-run
 //  onboarding and for later editing from the Profile. It never asks the learner to
-//  choose topics or content — only the shape constraints.
+//  choose topics or content — only the shape constraints. A picked activity that
+//  the readiness gate has not opened yet says so (D2); the days-per-week goal
+//  drives the weekly goal on Home and Profile (D11).
 //
 
 import SwiftUI
@@ -49,7 +51,9 @@ struct PreferencesView: View {
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textMuted)
                             .frame(width: 32, height: 32).background(Theme.card).clipShape(.circle).softLift(strength: 0.5)
+                            .frame(width: 44, height: 44)
                     }
+                    .accessibilityLabel("Close")
                 }
             }
             ZStack {
@@ -60,7 +64,7 @@ struct PreferencesView: View {
             Text(isOnboarding ? "Shape your daily practice" : "Daily practice preferences")
                 .font(.serifDisplay(28, weight: .bold)).foregroundStyle(Theme.text)
             Text("Pick what you're up for and how much time you have. We'll prescribe the shape of each day — you always pick what to read, watch, or say.")
-                .font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
+                .font(.callout).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -78,8 +82,20 @@ struct PreferencesView: View {
         }
     }
 
+    /// What the gate says about a picked activity that is not open yet (D2). The
+    /// plan skips a locked activity until it unlocks; the learner should know why
+    /// their pick is not showing up. Nil when the activity is open.
+    private func lockNote(_ m: LearningModality) -> String? {
+        switch store.readiness(for: m) {
+        case .unlocked: return nil
+        case .foundation: return "Opening up — short pieces at your level for now."
+        case .locked: return "Not open yet — your plan skips it until it unlocks."
+        }
+    }
+
     private func activityRow(_ m: LearningModality) -> some View {
         let selected = modalities.contains(m)
+        let note = lockNote(m)
         return Button {
             Haptics.tap()
             if selected { modalities.remove(m) } else { modalities.insert(m) }
@@ -88,13 +104,25 @@ struct PreferencesView: View {
                 Image(systemName: m.icon).font(.system(size: 18)).foregroundStyle(selected ? .white : Theme.primary)
                     .frame(width: 44, height: 44)
                     .background(selected ? Theme.primary : Theme.primaryLight).clipShape(.rect(cornerRadius: 12))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(m.label).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
-                    Text(m.subtitle).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    HStack(spacing: 6) {
+                        Text(m.label).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
+                        if note != nil {
+                            Image(systemName: "lock.fill").font(.caption2).foregroundStyle(Theme.textMuted)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    Text(m.subtitle).font(.footnote).foregroundStyle(Theme.textMuted)
+                    if selected, let note {
+                        Text(note).font(.caption).foregroundStyle(Theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22)).foregroundStyle(selected ? Theme.primary : Theme.border)
+                    .accessibilityHidden(true)
             }
             .padding(Space.lg)
             .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card))
@@ -102,6 +130,9 @@ struct PreferencesView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("\(m.label), \(m.subtitle)\(note.map { ". " + $0 } ?? "")")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: - Time budget
@@ -124,7 +155,7 @@ struct PreferencesView: View {
         } label: {
             VStack(spacing: 6) {
                 Text(b.label).font(.system(size: 16, weight: .bold)).foregroundStyle(selected ? .white : Theme.text)
-                Text(b.subtitle).font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.85) : Theme.textMuted)
+                Text(b.subtitle).font(.caption2).foregroundStyle(selected ? .white.opacity(0.85) : Theme.textMuted)
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity).padding(.vertical, 16).padding(.horizontal, 6)
@@ -133,6 +164,8 @@ struct PreferencesView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("\(b.label), \(b.subtitle)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: - Days per week (optional)
@@ -141,7 +174,7 @@ struct PreferencesView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionLabel("DAYS PER WEEK (OPTIONAL)", required: false)
             HStack(spacing: 8) {
-                ForEach([3, 4, 5, 6, 7], id: \.self) { d in
+                ForEach(Tuning.weeklyGoalChoices, id: \.self) { d in
                     let selected = daysGoal == d
                     Button {
                         Haptics.tap()
@@ -149,13 +182,19 @@ struct PreferencesView: View {
                     } label: {
                         Text("\(d)")
                             .font(.system(size: 16, weight: .bold)).foregroundStyle(selected ? .white : Theme.text)
-                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .frame(maxWidth: .infinity).frame(minHeight: 44).padding(.vertical, 2)
                             .background(selected ? Theme.secondary : Theme.card).clipShape(.rect(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? .clear : Theme.border.opacity(0.5), lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("\(d) days a week")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
+            Text(daysGoal.map { "A \($0)-day goal shows on Home and your profile as days with a lesson this week." }
+                 ?? "Set a goal and Home tracks the days you complete a lesson each week.")
+                .font(.caption).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -183,9 +222,9 @@ struct PreferencesView: View {
 
     private func sectionLabel(_ text: String, required: Bool) -> some View {
         HStack(spacing: 6) {
-            Text(text).font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+            Text(text).font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
             if required {
-                Text("required").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.primary)
+                Text("required").font(.caption2.weight(.semibold)).foregroundStyle(Theme.primary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Theme.primaryLight).clipShape(.capsule)
             }

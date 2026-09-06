@@ -58,12 +58,20 @@ nonisolated enum SpeakingData {
         ]),
     ]
 
-    static let freeDurations: [(value: Int, label: String, description: String)] = [
-        (1, "1 min", "Quick warm-up"),
-        (2, "2 min", "Recommended"),
-        (3, "3 min", "Build fluency"),
-        (5, "5 min", "Deep practice"),
-    ]
+    /// Free-speech session lengths. The minutes come from `Tuning` because each
+    /// choice is a hard recording cap (E16), not a label.
+    static var freeDurations: [(value: Int, label: String, description: String)] {
+        Tuning.speakDurationChoicesMinutes.map { minutes in
+            let description: String
+            switch minutes {
+            case ..<2: description = "Quick warm-up"
+            case 2: description = minutes == Tuning.speakDefaultDurationMinutes ? "Recommended" : "Short session"
+            case 3...4: description = "Build fluency"
+            default: description = "Deep practice"
+            }
+            return (minutes, "\(minutes) min", description)
+        }
+    }
 
     static let tips: [String] = [
         "Talk about your day in French",

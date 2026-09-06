@@ -2,18 +2,26 @@
 //  ConverseView.swift
 //  FluentFrenchIOS
 //
-//  A live, spoken conversation with an AI French tutor. Pick a scenario (locked
-//  above your level), then start a call. The live microphone isn't available in
-//  the on-screen preview, so the call screen shows the on-device notice while
-//  still previewing the tutor's spoken greeting, captions, and an end-of-call
-//  review with save-to-deck.
+//  A live conversation with an AI French tutor. Pick a scenario (locked until
+//  Speaking is open and the scenario is at your level), then start a call: type
+//  or speak your lines, hear the tutor, reveal translations, ask for a hint.
+//  The end-of-call recap lists every correction the tutor made ("What to fix"),
+//  saved to the deck as the corrected line — never the learner's slip — and
+//  lets you keep any tutor phrase.
+//
+//  The surface refuses to open a call it cannot hold: no AI key and no network
+//  are explicit states with honest copy, and the microphone reports exactly
+//  why it cannot be used (permission / no speech key / no input device).
 //
 
+import Foundation
 import SwiftUI
+import UIKit
 
 struct ConverseView: View {
     @Environment(AppStore.self) private var store
     @State private var active: ConverseScenario? = nil
+    @State private var reachability = NetworkReachability.shared
 
     private static let rose = Color(hex: "E11D48")
     private static let roseGradient = LinearGradient(
@@ -23,13 +31,26 @@ struct ConverseView: View {
 
     /// The engine's one notion of level (theta → CEFR), not a local gap-count rule.
     private var userLevel: CEFRLevel { store.learnerLevel }
+    private var speakingReadiness: ModalityReadiness { store.readiness(for: .speaking) }
+
+    /// Why no call can start right now (E11), independent of the scenario.
+    private var serviceFailure: TalkServiceFailure? {
+        if !ConverseService.hasKey { return .noKey }
+        if !reachability.isReachable { return .offline }
+        return nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("CHOOSE A SCENARIO").font(.system(size: 12, weight: .semibold))
+                    if let failure = serviceFailure {
+                        serviceBanner(failure)
+                    } else if !speakingReadiness.isOpen {
+                        readinessBanner
+                    }
+                    Text("CHOOSE A SCENARIO").font(.system(.caption, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary).tracking(0.5)
                     LazyVStack(spacing: 12) {
                         ForEach(ConverseScenario.all) { scenario in
@@ -43,6 +64,7 @@ struct ConverseView: View {
         }
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
+        .task { reachability.start() }
         .fullScreenCover(item: $active) { scenario in
             ConverseCallView(scenario: scenario, accent: Self.rose, gradient: Self.roseGradient)
                 .environment(store)
@@ -55,9 +77,10 @@ struct ConverseView: View {
             Circle()
                 .fill(RadialGradient(colors: [.white.opacity(0.18), .clear], center: .center, startRadius: 0, endRadius: 150))
                 .frame(width: 240, height: 240).offset(x: 130, y: -30)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Converse").font(.serifDisplay(34, weight: .bold)).foregroundStyle(.white)
-                Text("Speak with your AI French tutor").font(.system(size: 15)).foregroundStyle(.white.opacity(0.85))
+                Text("Speak with your AI French tutor").font(.system(.callout)).foregroundStyle(.white.opacity(0.85))
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
@@ -65,30 +88,83 @@ struct ConverseView: View {
         .clipped()
     }
 
+    // MARK: Availability states (E11 / E26)
+
+    private func serviceBanner(_ failure: TalkServiceFailure) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: failure == .offline ? "wifi.slash" : "exclamationmark.triangle.fill")
+                    .font(.system(.footnote)).foregroundStyle(Theme.warning)
+                    .accessibilityHidden(true)
+                Text(failure.title).font(.system(.subheadline, weight: .bold)).foregroundStyle(Theme.text)
+            }
+            Text(failure == .noKey
+                 ? "Live conversation needs the AI tutor, which isn't included in this build. Your saved phrases and lessons still work."
+                 : "A call needs a connection to reach the tutor. \(failure.message)")
+                .font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if failure.isRetryable {
+                Button {
+                    Haptics.tap()
+                    reachability.refresh()
+                } label: {
+                    Text("Try again").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.warning)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.warningLight).clipShape(.rect(cornerRadius: Radius.card))
+    }
+
+    private var readinessBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.fill").font(.system(.footnote)).foregroundStyle(Theme.textMuted)
+                .accessibilityHidden(true)
+            Text(ConverseLockReason.speakingNotReady.message)
+                .font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: Radius.card))
+    }
+
+    // MARK: Scenario cards (E12)
+
     private func scenarioCard(_ scenario: ConverseScenario) -> some View {
-        let locked = scenario.requiredLevel.order > userLevel.order
+        let lockReason = ConverseScenarioGate.lockReason(required: scenario.requiredLevel, learner: userLevel, readiness: speakingReadiness)
+        let unavailable = serviceFailure != nil
+        let locked = lockReason != nil || unavailable
         return Button {
             guard !locked else { Haptics.tap(); return }
             Haptics.select()
             active = scenario
         } label: {
             HStack(spacing: 14) {
-                Text(scenario.emoji).font(.system(size: 28))
+                Text(scenario.emoji).font(.system(.title))
                     .frame(width: 54, height: 54)
                     .background(Self.rose.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(scenario.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
+                        Text(scenario.title).font(.system(.body, weight: .semibold)).foregroundStyle(Theme.text)
                         Pill(text: scenario.requiredLevel.rawValue, color: locked ? Theme.textMuted : Self.rose)
                     }
-                    Text(scenario.description).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    Text(scenario.description).font(.system(.footnote)).foregroundStyle(Theme.textMuted)
                         .lineLimit(2).multilineTextAlignment(.leading)
+                    if let lockReason, !unavailable {
+                        Text(lockReason.message).font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: locked ? "lock.fill" : "phone.fill")
-                    .font(.system(size: 18)).foregroundStyle(locked ? Theme.textMuted : Self.rose)
-                    .frame(width: 40, height: 40)
+                    .font(.system(.body)).foregroundStyle(locked ? Theme.textMuted : Self.rose)
+                    .frame(width: 44, height: 44)
                     .background((locked ? Theme.textMuted : Self.rose).opacity(0.12)).clipShape(.circle)
+                    .accessibilityHidden(true)
             }
             .padding(14)
             .background(Theme.card)
@@ -99,6 +175,8 @@ struct ConverseView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel(locked ? "\(scenario.title), locked" : "\(scenario.title), start call")
+        .accessibilityHint(lockReason?.message ?? scenario.description)
     }
 }
 
@@ -176,10 +254,6 @@ nonisolated struct ConverseScenario: Identifiable, Hashable {
     ]
 }
 
-extension CEFRLevel {
-    var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
-}
-
 // MARK: - Call screen
 
 private struct ConverseCallView: View {
@@ -188,6 +262,7 @@ private struct ConverseCallView: View {
     let gradient: LinearGradient
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @Environment(AppStore.self) private var store
 
     /// The engine's one notion of level (theta → CEFR), not a local gap-count rule.
@@ -200,8 +275,16 @@ private struct ConverseCallView: View {
     @State private var draft = ""
     @State private var tutorThinking = false
     @State private var hintLoading = false
-    @State private var savedIds: Set<UUID> = []
+    @State private var hintNotice: String? = nil
+    @State private var turnFailure: TalkServiceFailure? = nil
+    @State private var micNotice: String? = nil
+    @State private var showSettingsAlert = false
+    @State private var savedTutorIds: Set<UUID> = []
+    @State private var savedCorrectionIds: Set<UUID> = []
+    @State private var duplicateCorrectionIds: Set<UUID> = []
+    @State private var recapRecorded = false
     @State private var timer: Timer? = nil
+    @State private var replyTask: Task<Void, Never>? = nil
     @State private var recorder = VoiceRecorder()
     @FocusState private var inputFocused: Bool
 
@@ -211,7 +294,18 @@ private struct ConverseCallView: View {
         }
         .background(Theme.background)
         .onAppear { startCall() }
-        .onDisappear { timer?.invalidate(); NaturalVoice.shared.stop(); recorder.cancel() }
+        .onDisappear { teardown() }
+        .onChange(of: recorder.stoppedAtCap) { _, stopped in
+            if stopped { finishListening() }
+        }
+        .alert(MicAvailability.permissionDenied.title, isPresented: $showSettingsAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text(MicAvailability.permissionDenied.message(typedAlternative: "type your reply here"))
+        }
     }
 
     // MARK: Chat
@@ -242,24 +336,30 @@ private struct ConverseCallView: View {
         ZStack(alignment: .bottom) {
             gradient
             HStack(spacing: 12) {
-                Button { Haptics.tap(); NaturalVoice.shared.stop(); dismiss() } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 34, height: 34).background(.white.opacity(0.18), in: Circle())
+                // Leaving is the same exit as ending the call (E10): the recap is
+                // shown and every tutor correction is saved — unless the learner
+                // never said anything, when there is nothing to recap.
+                Button { Haptics.tap(); leaveCall() } label: {
+                    Image(systemName: "chevron.down").font(.system(.subheadline, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(.white.opacity(0.18), in: Circle())
                 }
                 .buttonStyle(.plain)
-                Text(scenario.emoji).font(.system(size: 26))
+                .accessibilityLabel("Leave conversation")
+                Text(scenario.emoji).font(.system(.title2))
                     .frame(width: 44, height: 44).background(.white.opacity(0.18)).clipShape(.circle)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(scenario.titleFrench).font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-                    Text(tutorThinking ? "en train d'écrire…" : "Votre tuteur · \(timeString)")
-                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
+                    Text(scenario.titleFrench).font(.system(.body, weight: .bold)).foregroundStyle(.white)
+                    Text(tutorThinking ? "Tutor is replying…" : "Your tutor · \(timeString)")
+                        .font(.system(.caption)).foregroundStyle(.white.opacity(0.85))
                 }
                 Spacer()
                 Button { Haptics.select(); endCall() } label: {
-                    Image(systemName: "phone.down.fill").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 38, height: 38).background(Color(hex: "DC2626")).clipShape(.circle)
+                    Image(systemName: "phone.down.fill").font(.system(.subheadline, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(Color(hex: "DC2626")).clipShape(.circle)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("End call and see recap")
             }
             .padding(.horizontal, 16).padding(.bottom, 14)
         }
@@ -273,30 +373,37 @@ private struct ConverseCallView: View {
         return HStack {
             if !isTutor { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 6) {
-                Text(turn.french).font(.system(size: 16, weight: .medium))
+                Text(turn.french).font(.system(.body, weight: .medium))
                     .foregroundStyle(isTutor ? Theme.text : .white)
                 if isRevealed, !turn.english.isEmpty {
-                    Text(turn.english).font(.system(size: 13))
+                    Text(turn.english).font(.system(.footnote))
                         .foregroundStyle(isTutor ? Theme.textMuted : .white.opacity(0.85))
                 }
                 HStack(spacing: 14) {
                     Button {
                         Haptics.tap()
-                        if isTutor { NaturalVoice.shared.speak(turn.french) } else { NaturalVoice.shared.speak(turn.french, voice: .male) }
+                        NaturalVoice.shared.speak(turn.french, voice: isTutor ? .female : .male)
                     } label: {
-                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 12))
+                        Image(systemName: "speaker.wave.2.fill").font(.system(.caption))
                             .foregroundStyle(isTutor ? accent : .white.opacity(0.9))
-                    }.buttonStyle(.plain)
-                    Button {
-                        Haptics.tap()
-                        if isRevealed { revealed.remove(turn.id) } else { revealed.insert(turn.id) }
-                    } label: {
-                        Text(isRevealed ? "Hide" : "Translate").font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(isTutor ? accent : .white.opacity(0.9))
-                    }.buttonStyle(.plain)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Hear this line")
+                    if !turn.english.isEmpty {
+                        Button {
+                            Haptics.tap()
+                            if isRevealed { revealed.remove(turn.id) } else { revealed.insert(turn.id) }
+                        } label: {
+                            Text(isRevealed ? "Hide" : "Translate").font(.system(.caption2, weight: .semibold))
+                                .foregroundStyle(isTutor ? accent : .white.opacity(0.9))
+                                .frame(minHeight: 44)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
-            .padding(.horizontal, 14).padding(.vertical, 11)
+            .padding(.horizontal, 14).padding(.vertical, 6)
             .background(isTutor ? Theme.card : accent)
             .clipShape(.rect(cornerRadius: 18))
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(isTutor ? Theme.border.opacity(0.6) : .clear, lineWidth: 0.5))
@@ -311,96 +418,173 @@ private struct ConverseCallView: View {
                 ForEach(0..<3) { i in
                     Circle().fill(Theme.textMuted).frame(width: 7, height: 7)
                         .opacity(0.4)
-                        .scaleEffect(1)
                         .animation(.easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.18), value: tutorThinking)
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 14)
             .background(Theme.card).clipShape(.rect(cornerRadius: 18))
+            .accessibilityLabel("Tutor is replying")
             Spacer(minLength: 40)
         }
     }
 
+    // MARK: Input bar
+
+    private var micState: MicAvailability { recorder.availability }
+
     private var inputBar: some View {
         VStack(spacing: 8) {
-            if let correction = lastCorrection {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.bubble.fill").font(.system(size: 13)).foregroundStyle(Theme.warning)
-                    Text(correction).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Theme.warningLight).clipShape(.rect(cornerRadius: 12))
-            }
+            if let failure = turnFailure { turnFailureBanner(failure) }
+            if let correction = lastCorrection { correctionBanner(correction) }
+            if let hintNotice { noticeRow(icon: "lightbulb", text: hintNotice, color: Theme.warning) }
+            if let micNotice { noticeRow(icon: "mic.slash", text: micNotice, color: Theme.error) }
+
             HStack(spacing: 10) {
-                Button {
-                    Haptics.tap(); requestHint()
-                } label: {
-                    Image(systemName: hintLoading ? "hourglass" : "lightbulb.fill").font(.system(size: 16))
-                        .foregroundStyle(accent).frame(width: 42, height: 42)
+                Button { Haptics.tap(); requestHint() } label: {
+                    Image(systemName: hintLoading ? "hourglass" : "lightbulb.fill").font(.system(.body))
+                        .foregroundStyle(accent).frame(width: 44, height: 44)
                         .background(accent.opacity(0.12)).clipShape(.circle)
                 }
                 .buttonStyle(.plain).disabled(hintLoading || tutorThinking)
+                .accessibilityLabel(hintLoading ? "Fetching a hint" : "Suggest what to say")
 
-                HStack(spacing: 8) {
-                    TextField("Réponds en français…", text: $draft, axis: .vertical)
-                        .font(.system(size: 16)).lineLimit(1...4)
-                        .focused($inputFocused)
-                        .submitLabel(.send)
-                        .onSubmit(send)
-                    if !ConverseService.hasKey {
-                        Image(systemName: "wifi.slash").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
-                    }
-                }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: 22))
+                TextField("Reply in French…", text: $draft, axis: .vertical)
+                    .font(.system(.body)).lineLimit(1...4)
+                    .focused($inputFocused)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: 22))
+                    .accessibilityLabel("Your reply in French")
 
-                if recorder.micAvailable {
+                if micState.isReady {
                     Button { toggleListening() } label: {
                         Image(systemName: recorder.isTranscribing ? "hourglass" : (recorder.isRecording ? "stop.fill" : "mic.fill"))
-                            .font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
-                            .frame(width: 42, height: 42)
+                            .font(.system(.body, weight: .bold)).foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
                             .background(recorder.isRecording ? Color(hex: "DC2626") : accent).clipShape(.circle)
-                            .scaleEffect(recorder.isRecording ? 1.08 : 1)
-                            .animation(recorder.isRecording ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default, value: recorder.isRecording)
                     }
                     .buttonStyle(.plain).disabled(recorder.isTranscribing || tutorThinking)
-                } else {
-                    Button { send() } label: {
-                        Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
-                            .frame(width: 42, height: 42)
-                            .background(canSend ? accent : Theme.textMuted).clipShape(.circle)
-                    }
-                    .buttonStyle(.plain).disabled(!canSend)
+                    .accessibilityLabel(recorder.isRecording ? "Stop recording" : (recorder.isTranscribing ? "Transcribing" : "Speak your reply"))
                 }
-            }
-            if recorder.micAvailable {
+
                 Button { send() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "paperplane.fill").font(.system(size: 10))
-                        Text(recorder.isRecording ? "Listening… tap stop when done" : "Speak or type, then send")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundStyle(canSend ? accent : Theme.textMuted)
+                    Image(systemName: "arrow.up").font(.system(.body, weight: .bold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(canSend ? accent : Theme.textMuted).clipShape(.circle)
                 }
                 .buttonStyle(.plain).disabled(!canSend)
-            } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "mic.slash.fill").font(.system(size: 10)).foregroundStyle(Theme.textMuted)
-                    Text("Install via the Rork App on your device to speak out loud.")
-                        .font(.system(size: 10)).foregroundStyle(Theme.textMuted)
-                }
+                .accessibilityLabel("Send reply")
             }
+
+            micStatusRow
         }
         .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 14)
         .background(Theme.card)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
     }
 
+    /// One honest line about the microphone (E14): the countdown while
+    /// recording, otherwise why voice input is unavailable — with the Settings
+    /// link when that is the fix.
+    @ViewBuilder
+    private var micStatusRow: some View {
+        if recorder.isRecording {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform").font(.system(.caption2)).foregroundStyle(Theme.error)
+                    .accessibilityHidden(true)
+                Text("Listening… \(SpeakRecordingCap.countdown(secondsLeft: recorder.secondsLeft)) left, tap stop when done")
+                    .font(.system(.caption2, weight: .medium)).foregroundStyle(Theme.textSecondary)
+            }
+        } else if recorder.isTranscribing {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Transcribing what you said…").font(.system(.caption2)).foregroundStyle(Theme.textMuted)
+            }
+        } else if !micState.isReady {
+            HStack(spacing: 6) {
+                Image(systemName: "mic.slash.fill").font(.system(.caption2)).foregroundStyle(Theme.textMuted)
+                    .accessibilityHidden(true)
+                Text(micState.message(typedAlternative: "type your reply"))
+                    .font(.system(.caption2)).foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if micState.canOpenSettings {
+                    Button {
+                        Haptics.tap()
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    } label: {
+                        Text("Open Settings").font(.system(.caption2, weight: .bold)).foregroundStyle(accent)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func correctionBanner(_ turn: ChatTurn) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "checkmark.bubble.fill").font(.system(.footnote)).foregroundStyle(Theme.warning)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    if let corrected = turn.correctedFrench {
+                        Text(corrected).font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.text)
+                    }
+                    if let note = turn.correction {
+                        Text(note).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Theme.warningLight).clipShape(.rect(cornerRadius: 12))
+    }
+
+    private func turnFailureBanner(_ failure: TalkServiceFailure) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: failure == .offline ? "wifi.slash" : "exclamationmark.triangle.fill")
+                .font(.system(.footnote)).foregroundStyle(Theme.error)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(failure.title).font(.system(.footnote, weight: .bold)).foregroundStyle(Theme.text)
+                Text(failure.message).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if failure.isRetryable {
+                Button { Haptics.tap(); retryTurn() } label: {
+                    Text("Retry").font(.system(.footnote, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(Theme.error).clipShape(.capsule)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Theme.errorLight).clipShape(.rect(cornerRadius: 12))
+    }
+
+    private func noticeRow(icon: String, text: String, color: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).font(.system(.footnote)).foregroundStyle(color)
+                .accessibilityHidden(true)
+            Text(text).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(color.opacity(0.08)).clipShape(.rect(cornerRadius: 12))
+    }
+
     private var canSend: Bool { !draft.trimmingCharacters(in: .whitespaces).isEmpty && !tutorThinking }
 
-    private var lastCorrection: String? {
-        transcript.last(where: { $0.role == .tutor })?.correction
+    /// The latest tutor turn that fixed something (shown until the next reply).
+    private var lastCorrection: ChatTurn? {
+        guard let turn = transcript.last(where: { $0.role == .tutor }),
+              turn.correctedFrench != nil || turn.correction != nil else { return nil }
+        return turn
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy) {
@@ -421,21 +605,53 @@ private struct ConverseCallView: View {
         }
     }
 
+    /// Stop everything that is running. Also records the recap, so a call that
+    /// is swiped away (onDisappear) keeps its corrections; `recordRecap` runs once.
+    private func teardown() {
+        timer?.invalidate()
+        timer = nil
+        replyTask?.cancel()
+        replyTask = nil
+        tutorThinking = false
+        NaturalVoice.shared.stop()
+        recorder.cancel()
+        recordRecap()
+    }
+
     private func toggleListening() {
         if recorder.isRecording {
             Haptics.select()
-            Task {
-                let text = await recorder.stopAndTranscribe(language: "fra")
-                if let text, !text.isEmpty {
-                    draft = text
-                    send()
-                }
-            }
+            finishListening()
             return
         }
         Haptics.tap()
+        micNotice = nil
         NaturalVoice.shared.stop()
-        Task { await recorder.start() }
+        Task {
+            let result = await recorder.start(maxSeconds: Tuning.converseRecordingSeconds)
+            if case .failure(let failure) = result {
+                switch failure {
+                case .unavailable(.permissionDenied): showSettingsAlert = true
+                case .unavailable(let state): micNotice = state.message(typedAlternative: "type your reply")
+                case .audioSessionFailed: micNotice = "The microphone couldn't start. Try again, or type your reply."
+                case .alreadyRecording: break
+                }
+            }
+        }
+    }
+
+    /// Stop the recording (or pick up one the cap stopped) and send what was heard.
+    private func finishListening() {
+        Task {
+            let outcome = await recorder.stopAndTranscribe(language: "fra")
+            switch outcome {
+            case .text(let text):
+                draft = text
+                send()
+            case .nothingHeard, .failed:
+                micNotice = outcome.message
+            }
+        }
     }
 
     private func send() {
@@ -443,6 +659,9 @@ private struct ConverseCallView: View {
         guard !text.isEmpty, !tutorThinking else { return }
         Haptics.tap()
         draft = ""
+        hintNotice = nil
+        micNotice = nil
+        turnFailure = nil
         inputFocused = false
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             transcript.append(ChatTurn(role: .user, french: text, english: "", correction: nil))
@@ -450,69 +669,136 @@ private struct ConverseCallView: View {
         respond()
     }
 
+    /// Ask the tutor for the next turn. A failure is shown as a banner with
+    /// Retry — never faked as a tutor line. The request itself is bounded by
+    /// `Tuning.converseReplyTimeout`.
     private func respond() {
+        guard !tutorThinking else { return }
         tutorThinking = true
+        turnFailure = nil
         let history = transcript
-        Task {
-            let reply = await ConverseService.reply(scenario: scenario, level: userLevel, history: history)
+        let level = userLevel
+        let concepts = store.concepts
+        replyTask?.cancel()
+        replyTask = Task {
+            let result = await ConverseService.reply(scenario: scenario, level: level, history: history, concepts: concepts)
+            // A cancelled request never leaves the mic disabled behind "Tutor is replying…" (E26).
+            guard !Task.isCancelled else { tutorThinking = false; return }
             tutorThinking = false
-            let turn: ChatTurn
-            if let reply {
-                turn = ChatTurn(role: .tutor, french: reply.french, english: reply.english, correction: reply.correction)
-            } else {
-                turn = ChatTurn(role: .tutor, french: "Désolé, je n'ai pas pu répondre. On réessaie ?",
-                                english: "Sorry, I couldn't reply. Shall we try again?", correction: nil)
+            switch result {
+            case .success(let reply):
+                let turn = ChatTurn(role: .tutor, french: reply.french, english: reply.english, correction: reply.correction,
+                                    correctedFrench: reply.correctedFrench, correctedEnglish: reply.correctedEnglish,
+                                    conceptId: reply.conceptId)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { transcript.append(turn) }
+                NaturalVoice.shared.speak(turn.french)
+            case .failure(let failure):
+                turnFailure = failure
             }
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { transcript.append(turn) }
-            NaturalVoice.shared.speak(turn.french)
         }
     }
 
+    private func retryTurn() {
+        guard transcript.last?.role == .user else { turnFailure = nil; return }
+        respond()
+    }
+
+    /// A hint from the tutor, or — honestly labelled — the scenario's starter
+    /// phrase when the tutor can't be reached (E11).
     private func requestHint() {
         guard !hintLoading, !tutorThinking else { return }
+        hintNotice = nil
+        guard ConverseService.hasKey else {
+            draft = scenario.starterPhraseFrench
+            hintNotice = "Hints from the tutor aren't available in this build — here's a starter phrase for this scene instead."
+            inputFocused = true
+            return
+        }
         hintLoading = true
         let history = transcript
+        let level = userLevel
         Task {
-            let hint = await ConverseService.hint(scenario: scenario, level: userLevel, history: history)
+            let result = await ConverseService.hint(scenario: scenario, level: level, history: history)
             hintLoading = false
-            if let hint {
+            switch result {
+            case .success(let hint):
                 draft = hint.french
-                inputFocused = true
-            } else {
+            case .failure(let failure):
                 draft = scenario.starterPhraseFrench
-                inputFocused = true
+                hintNotice = "\(failure.message) Here's a starter phrase for this scene instead."
             }
+            inputFocused = true
         }
     }
 
     private func endCall() {
-        timer?.invalidate()
-        NaturalVoice.shared.stop()
+        teardown()
+        recordRecap()
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { ended = true }
+    }
+
+    /// The header chevron: a call the learner took part in ends like the End
+    /// button (recap + corrections saved); one they never spoke in just closes.
+    private func leaveCall() {
+        if userExchanges == 0 {
+            teardown()
+            dismiss()
+        } else {
+            endCall()
+        }
+    }
+
+    /// Save every tutor correction through the store once (E10): the corrected
+    /// line becomes a deck gap carrying the slip as evidence. Then, since the
+    /// tutor was reachable, fill in any deck cards still waiting for a meaning.
+    private func recordRecap() {
+        guard !recapRecorded else { return }
+        recapRecorded = true
+        let corrections = ConverseRecap.corrections(in: transcript)
+        if !corrections.isEmpty {
+            let alreadyThere = Set(corrections.filter { store.hasGap(forWord: $0.correctedFrench) }.map(\.id))
+            let saved = store.recordConverseCorrections(corrections)
+            savedCorrectionIds = Set(saved.keys).subtracting(alreadyThere)
+            duplicateCorrectionIds = alreadyThere
+        }
+        // Corrections and tutor phrases saved without English wait for a meaning;
+        // the call proved the service reachable, so fill them in now. The store
+        // outlives this view, so the work finishes even after dismissal.
+        if ConverseService.hasKey, !store.pendingTranslations.isEmpty {
+            let store = store
+            Task { await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:)) }
+        }
     }
 
     private var timeString: String { String(format: "%02d:%02d", elapsed / 60, elapsed % 60) }
 
     // MARK: Recap
 
+    private var corrections: [ConverseCorrection] { ConverseRecap.corrections(in: transcript) }
+    private var unsavableNotes: [String] { ConverseRecap.unsavableNotes(in: transcript) }
+    private var userExchanges: Int { transcript.filter { $0.role == .user }.count }
+
     private var reviewView: some View {
         ScrollView {
             VStack(spacing: 18) {
                 VStack(spacing: 10) {
-                    Image(systemName: "checkmark.seal.fill").font(.system(size: 44)).foregroundStyle(accent)
+                    Image(systemName: "checkmark.seal.fill").font(.system(.largeTitle)).foregroundStyle(accent)
+                        .accessibilityHidden(true)
                     Text("Conversation Recap").font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
-                    Text(scenario.title).font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
+                    Text(scenario.title).font(.system(.callout)).foregroundStyle(Theme.textSecondary)
                 }
                 .padding(.top, 64)
 
                 HStack(spacing: 12) {
                     recapStat(value: timeString, label: "Duration")
                     recapStat(value: "\(userExchanges)", label: "Your lines")
-                    recapStat(value: userLevel.rawValue, label: "Level")
+                    recapStat(value: "\(corrections.count)", label: "To fix")
                 }
 
+                whatToFixSection
+
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("TRANSCRIPT").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+                    Text("TRANSCRIPT").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
                     ForEach(transcript) { turn in
                         recapLine(turn)
                     }
@@ -522,8 +808,8 @@ private struct ConverseCallView: View {
                 .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card))
                 .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.5), lineWidth: 0.5))
 
-                Button { Haptics.tap(); endedDismiss() } label: {
-                    Text("Done").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+                Button { Haptics.tap(); dismiss() } label: {
+                    Text("Done").font(.system(.body, weight: .bold)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity).padding(.vertical, 16)
                         .background(accent).clipShape(.rect(cornerRadius: Radius.chip))
                 }
@@ -533,38 +819,122 @@ private struct ConverseCallView: View {
         }
     }
 
-    private var userExchanges: Int { transcript.filter { $0.role == .user }.count }
+    /// Every correction the tutor made, paired with the slip it fixes (E10).
+    private var whatToFixSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("WHAT TO FIX").font(.system(.caption2, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.5)
+            if corrections.isEmpty && unsavableNotes.isEmpty {
+                Text(userExchanges == 0
+                     ? "You didn't say anything this time — next call, try the starter phrase."
+                     : "No corrections — the tutor had nothing to fix. Nice work.")
+                    .font(.system(.subheadline)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(corrections) { correction in
+                correctionCard(correction)
+            }
+            ForEach(Array(unsavableNotes.enumerated()), id: \.offset) { _, note in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "lightbulb.fill").font(.system(.footnote)).foregroundStyle(Theme.warning)
+                        .accessibilityHidden(true)
+                    Text(note).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.5), lineWidth: 0.5))
+    }
 
-    private func endedDismiss() { dismiss() }
+    private func correctionCard(_ correction: ConverseCorrection) -> some View {
+        let saved = savedCorrectionIds.contains(correction.id)
+        let duplicate = duplicateCorrectionIds.contains(correction.id)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(correction.originalFrench).font(.system(.footnote)).foregroundStyle(Theme.textMuted).strikethrough()
+                .accessibilityLabel("You said: \(correction.originalFrench)")
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrow.turn.down.right").font(.system(.caption)).foregroundStyle(Theme.success)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(correction.correctedFrench).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.text)
+                        .accessibilityLabel("Corrected: \(correction.correctedFrench)")
+                    if let english = correction.englishTranslation {
+                        Text(english).font(.system(.caption)).foregroundStyle(Theme.textMuted)
+                    }
+                    if !correction.explanation.isEmpty {
+                        Text(correction.explanation).font(.system(.footnote)).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+                Button { Haptics.tap(); NaturalVoice.shared.speak(correction.correctedFrench) } label: {
+                    Image(systemName: "speaker.wave.2.fill").font(.system(.caption)).foregroundStyle(accent)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Hear the corrected line")
+            }
+            HStack(spacing: 8) {
+                if let name = store.concept(correction.conceptId)?.name {
+                    Pill(text: name, color: accent)
+                }
+                Spacer(minLength: 0)
+                Label(saved ? "Saved to your deck" : (duplicate ? "Already in your deck" : "Nothing to save"),
+                      systemImage: saved || duplicate ? "checkmark.circle.fill" : "circle.dashed")
+                    .font(.system(.caption2, weight: .semibold))
+                    .foregroundStyle(saved || duplicate ? Theme.success : Theme.textMuted)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: 12))
+    }
 
     private func recapStat(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.system(size: 20, weight: .bold)).foregroundStyle(accent)
-            Text(label).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            Text(value).font(.system(.title3, weight: .bold)).foregroundStyle(accent)
+            Text(label).font(.system(.caption2)).foregroundStyle(Theme.textMuted)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 14)
         .background(accent.opacity(0.1)).clipShape(.rect(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
     }
 
+    /// A transcript line. Tutor lines can be saved as said; a learner line
+    /// shows whether its correction was saved and never offers to save the
+    /// learner's own French (E9).
     private func recapLine(_ turn: ChatTurn) -> some View {
         let isTutor = turn.role == .tutor
-        let saved = savedIds.contains(turn.id)
+        let candidate = ConverseRecap.saveCandidate(for: turn, in: transcript)
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(isTutor ? "TUTOR" : "YOU").font(.system(size: 10, weight: .bold))
+                Text(isTutor ? "TUTOR" : "YOU").font(.system(.caption2, weight: .bold))
                     .foregroundStyle(isTutor ? accent : Theme.secondary)
                 Spacer()
-                Button {
-                    savePhrase(turn)
-                } label: {
-                    Image(systemName: saved ? "checkmark.circle.fill" : "plus.circle")
-                        .font(.system(size: 16)).foregroundStyle(saved ? Theme.success : Theme.textMuted)
+                switch candidate {
+                case .some(.tutorPhrase(let french, let english)):
+                    let saved = savedTutorIds.contains(turn.id) || store.hasGap(forWord: french)
+                    Button { savePhrase(turn, french: french, english: english) } label: {
+                        Image(systemName: saved ? "checkmark.circle.fill" : "plus.circle")
+                            .font(.system(.body)).foregroundStyle(saved ? Theme.success : Theme.textMuted)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain).disabled(saved)
+                    .accessibilityLabel(saved ? "Saved to your deck" : "Save this phrase to your deck")
+                case .some(.correction(let correction)):
+                    let kept = savedCorrectionIds.contains(correction.id) || duplicateCorrectionIds.contains(correction.id)
+                    Label(kept ? "Correction saved" : "Corrected above", systemImage: kept ? "checkmark.circle.fill" : "arrow.turn.down.right")
+                        .font(.system(.caption2, weight: .semibold))
+                        .foregroundStyle(kept ? Theme.success : Theme.textMuted)
+                case .none:
+                    EmptyView()
                 }
-                .buttonStyle(.plain).disabled(saved)
             }
-            Text(turn.french).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.text)
+            Text(turn.french).font(.system(.subheadline, weight: .medium)).foregroundStyle(Theme.text)
             if !turn.english.isEmpty {
-                Text(turn.english).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                Text(turn.english).font(.system(.caption)).foregroundStyle(Theme.textMuted)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -572,36 +942,13 @@ private struct ConverseCallView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border.opacity(0.4)).frame(height: 0.5) }
     }
 
-    private func savePhrase(_ turn: ChatTurn) {
-        guard !savedIds.contains(turn.id) else { return }
+    private func savePhrase(_ turn: ChatTurn, french: String, english: String) {
+        guard !savedTutorIds.contains(turn.id) else { return }
+        guard store.captureConversePhrase(french: french, english: english, scenarioTitle: scenario.title) else {
+            savedTutorIds.insert(turn.id)
+            return
+        }
         Haptics.success()
-        let now = Date()
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: turn.french,
-            englishTranslation: turn.english.isEmpty ? "(tap to translate later)" : turn.english,
-            explanation: "Phrase from your “\(scenario.title)” conversation.",
-            exampleSentence: turn.french,
-            exampleTranslation: turn.english,
-            pronunciation: nil,
-            sourceType: .speech,
-            category: .phrasing,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: userLevel,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: turn.french, translation: turn.english, sourceTab: "converse", capturedAt: now, reExposureCount: 0),
-            confusionLinks: []
-        )
-        store.addGap(gap)
-        savedIds.insert(turn.id)
+        savedTutorIds.insert(turn.id)
     }
 }

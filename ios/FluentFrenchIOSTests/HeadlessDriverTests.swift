@@ -371,7 +371,7 @@ struct HeadlessDriverTests {
         let store = EngineFixtures.store()
         let learner = SyntheticLearner(archetype: archetype, concepts: store.concepts, seed: seed)
         var run = SimulatedRun(store: store, learner: learner, now: EngineFixtures.now)
-        run.place(declaredBeginner: declaredBeginner)
+        run.place(declaredBeginner: declaredBeginner, seed: seed)
         run.run(days: 60, lessonsPerDay: lessonsAfterUnlock, foundationPacing: true)
         // One write per line: a single multi-kilobyte write has been observed to
         // vanish from a captured log on Linux.

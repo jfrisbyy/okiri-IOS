@@ -24,7 +24,9 @@ nonisolated struct AssessmentQuestion: Identifiable, Hashable {
     let prompt: String
     let french: String
     let english: String
-    let options: [String]
+    /// Answer choices. Re-shuffled every time the item is presented (D6), so the
+    /// correct answer never sits in a fixed slot; `id` is unchanged by a shuffle.
+    var options: [String]
     let correctAnswer: String
     let explanation: String
     let exampleSentence: String
@@ -33,6 +35,33 @@ nonisolated struct AssessmentQuestion: Identifiable, Hashable {
     let conceptId: String?
 
     var level: CEFRLevel { AssessmentService.level(forBand: band) }
+
+    /// The same item (same `id`) with its options in a fresh random order.
+    func presented<G: RandomNumberGenerator>(using generator: inout G) -> AssessmentQuestion {
+        var copy = self
+        copy.options.shuffle(using: &generator)
+        return copy
+    }
+}
+
+/// The placement's source of randomness: the system generator in the app, a
+/// SplitMix64 stream when a seed is given (tests and the headless driver replay
+/// the exact same staircase).
+nonisolated struct PlacementRandom: RandomNumberGenerator {
+    private var state: UInt64?
+    private var system = SystemRandomNumberGenerator()
+
+    init(seed: UInt64? = nil) { state = seed }
+
+    mutating func next() -> UInt64 {
+        guard var s = state else { return system.next() }
+        s &+= 0x9E37_79B9_7F4A_7C15
+        state = s
+        var z = s
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
 }
 
 // MARK: - Result
@@ -93,10 +122,18 @@ nonisolated struct PlacementEngine {
 
     /// Current target band (staircase position).
     private var band: Int = 2
-    /// Consecutive misses at the lowest band → graceful "true beginner" bottom-out.
-    private var lowestBandMisses: Int = 0
+    /// Consecutive misses at the lowest band, PER CATEGORY. The test estimates
+    /// vocabulary and grammar separately (a false beginner typically has one and
+    /// not the other), so bottoming out is per category too: a category that has
+    /// missed `Tuning.placementBottomOutMisses` lowest-band items in a row is not
+    /// asked again, and the learner is a true beginner only once EVERY category
+    /// in the bank has bottomed out. Any correct answer in a category resets its
+    /// counter (D7).
+    private var lowestBandMisses: [GapCategory: Int] = [:]
     /// Whether the learner self-declared a complete beginner (skip → full Foundation).
     private(set) var declaredBeginner: Bool = false
+    /// Random choice among equally good items and option order (D6).
+    private var random: PlacementRandom
 
     /// Fewest / most items the staircase asks (`Tuning.placementMinItems` / `placementMaxItems`);
     /// the progress bar reads these.
@@ -104,11 +141,29 @@ nonisolated struct PlacementEngine {
     let maxItems = Tuning.placementMaxItems
     /// Items asked per concept before a "knows it" read is trusted (Pass 3 F5).
     let probesPerConcept = Tuning.placementProbesPerConcept
+    /// Lowest-band misses in a row that bottom a category out.
+    let bottomOutMisses = Tuning.placementBottomOutMisses
     private let minBand = 1
     private let maxBand = 4
 
-    init(bank: [AssessmentQuestion] = AssessmentService.bank) {
+    /// `seed` makes the staircase fully reproducible (tests, the headless driver);
+    /// the app leaves it nil.
+    init(bank: [AssessmentQuestion] = AssessmentService.bank, seed: UInt64? = nil) {
         self.bank = bank
+        self.random = PlacementRandom(seed: seed)
+    }
+
+    /// Categories that have bottomed out at the lowest band.
+    var bottomedOutCategories: Set<GapCategory> {
+        Set(lowestBandMisses.filter { $0.value >= bottomOutMisses }.keys)
+    }
+
+    /// True once every category the bank holds has bottomed out — nothing is left
+    /// to learn from asking; the learner starts from the beginning.
+    private var hasBottomedOut: Bool {
+        let categories = Set(bank.map { $0.category })
+        guard !categories.isEmpty else { return false }
+        return categories.isSubset(of: bottomedOutCategories)
     }
 
     /// Items already asked on a concept.
@@ -143,13 +198,17 @@ nonisolated struct PlacementEngine {
     mutating func next() -> AssessmentQuestion? {
         if declaredBeginner { return nil }
         if asked.count >= maxItems { return nil }
-        if lowestBandMisses >= 2 { return nil }          // bottomed out → true beginner
+        if hasBottomedOut { return nil }                 // every category bottomed out → true beginner
         if asked.count >= minItems && hasStabilized() { return nil }
 
         // Pick an unused item closest to the current band, alternating category
-        // so we gather evidence on both vocab and grammar.
+        // so we gather evidence on both vocab and grammar. Among equally good
+        // items the choice is random, and every item is presented with freshly
+        // shuffled options (D6) — two learners, or two retakes, never see the
+        // same sequence. A category that has bottomed out is never asked again.
         let askedIds = Set(asked.map { $0.id })
-        let pool = bank.filter { !askedIds.contains($0.id) }
+        let bottomed = bottomedOutCategories
+        let pool = bank.filter { !askedIds.contains($0.id) && !bottomed.contains($0.category) }
         guard !pool.isEmpty else { return nil }
 
         // Pass 3 F5: one correct answer is not a read on a concept. Keep probing the
@@ -158,8 +217,8 @@ nonisolated struct PlacementEngine {
         // nothing more to learn by asking it again.
         if let last = asked.last, let cid = last.conceptId, !missed.contains(last),
            askedCount(for: cid) < probesPerConcept,
-           let more = pool.first(where: { $0.conceptId == cid }) {
-            return more
+           let more = pool.filter({ $0.conceptId == cid }).randomElement(using: &random) {
+            return more.presented(using: &random)
         }
         // Never ask a concept beyond its probe budget or one already missed.
         let missedConcepts = missedConceptIds
@@ -178,15 +237,15 @@ nonisolated struct PlacementEngine {
 
         func pick(in band: Int) -> AssessmentQuestion? {
             let atBand = candidates.filter { $0.band == band }
-            if let c = preferredCategory, let m = atBand.first(where: { $0.category == c }) { return m }
-            return atBand.first
+            if let c = preferredCategory, let m = atBand.filter({ $0.category == c }).randomElement(using: &random) { return m }
+            return atBand.randomElement(using: &random)
         }
         // Search outward from the target band.
         for delta in 0...maxBand {
-            if let m = pick(in: band + delta) { return m }
-            if delta > 0, let m = pick(in: band - delta) { return m }
+            if let m = pick(in: band + delta) { return m.presented(using: &random) }
+            if delta > 0, let m = pick(in: band - delta) { return m.presented(using: &random) }
         }
-        return candidates.first
+        return candidates.randomElement(using: &random)?.presented(using: &random)
     }
 
     /// Record an answer. The staircase steps at the CONCEPT level (B9): DOWN once on
@@ -199,10 +258,10 @@ nonisolated struct PlacementEngine {
         asked.append(q)
         if correct {
             correctCount += 1
-            if q.band > minBand { lowestBandMisses = 0 }
+            lowestBandMisses[q.category] = 0                       // any correct answer resets its category's bottom-out counter (D7)
         } else {
             missed.append(q)
-            if q.band <= minBand { lowestBandMisses += 1 } else { lowestBandMisses = 0 }
+            if q.band <= minBand { lowestBandMisses[q.category, default: 0] += 1 } else { lowestBandMisses[q.category] = 0 }
         }
         guard let cid = q.conceptId else {
             band = correct ? min(maxBand, band + 1) : max(minBand, band - 1)
@@ -282,15 +341,30 @@ nonisolated struct PlacementEngine {
     }
 
     /// Highest band b such that every tested band ≤ b was answered ≥50% correctly.
-    /// A band with fewer than `probesPerConcept` items asked is inconclusive: it
-    /// neither clears nor blocks (one lucky answer is not a cleared band).
+    /// A band with fewer than `probesPerConcept` items asked is inconclusive on its
+    /// own (one lucky answer is not a cleared band) — unless a concept of this
+    /// category was fully probed clean at or above it: three clean items on one
+    /// concept are a trusted read of that concept's band even when its items were
+    /// spread over two bands (a band-2 hand item plus two band-1 content probes),
+    /// so a learner who demonstrably knows a concept never reads as a true beginner.
     private func clearedBand(for category: GapCategory) -> Int {
+        let fullyProbed = fullyProbedConceptIds
+        // The band a fully probed concept vouches for: the LOWEST band among its
+        // items (conservative — a frequency-banded hand item never inflates it).
+        var vouchedBand = 0
+        for cid in fullyProbed {
+            let bands = asked.filter { $0.category == category && $0.conceptId == cid }.map { $0.band }
+            if let low = bands.min() { vouchedBand = max(vouchedBand, low) }
+        }
         var cleared = 0
         for b in minBand...maxBand {
             let pool = asked.filter { $0.category == category && $0.band == b }
-            guard pool.count >= probesPerConcept else { continue }   // untested / thin band — skip, keep going
+            guard pool.count >= probesPerConcept else {
+                if b <= vouchedBand { cleared = b }                        // a trusted concept read covers this band
+                continue                                                    // otherwise untested / thin — skip, keep going
+            }
             let hit = pool.filter { !missed.contains($0) }.count
-            if Double(hit) / Double(pool.count) >= 0.5 { cleared = b } else { break }
+            if Double(hit) / Double(pool.count) >= 0.5 || b <= vouchedBand { cleared = b } else { break }
         }
         return cleared
     }
@@ -368,11 +442,29 @@ nonisolated enum AssessmentService {
         concepts.flatMap { questions(fromProbes: probes($0.id), for: $0) }
     }
 
-    /// Build gap items from the questions the learner missed.
-    static func gaps(forMissed missed: [AssessmentQuestion]) -> [GapItem] {
-        let now = Date()
+    /// The bank the placement screen runs on (D6 / B9): the content probes for every
+    /// grammar / vocabulary concept (three real items each, so the staircase's
+    /// `Tuning.placementProbesPerConcept` rule has material), with the hand-written
+    /// items kept ONLY where content is missing — a concept with no usable probes,
+    /// a band no probe reaches (band 4 has no taxonomy concept), or an item tied to
+    /// no concept. With a complete content file the hand-written items never show.
+    static func placementBank(concepts: [Concept], probes: (String) -> [FoundationProbeContent]) -> [AssessmentQuestion] {
+        let content = contentBank(concepts: concepts, probes: probes)
+        let coveredConcepts = Set(content.compactMap { $0.conceptId })
+        let coveredBands = Set(content.map { $0.band })
+        let fallback = bank.filter { q in
+            guard let cid = q.conceptId else { return true }
+            return !coveredConcepts.contains(cid) || !coveredBands.contains(q.band)
+        }
+        return content + fallback
+    }
+
+    /// Build gap items from the questions the learner missed. Like every gap the
+    /// store creates they start with an FSRS state due now (B4), so a missed
+    /// placement item is on the schedule from day one.
+    static func gaps(forMissed missed: [AssessmentQuestion], now: Date = Date()) -> [GapItem] {
         return missed.map { q in
-            GapItem(
+            var gap = GapItem(
                 id: UUID().uuidString,
                 frenchWord: q.french,
                 englishTranslation: q.english,
@@ -398,6 +490,9 @@ nonisolated enum AssessmentService {
                 confusionLinks: [],
                 conceptId: q.conceptId
             )
+            gap.fsrs = FSRS.makeInitialState(grade: .again, now: now)
+            gap.fsrs?.dueAt = now
+            return gap
         }
     }
 

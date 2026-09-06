@@ -4,6 +4,8 @@
 //
 //  Visual weakness map: learning gaps broken down by category with retention
 //  health and counts. Tapping a category launches a focused lesson on it.
+//  Counts read learner-visible gaps only (probes excluded, A13); the due number
+//  is `store.dueNow` (D13); an empty category explains itself (C23).
 //
 
 import SwiftUI
@@ -12,6 +14,8 @@ struct GapsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
     @State private var scopedLesson: AssembledLesson? = nil
+    /// The selector's headline when a tapped category had nothing to offer.
+    @State private var emptyHeadline: String? = nil
 
     /// Display statistics only. Which gaps a tap practices is the selector's call
     /// (scoped request on the category) — no candidate set is built here.
@@ -21,28 +25,34 @@ struct GapsView: View {
         let active: Int
         let mastered: Int
         let due: Int
+        /// Active gaps with at least one review — the evidence behind `retention`.
+        let reviewed: Int
         let retention: Int
     }
 
     private var stats: [CategoryStat] {
-        GapCategory.allCases.map { cat in
-            let all = store.gaps.filter { $0.category == cat }
+        let dueNow = store.dueNow
+        return GapCategory.allCases.map { cat in
+            let all = store.gaps.filter { $0.category == cat && !$0.isProbe }
             let active = all.filter { !$0.isMastered }
             let mastered = all.filter { $0.isMastered }
-            let due = (store.dueGaps + store.criticalGaps).filter { $0.category == cat }
+            let due = dueNow.filter { $0.category == cat }
+            // Recall is averaged over reviewed gaps only: a never-answered seed has
+            // given no evidence and must not read as "at risk" (B4).
+            let reviewed = active.filter { !$0.isNew }
             let retention: Int
-            if active.isEmpty {
-                retention = all.isEmpty ? 100 : 100
+            if reviewed.isEmpty {
+                retention = 100
             } else {
-                let avg = active.map { $0.retrievability }.reduce(0, +) / Double(active.count)
+                let avg = reviewed.map { $0.retrievability }.reduce(0, +) / Double(reviewed.count)
                 retention = Int((avg * 100).rounded())
             }
             return CategoryStat(category: cat, active: active.count, mastered: mastered.count,
-                                due: due.count, retention: retention)
+                                due: due.count, reviewed: reviewed.count, retention: retention)
         }
     }
 
-    private var totalActive: Int { store.activeGaps.count }
+    private var totalActive: Int { store.visibleGaps.count }
     private var totalMastered: Int { store.masteredGaps.count }
 
     var body: some View {
@@ -64,6 +74,24 @@ struct GapsView: View {
         .fullScreenCover(item: $scopedLesson) { lesson in
             LessonView(gaps: lesson.gaps, assembled: lesson)
         }
+        .alert("Nothing to practice", isPresented: Binding(
+            get: { emptyHeadline != nil },
+            set: { if !$0 { emptyHeadline = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(emptyHeadline ?? "")
+        }
+    }
+
+    /// Declare intent only; when the selector has nothing for this category the
+    /// learner sees its headline instead of a dead tap (C23).
+    private func practice(_ category: GapCategory) {
+        Haptics.select()
+        switch LessonPipeline(store: store).outcome(for: .category(category)) {
+        case .lesson(let lesson): scopedLesson = lesson
+        case .empty(let headline): emptyHeadline = headline
+        }
     }
 
     private var header: some View {
@@ -81,7 +109,7 @@ struct GapsView: View {
             Rectangle().fill(Theme.border).frame(width: 1, height: 44)
             overviewStat(value: "\(totalMastered)", label: "Mastered", tint: Theme.success, icon: "checkmark.seal.fill")
             Rectangle().fill(Theme.border).frame(width: 1, height: 44)
-            overviewStat(value: "\(store.overallRetention)%", label: "Retention", tint: Theme.secondary, icon: "brain.head.profile")
+            overviewStat(value: store.hasRetentionEvidence ? "\(store.overallRetention)%" : "—", label: "Retention", tint: Theme.secondary, icon: "brain.head.profile")
         }
         .padding(18)
         .frame(maxWidth: .infinity)
@@ -93,11 +121,12 @@ struct GapsView: View {
 
     private func overviewStat(value: String, label: String, tint: Color, icon: String) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(tint)
+            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(tint).accessibilityHidden(true)
             Text(value).font(.system(size: 20, weight: .heavy)).foregroundStyle(Theme.text)
-            Text(label).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private func categoryCard(_ stat: CategoryStat) -> some View {
@@ -106,14 +135,18 @@ struct GapsView: View {
         let healthLabel: String
         let healthColor: Color
         if stat.active == 0 { healthLabel = "All clear"; healthColor = Theme.success }
-        else if stat.retention >= 70 { healthLabel = "Healthy"; healthColor = Theme.success }
-        else if stat.retention >= 50 { healthLabel = "Needs attention"; healthColor = Theme.warning }
+        // Never reviewed: no recall evidence yet, so no health claim either (D19).
+        else if stat.reviewed == 0 { healthLabel = "New"; healthColor = Theme.primary }
+        else if stat.retention >= Tuning.gapHealthHealthyFloor { healthLabel = "Healthy"; healthColor = Theme.success }
+        else if stat.retention >= Tuning.gapHealthAttentionFloor { healthLabel = "Needs attention"; healthColor = Theme.warning }
         else { healthLabel = "At risk"; healthColor = Theme.error }
 
         return Button {
-            guard stat.active > 0 else { return }
-            Haptics.select()
-            scopedLesson = LessonPipeline(store: store).lesson(for: .category(stat.category))
+            guard stat.active > 0 else {
+                emptyHeadline = "No \(stat.category.label.lowercased()) gaps yet — capture words while reading or speaking, or keep going with your lessons."
+                return
+            }
+            practice(stat.category)
         } label: {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
@@ -135,16 +168,20 @@ struct GapsView: View {
                     }
                 }
                 .frame(height: 5)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(stat.category.label) mastery")
+                .accessibilityValue("\(stat.mastered) of \(stat.active + stat.mastered) mastered")
 
                 HStack {
                     if stat.due > 0 {
                         HStack(spacing: 4) {
                             Image(systemName: "clock.fill").font(.system(size: 10))
-                            Text("\(stat.due) due to review").font(.system(size: 12, weight: .medium))
+                            Text("\(stat.due) due now").font(.caption.weight(.medium))
                         }
                         .foregroundStyle(Theme.warning)
                     } else {
-                        Text("\(stat.retention)% retention").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Text(stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention)% retention")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                     }
                     Spacer()
                     if stat.active > 0 {
@@ -165,6 +202,8 @@ struct GapsView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("\(stat.category.label): \(stat.active) active, \(stat.mastered) mastered, \(healthLabel)")
+        .accessibilityHint(stat.active > 0 ? "Starts a focused lesson." : "Nothing to practice here yet.")
     }
 
     private func icon(_ c: GapCategory) -> String {

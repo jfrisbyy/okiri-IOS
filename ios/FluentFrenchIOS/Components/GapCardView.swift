@@ -3,7 +3,9 @@
 //  FluentFrenchIOS
 //
 //  Expandable gap card with the FSRS "Memory" detail, mirroring the Expo
-//  deck card + MemoryCard component.
+//  deck card + MemoryCard component. The mastery streak reads
+//  `Tuning.gapMasteryStreak` (Package C); fonts are relative and the card is
+//  one accessible element with a value.
 //
 
 import SwiftUI
@@ -27,25 +29,31 @@ struct GapCardView: View {
         return nil
     }
 
+    /// Consecutive correct answers that earn the mastery badge (`Tuning.gapMasteryStreak`).
+    private var streakTarget: Int { Tuning.gapMasteryStreak }
+    private var streakShown: Int { min(gap.consecutiveCorrect, streakTarget) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        Circle().fill(gap.category.color).frame(width: 8, height: 8)
-                        Text(gap.frenchWord).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.primary)
+                        Circle().fill(gap.category.color).frame(width: 8, height: 8).accessibilityHidden(true)
+                        Text(gap.frenchWord).font(.body.weight(.semibold)).foregroundStyle(Theme.primary)
                         Spacer()
                         SpeakButton(text: gap.frenchWord)
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.footnote).foregroundStyle(Theme.textMuted)
+                            .accessibilityHidden(true)
                     }
-                    Text(gap.englishTranslation).font(.system(size: 14)).foregroundStyle(Theme.text).padding(.leading, 18)
+                    Text(gap.englishTranslation).font(.subheadline).foregroundStyle(Theme.text).padding(.leading, 18)
 
                     HStack(alignment: .top, spacing: 8) {
                         Text(gap.exampleSentence)
-                            .font(.system(size: 13)).italic().foregroundStyle(Theme.textSecondary)
+                            .font(.footnote).italic().foregroundStyle(Theme.textSecondary)
                             .lineLimit(expanded ? nil : 2)
                         Spacer()
-                        Image(systemName: "speaker.wave.2").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: "quote.closing").font(.caption).foregroundStyle(Theme.textMuted)
+                            .accessibilityHidden(true)
                     }
                     .padding(10)
                     .background(Theme.background)
@@ -53,24 +61,32 @@ struct GapCardView: View {
 
                     HStack {
                         HStack(spacing: 4) {
-                            Image(systemName: gap.sourceType.systemImage).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                            Text(gap.sourceType.label).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                            Image(systemName: gap.sourceType.systemImage).font(.caption2).foregroundStyle(Theme.textMuted)
+                                .accessibilityHidden(true)
+                            Text(gap.sourceType.label).font(.caption2).foregroundStyle(Theme.textMuted)
                         }
                         if let urgency {
                             HStack(spacing: 4) {
-                                Circle().fill(urgency.color).frame(width: 5, height: 5)
-                                Text(urgency.text).font(.system(size: 10, weight: .semibold)).foregroundStyle(urgency.color)
+                                Circle().fill(urgency.color).frame(width: 5, height: 5).accessibilityHidden(true)
+                                Text(urgency.text).font(.caption2.weight(.semibold)).foregroundStyle(urgency.color)
                             }
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(urgency.color.opacity(0.12)).clipShape(.rect(cornerRadius: 6))
                         }
                         Spacer()
-                        ThinProgressBar(progress: Double(gap.consecutiveCorrect) / 5, tint: streakColor)
-                        Text("\(gap.consecutiveCorrect)/5").font(.system(size: 11, weight: .semibold)).foregroundStyle(streakColor)
+                        HStack(spacing: 6) {
+                            ThinProgressBar(progress: Double(streakShown) / Double(max(1, streakTarget)), tint: streakColor)
+                            Text("\(streakShown)/\(streakTarget)").font(.caption2.weight(.semibold)).foregroundStyle(streakColor)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Mastery streak")
+                        .accessibilityValue("\(streakShown) of \(streakTarget)")
                     }
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(gap.frenchWord), \(gap.englishTranslation)")
+            .accessibilityHint(expanded ? "Collapses the memory detail" : "Expands the memory detail")
 
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
@@ -93,20 +109,22 @@ struct GapCardView: View {
 
     private func infoBox(label: String, text: String, tint: Color = Theme.background) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased()).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.3)
-            Text(text).font(.system(size: 13)).foregroundStyle(Theme.text)
+            Text(label.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(Theme.textMuted).tracking(0.3)
+            Text(text).font(.footnote).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(tint)
         .clipShape(.rect(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
     }
 
     private var memoryCard: some View {
         let r = Int((gap.retrievability * 100).rounded())
         let stability = gap.fsrs?.stability ?? 1
         return VStack(alignment: .leading, spacing: 8) {
-            Text("MEMORY").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary).tracking(0.3)
+            Text("MEMORY").font(.caption2.weight(.semibold)).foregroundStyle(Theme.secondary).tracking(0.3)
             HStack(spacing: 16) {
                 memoryStat("\(r)%", "recall now")
                 memoryStat(String(format: "%.1fd", stability), "stability")
@@ -114,6 +132,7 @@ struct GapCardView: View {
             }
             ForgettingCurve(stability: stability, retrievability: gap.retrievability)
                 .frame(height: 42)
+                .accessibilityHidden(true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -123,9 +142,10 @@ struct GapCardView: View {
 
     private func memoryStat(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.text)
-            Text(label).font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
+            Text(label).font(.caption2).foregroundStyle(Theme.textMuted)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private func relativeDue(_ date: Date) -> String {

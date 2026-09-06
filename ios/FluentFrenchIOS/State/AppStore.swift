@@ -129,10 +129,25 @@ final class AppStore {
     // (Home screen / daily plan / gate stored properties go here)
 
     // MARK: - Package D-flow stored state (edit only inside this block)
-    // (placement / preferences / deck / retention stored properties go here)
+    /// Where the Foundation curriculum comes from (D3): the bundled content by
+    /// default; tests inject a file loaded from an explicit URL. Not observable state.
+    @ObservationIgnored var foundationContent: (Date) -> [GapItem] = { FoundationContentLoader.gaps(now: $0) }
 
     // MARK: - Package E-read stored state (edit only inside this block)
-    // (reading / capture / tagger stored properties go here)
+    /// The tail of the tagging queue (E3): every `tagConcept(for:)` request awaits
+    /// the previous one, so each sees the concepts the last may have created.
+    @ObservationIgnored private var tagChain: Task<Void, Never>? = nil
+    /// The matcher `tagConcept(for:)` runs. Defaults to `ConceptTagger` (AI when a
+    /// key is present, on-device heuristic otherwise); tests inject a fake.
+    @ObservationIgnored var conceptTagger: @MainActor (GapItem, [Concept], [String: String]) async -> ConceptTagResult? = { gap, concepts, lexicon in
+        await ConceptTagger.tag(gap: gap, concepts: concepts, lexicon: lexicon)
+    }
+    /// Headword → concept map built from the bundled content the first time the
+    /// tagger needs it (`HeuristicTagger.lexicon(from:)`); tests inject their own.
+    @ObservationIgnored var tagLexiconProvider: () -> [String: String] = { HeuristicTagger.lexicon(from: FoundationContentLoader.file) }
+    @ObservationIgnored private var cachedTagLexicon: [String: String]? = nil
+    /// True while `resolvePendingTranslations(using:)` is running (re-entrancy guard).
+    @ObservationIgnored private(set) var isResolvingTranslations = false
 
     // MARK: - Package E-talk stored state (edit only inside this block)
     // (converse / speaking stored properties go here)
@@ -163,7 +178,9 @@ final class AppStore {
     private let localUpdatedAtKey = "ff.localUpdatedAt.v1"
     private let xpKey = "ff.xp.v1"
     private let personalBestsKey = "ff.personalBests.v1"
-    private let dailyPlanKey = "ff.dailyPlan.v1"
+    /// v2: the plan of record is stored as `DailyPlan` itself (Codable); the v1
+    /// key held a private mirror and is left to expire — a stale cache only.
+    private let dailyPlanKey = "ff.dailyPlan.v2"
     private let dailyPlanDayKey_ = "ff.dailyPlanDay.v1"
     private let checkInHistoryKey = "ff.checkInHistory.v1"
     private let unlockedModalitiesKey = "ff.unlockedModalities.v1"
@@ -330,11 +347,15 @@ final class AppStore {
         case .category(let category):
             pool = gaps(in: category)
         case .dueInCategory(let category):
-            pool = (criticalGaps(at: now) + dueGaps(at: now)).filter { $0.category == category }
+            // The same pool Home's category cards count ("Due now", D13): unmastered
+            // gaps at or past their review plus mastered gaps due for a check.
+            pool = dueNow(at: now).filter { $0.category == category }
         case .reviewQueue:
             pool = reviewQueue(at: now)
         case .critical:
             pool = criticalGaps(at: now)
+        case .dueNow:
+            pool = dueNow(at: now)
         case .mixed:
             pool = visibleGaps
         case .retention(let bucket):
@@ -346,6 +367,9 @@ final class AppStore {
             // "Review these now" on the Mastered tab checks only what the schedule
             // wants back; mastered gaps at high recall are not re-drilled (B3).
             case .mastered: pool = dueMasteredGaps(at: now)
+            // Never-reviewed gaps: practicable as a scope (a learner may tap into the
+            // list), taught in due order — the stagger's first batch leads (D3/B4).
+            case .new: pool = buckets.new.sorted { $0.nextReviewAt < $1.nextReviewAt }
             }
         case .errorPattern(let id):
             let records = errorPatterns.first(where: { $0.id == id })?.records ?? []
@@ -410,7 +434,7 @@ final class AppStore {
         markLessonOffered()
         clearUnlockFlags()
         let unlocked = expandFrontier()
-        refreshUnlocks()
+        refreshUnlocks(now: now)
         pruneHistory(now: now)
         metricsLog.record(metricsSnapshot(now: now))
         save()
@@ -459,6 +483,10 @@ final class AppStore {
             return activityProgress[progressKey(modality, now)] ?? 0
         case .lessons:
             return lessonsCompleted(on: now)
+        case .unlock:
+            // Progress toward an unlock item is the lifetime minutes in its modality.
+            guard let modality = item.modality else { return 0 }
+            return totalMinutes(modality)
         }
     }
 
@@ -517,27 +545,46 @@ final class AppStore {
     }
 
     /// Asynchronously map a gap to its best-matching concept (creating a new one
-    /// only when nothing fits). Non-blocking — capture stays instant.
+    /// only when nothing fits). Non-blocking — capture stays instant. Requests are
+    /// serialised (E3): each one waits for the previous tag to land and then reads
+    /// the CURRENT gap and concept list, so two captures that both propose "past
+    /// tense" produce one concept, not two. A gap that already carries a concept,
+    /// or a probe, is never re-tagged.
     func tagConcept(for gapId: String) {
-        guard let gap = gaps.first(where: { $0.id == gapId }), gap.conceptId == nil else { return }
-        let snapshot = concepts
-        Task { [weak self] in
-            guard let result = await ConceptTagger.tag(gap: gap, concepts: snapshot) else { return }
-            self?.applyConceptTag(result, to: gapId)
+        guard let gap = gaps.first(where: { $0.id == gapId }), gap.conceptId == nil, !gap.isProbe else { return }
+        let previous = tagChain
+        tagChain = Task { [weak self] in
+            await previous?.value
+            guard let self,
+                  let current = self.gaps.first(where: { $0.id == gapId }),
+                  current.conceptId == nil else { return }
+            let result = await self.conceptTagger(current, self.concepts, self.tagLexicon)
+            guard let result else { return }
+            self.applyConceptTag(result, to: gapId)
         }
     }
 
+    /// Land a tag on a gap. `.existing` links it (recording the matcher's
+    /// confidence); `.untagged` leaves `conceptId` nil but records how close the
+    /// best candidate came (E1); `.new` is folded into an existing concept whose
+    /// name means the same thing before anything is created (E3).
     private func applyConceptTag(_ result: ConceptTagResult, to gapId: String) {
         guard let idx = gaps.firstIndex(where: { $0.id == gapId }) else { return }
         switch result {
-        case .existing(let cid):
+        case .existing(let cid, let confidence):
             guard concepts.contains(where: { $0.id == cid }) else { return }
             gaps[idx].conceptId = cid
+            gaps[idx].tagConfidence = confidence
+        case .untagged(let confidence):
+            gaps[idx].tagConfidence = confidence
         case .new(let concept):
-            if !concepts.contains(where: { $0.id == concept.id }) {
+            if let existing = HeuristicTagger.nearDuplicate(named: concept.name, id: concept.id, among: concepts) {
+                gaps[idx].conceptId = existing.id
+            } else {
                 concepts.append(concept)
+                gaps[idx].conceptId = concept.id
             }
-            gaps[idx].conceptId = concept.id
+            gaps[idx].tagConfidence = Tuning.tagNewConceptConfidence
         }
         save()
     }
@@ -595,7 +642,7 @@ final class AppStore {
     func recordCheckIn(conceptId: String, passed: Bool, now: Date = Date()) {
         // Record what was open BEFORE this outcome can flip the governor, so an
         // already-unlocked modality is never re-locked.
-        refreshUnlocks()
+        refreshUnlocks(now: now)
         if let idx = concepts.firstIndex(where: { $0.id == conceptId }) {
             var concept = concepts[idx]
             let next: Double
@@ -735,7 +782,11 @@ final class AppStore {
             if cov >= config.readingBridge { return .foundation }
             return .locked
         default:
-            guard baseReadiness(for: .reading, config: config) == .unlocked else { return .locked }
+            // Reading as the learner actually has it — recorded open counts (hysteresis,
+            // B8): once Reading is open, its demonstrated minutes really do open the
+            // higher modalities, exactly as the unlock item promises (D2). The
+            // governor still holds a never-opened modality in `readiness(for:)`.
+            guard readiness(for: .reading, config: config) == .unlocked else { return .locked }
             if cov >= config.higherUnlock || totalMinutes(.reading) >= config.higherDemonstratedMinutes {
                 return .unlocked
             }
@@ -749,12 +800,19 @@ final class AppStore {
     /// and applies the coverage gate's hysteresis (B8): an opened modality is
     /// re-locked only once verified coverage has fallen below `readingBridge` —
     /// not merely below `readingUnlock` — and only here, never live.
-    func refreshUnlocks(config: ReadinessConfig = .tuning) {
+    func refreshUnlocks(config: ReadinessConfig = .tuning, now: Date = Date()) {
         if !unlockedModalities.isEmpty, baseCoverage < config.readingBridge {
             unlockedModalities.removeAll()   // reading closes, and everything gated behind it
         }
+        let readingWasOpen = unlockedModalities.contains(LearningModality.reading.rawValue)
         for modality in LearningModality.allCases where readiness(for: modality, config: config) == .unlocked {
             unlockedModalities.insert(modality.rawValue)
+        }
+        // The unlock path (D3): the moment Reading is first recorded open, the A2
+        // bridge slice joins the learner's gaps so the open surfaces have material.
+        // Only on the transition — a load or a snapshot never re-seeds.
+        if !readingWasOpen, unlockedModalities.contains(LearningModality.reading.rawValue) {
+            seedBridgeContentIfNeeded(now: now)
         }
     }
 
@@ -1473,8 +1531,8 @@ final class AppStore {
             personalBests = bests
         }
         if let data = defaults.data(forKey: dailyPlanKey),
-           let stored = try? decoder.decode(PersistedDailyPlan.self, from: data) {
-            dailyPlanOfRecord = stored.plan
+           let stored = try? decoder.decode(DailyPlan.self, from: data) {
+            dailyPlanOfRecord = stored
             dailyPlanDayKey = defaults.string(forKey: dailyPlanDayKey_)
         }
 
@@ -1747,16 +1805,18 @@ final class AppStore {
 
         if isFirstRun {
             var seeded = result.missedGaps
-            // Below the reading bar → seed the Foundation slice for base concepts:
-            // delivery-mode content to teach, and the vehicle for verifying seeds.
-            // Concepts the placement already captured a missed item for are skipped.
+            // Below the reading bar → seed the Foundation slice (D3): the BASE
+            // concepts only, plus the gaps of every concept placement seeded as
+            // provisional mastery (the vehicles for its verification check-ins and
+            // what gets taught if the seed fails — B7). Staggered in concept order so
+            // day one shows `Tuning.foundationSeedBatch` items as due, not the whole
+            // curriculum. An item the placement already captured as missed is not
+            // seeded a second time.
             if isInFoundation {
-                let missedGapConcepts = Set(seeded.compactMap { $0.conceptId })
-                let foundation = FoundationCurriculum.gaps().filter { gap in
-                    guard let cid = gap.conceptId else { return true }
-                    return !missedGapConcepts.contains(cid)
-                }
-                seeded.append(contentsOf: foundation)
+                seeded.append(contentsOf: foundationSlice(
+                    conceptIds: FoundationSeeder.firstRunConceptIds(seededMastered: result.masteredConceptIds),
+                    excludedHeadwords: Set(seeded.map { FoundationSeeder.headwordKey($0.frenchWord) }),
+                    existingIds: [], now: now))
             }
             gaps = seeded
             journeyStartedAt = now
@@ -1786,6 +1846,9 @@ final class AppStore {
             if journeyStartedAt == nil { journeyStartedAt = now }
         }
         hasCompletedAssessment = true
+        // A learner whose reading is open gets the A2 bridge slice (D4) — a
+        // straight-to-reading placement never ends with zero gaps and no-op buttons.
+        seedBridgeContentIfNeeded(now: now)
         // No `refreshUnlocks()` here (B8): placement seeds are provisional and never
         // count toward coverage, so the first check-in that verifies one is the first
         // bookkeeping point that can record an open modality.
@@ -1874,7 +1937,7 @@ final class AppStore {
         defaults.set(xp, forKey: xpKey)
         if let data = try? encoder.encode(personalBests) { defaults.set(data, forKey: personalBestsKey) }
         if let plan = dailyPlanOfRecord, let day = dailyPlanDayKey,
-           let data = try? encoder.encode(PersistedDailyPlan(plan)) {
+           let data = try? encoder.encode(plan) {
             defaults.set(data, forKey: dailyPlanKey)
             defaults.set(day, forKey: dailyPlanDayKey_)
         } else {
@@ -1925,61 +1988,6 @@ private nonisolated enum BlobResult<T> {
     case corrupt
 }
 
-/// Codable mirror of `DailyPlan` (which is a plain value type owned by the plan
-/// engine) so the plan of record survives a relaunch.
-private nonisolated struct PersistedDailyPlan: Codable {
-    struct Item: Codable {
-        /// Nil for the Foundation `.lessons` item.
-        var modality: String?
-        /// Kept as "minutes" for `.minutes` items so plans stored before `kind` existed decode.
-        var minutes: Int
-        var kind: String?
-
-        enum CodingKeys: String, CodingKey {
-            case modality, minutes, kind
-        }
-
-        init(modality: String?, minutes: Int, kind: String?) {
-            self.modality = modality
-            self.minutes = minutes
-            self.kind = kind
-        }
-
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            modality = try c.decodeIfPresent(String.self, forKey: .modality)
-            minutes = try c.decodeIfPresent(Int.self, forKey: .minutes) ?? 0
-            kind = try c.decodeIfPresent(String.self, forKey: .kind)
-        }
-    }
-    var items: [Item]
-    var rationale: String
-    var isColdStart: Bool
-
-    init(_ plan: DailyPlan) {
-        items = plan.items.map { Item(modality: $0.modality?.rawValue, minutes: $0.target, kind: $0.kind.rawValue) }
-        rationale = plan.rationale
-        isColdStart = plan.isColdStart
-    }
-
-    var plan: DailyPlan {
-        DailyPlan(
-            items: items.compactMap { item -> DailyPlanItem? in
-                let kind = item.kind.flatMap { DailyPlanItemKind(rawValue: $0) } ?? .minutes
-                switch kind {
-                case .lessons:
-                    return .lessons(item.minutes)
-                case .minutes:
-                    guard let raw = item.modality, let modality = LearningModality(rawValue: raw) else { return nil }
-                    return DailyPlanItem(modality: modality, targetMinutes: item.minutes)
-                }
-            },
-            rationale: rationale,
-            isColdStart: isColdStart
-        )
-    }
-}
-
 nonisolated extension GapItem {
     var conceptLabelForError: String {
         switch category {
@@ -1994,24 +2002,578 @@ nonisolated extension GapItem {
 
 extension AppStore {
     // MARK: Package C — lesson-loop store methods
+
+    /// Record an answer whose FSRS grade the lesson has already decided — the
+    /// accent slip that counts as a `.hard` success (C3) — at the format's evidence
+    /// weight, exactly as `recordAnswer` does for a format-derived grade. `.again`
+    /// is a miss; every other grade is a correct answer.
+    func recordGradedAnswer(gapId: String, grade: ReviewGrade, format: AnswerFormat,
+                            conceptWeight: Double = 1, isCheckIn: Bool? = nil, now: Date = Date()) {
+        let weight = Tuning.formatEvidenceWeight(format) * conceptWeight
+        recordReview(gapId: gapId, correct: grade != .again, grade: grade, conceptWeight: weight,
+                     isCheckIn: isCheckIn, now: now)
+    }
 }
 
 extension AppStore {
     // MARK: Package D-home — Home screen / daily plan / gate store methods
+
+    // MARK: Plan of record (D14)
+
+    /// Today's plan of record: the plan engine runs at most once per calendar day
+    /// (`planForToday`), so Home never re-rolls the plan mid-day. Progress toward
+    /// each item is read live through `planProgress(for:)`.
+    func todaysPlan(now: Date = Date()) -> DailyPlan {
+        planForToday(now: now) { DailyPlanEngine(store: self).makePlan(now: now) }
+    }
+
+    /// Recompute today's plan right now — for a preference change or an unlock,
+    /// the two events that change the plan's shape rather than its progress.
+    @discardableResult
+    func recomputePlan(now: Date = Date()) -> DailyPlan {
+        refreshPlan(now: now) { DailyPlanEngine(store: self).makePlan(now: now) }
+    }
+
+    // MARK: Entry-point gate (D1 / D5)
+
+    /// Whether Home may open a modality's surface. Reading opens in the bridge
+    /// state too (`.foundation` — the surface caps itself to short, level-capped
+    /// pieces); every other modality opens only when unlocked.
+    func canOpen(_ modality: LearningModality) -> Bool {
+        switch readiness(for: modality) {
+        case .unlocked: return true
+        case .foundation: return modality == .reading
+        case .locked: return false
+        }
+    }
+
+    /// The learner-facing unlock condition for a modality, worded in ONE place
+    /// (`ReadinessCopy`) from this store's real readings; nil when unlocked. For
+    /// Reading in the bridge state this is the bridge note, not a lock.
+    func unlockCondition(for modality: LearningModality) -> String? {
+        ReadinessCopy.unlockCondition(for: modality,
+                                      readiness: readiness(for: modality),
+                                      readingReadiness: readiness(for: .reading),
+                                      readingMinutes: totalMinutes(.reading),
+                                      governorActive: isGovernorActive)
+    }
+
+    /// Modalities the learner chose in Preferences that are still locked — Home
+    /// lists them as disabled plan rows with their unlock condition (D1/D2).
+    var lockedChosenModalities: [LearningModality] {
+        let prefs = preferences ?? .default
+        return LearningModality.allCases.filter { prefs.modalities.contains($0) && readiness(for: $0) != .unlocked }
+    }
+
+    // MARK: Activity credit (D9)
+
+    /// The plan target one activity session is measured against: today's minutes
+    /// row for the modality, the unlock item's bar when that is the day's action,
+    /// otherwise the time budget (an activity outside the plan still counts, but
+    /// no more than a day's worth).
+    func planTargetMinutes(for modality: LearningModality, now: Date = Date()) -> Int {
+        let plan = todaysPlan(now: now)
+        if let row = plan.minuteItems.first(where: { $0.modality == modality }) { return row.target }
+        if let unlock = plan.unlockItem, unlock.modality == modality { return unlock.target }
+        return (preferences ?? .default).timeBudget.minutes
+    }
+
+    /// Credit one activity session's FOREGROUND seconds to the modality, capped at
+    /// the plan target × `Tuning.activityCreditCapMultiplier` (a surface left open
+    /// never pads the day). Returns the minutes credited.
+    @discardableResult
+    func creditActivity(_ modality: LearningModality, activeSeconds: TimeInterval, now: Date = Date()) -> Int {
+        let cap = ActivityCredit.capMinutes(planTargetMinutes: planTargetMinutes(for: modality, now: now))
+        let minutes = ActivityCredit.minutes(activeSeconds: activeSeconds, capMinutes: cap)
+        guard minutes > 0 else { return 0 }
+        recordActivityMinutes(modality, minutes: minutes, now: now)
+        // The unlock item keeps its promise the moment it is met (D2): the gate reads
+        // the new minutes live, so record the opened modalities and re-plan the day
+        // now rather than leaving "Start with Reading" as the primary action until
+        // the next lesson end. `refreshUnlocks` is what makes Home's
+        // onChange(unlockedModalities) fire as well.
+        if let unlock = dailyPlanOfRecord?.unlockItem, unlock.modality == modality,
+           totalMinutes(modality) >= unlock.target {
+            refreshUnlocks(now: now)
+            recomputePlan(now: now)
+        }
+        return minutes
+    }
+
+    // MARK: Retention evidence (D19)
+
+    /// True once at least one learner-visible gap has been reviewed. Before that
+    /// `overallRetention` / `gapHealth` have nothing to average and return 100 as a
+    /// neutral default — a value no screen should draw as a full ring or "Healthy".
+    var hasRetentionEvidence: Bool {
+        visibleGaps.contains { !$0.isNew }
+    }
 }
 
 extension AppStore {
     // MARK: Package D-flow — placement / preferences / deck / retention store methods
+
+    // MARK: Due now / coming up (D13) — the ONLY two "due" numbers any screen shows
+
+    /// "Due now": every learner-visible gap whose schedule wants it at `now` — unmastered
+    /// gaps at or past `nextReviewAt`, plus mastered gaps due for a check
+    /// (`dueMasteredGaps`). Probes never count.
+    func dueNow(at now: Date) -> [GapItem] {
+        visibleGaps.filter { $0.nextReviewAt <= now } + dueMasteredGaps(at: now)
+    }
+
+    var dueNow: [GapItem] { dueNow(at: Date()) }
+
+    /// "Coming up": gaps due within `Tuning.upcomingWindowDays` that are not due now —
+    /// unmastered gaps scheduled inside the window, and mastered gaps whose next
+    /// check falls inside it. Disjoint from `dueNow`.
+    func upcoming(at now: Date) -> [GapItem] {
+        let horizon = now.addingTimeInterval(Tuning.upcomingWindowDays * 86_400)
+        let unmastered = visibleGaps.filter { $0.nextReviewAt > now && $0.nextReviewAt <= horizon }
+        let mastered = masteredGaps.filter {
+            !$0.isDueForMasteryCheck(at: now) && $0.nextReviewAt > now && $0.nextReviewAt <= horizon
+        }
+        return unmastered + mastered
+    }
+
+    var upcoming: [GapItem] { upcoming(at: Date()) }
+
+    // MARK: Foundation seeding (D3 / D4 / D10)
+
+    /// The Foundation gaps of `conceptIds` from the curriculum content, in concept
+    /// order, staggered so about `Tuning.foundationSeedBatch` items come due per day
+    /// from `now`. Skips items already present (`existingIds`) and headwords the
+    /// placement captured as missed items (`excludedHeadwords`).
+    func foundationSlice(conceptIds: [String], excludedHeadwords: Set<String> = [],
+                         existingIds: Set<String> = [], now: Date = Date()) -> [GapItem] {
+        let slice = FoundationSeeder.slice(from: foundationContent(now), conceptIds: conceptIds,
+                                           excludedHeadwords: excludedHeadwords, existingIds: existingIds)
+        return FoundationSeeder.staggered(slice, batch: Tuning.foundationSeedBatch, now: now, calendar: calendar)
+    }
+
+    /// True once the bridge slice (every non-base concept up to A2) has been seeded.
+    var hasBridgeContent: Bool {
+        let bridge = Set(FoundationSeeder.bridgeConceptIds)
+        return gaps.contains { $0.sourceType == .foundation && !$0.isProbe && bridge.contains($0.conceptId ?? "") }
+    }
+
+    /// Seed the A2 bridge slice once reading is open (D3/D4): the Foundation gaps of
+    /// every non-base concept up to A2, staggered like the first-run slice. A no-op
+    /// while reading is locked or when the slice is already present, so it is safe
+    /// to call from any bookkeeping point (placement, lesson end, unlock refresh).
+    /// Returns how many gaps were added.
+    @discardableResult
+    func seedBridgeContentIfNeeded(now: Date = Date()) -> Int {
+        guard readiness(for: .reading) == .unlocked, !hasBridgeContent else { return 0 }
+        let existingHeadwords = Set(gaps.map { FoundationSeeder.headwordKey($0.frenchWord) })
+        let slice = foundationSlice(conceptIds: FoundationSeeder.bridgeConceptIds,
+                                    excludedHeadwords: existingHeadwords,
+                                    existingIds: Set(gaps.map { $0.id }), now: now)
+        guard !slice.isEmpty else { return 0 }
+        gaps.append(contentsOf: slice)
+        save()
+        return slice.count
+    }
+
+    /// Base concepts the Foundation track has actually seeded content for — the
+    /// denominator of the Foundation progress bar (D10). Every base concept when
+    /// nothing has been seeded yet, so the bar never divides by zero.
+    var foundationSeedConceptIds: [String] {
+        let seeded = Set(gaps.compactMap { gap -> String? in
+            guard gap.sourceType == .foundation, !gap.isProbe, let cid = gap.conceptId,
+                  ConceptTaxonomy.baseConceptIds.contains(cid) else { return nil }
+            return cid
+        })
+        let ordered = FoundationSeeder.baseConceptIds.filter { seeded.contains($0) }
+        return ordered.isEmpty ? FoundationSeeder.baseConceptIds : ordered
+    }
+
+    /// Denominator of the Foundation progress bar: seeded base concepts (D10).
+    var foundationSeedTotal: Int { foundationSeedConceptIds.count }
+
+    /// Numerator of the Foundation progress bar: seeded base concepts with VERIFIED
+    /// mastery — the same standard `foundationMastered` and coverage use.
+    var foundationSeededMastered: Int {
+        let ids = Set(foundationSeedConceptIds)
+        return concepts.filter { ids.contains($0.id) && $0.isVerifiedMastered }.count
+    }
+
+    // MARK: Weekly goal (D11)
+
+    /// Days this calendar week with a completed lesson against the learner's
+    /// `daysPerWeekGoal`; nil when no goal is set.
+    func weeklyGoalProgress(now: Date) -> (done: Int, goal: Int)? {
+        guard let goal = preferences?.daysPerWeekGoal, goal > 0 else { return nil }
+        guard let week = calendar.dateInterval(of: .weekOfYear, for: now) else { return (0, goal) }
+        var done = 0
+        var cursor = week.start
+        while cursor < week.end {
+            if lessonsCompleted(on: cursor) > 0 { done += 1 }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return (min(done, goal), goal)
+    }
+
+    var weeklyGoalProgress: (done: Int, goal: Int)? { weeklyGoalProgress(now: Date()) }
 }
 
 extension AppStore {
     // MARK: Package E-read — reading / capture / tagger store methods
+
+    /// The content lexicon the tagger reads (built once, on first use).
+    var tagLexicon: [String: String] {
+        if let cachedTagLexicon { return cachedTagLexicon }
+        let built = tagLexiconProvider()
+        cachedTagLexicon = built
+        return built
+    }
+
+    /// Wait until every queued tag request has landed (tests and diagnostics).
+    func awaitPendingTags() async {
+        var pending = tagChain
+        while let chain = pending {
+            await chain.value
+            pending = tagChain == chain ? nil : tagChain
+        }
+    }
+
+    // MARK: Capture from a draft (E4 / E6 / E7)
+
+    /// Turn a capture draft into a scheduled, deduped gap. Category, level and
+    /// difficulty come from `CaptureBuilder` (gloss detail + source level + the
+    /// learner's level); `irtDifficulty` and the FSRS state from the store
+    /// factory. A draft with no meaning is saved with `needsTranslation = true`
+    /// and an empty `englishTranslation` — never a placeholder string — and is
+    /// resolved later by `resolvePendingTranslations(using:)`. A draft that names
+    /// a concept the learner has is linked to it directly (content-known, no
+    /// confidence); otherwise tagging is queued. Returns what happened so the
+    /// surface can say "Saved" / "Already in your deck".
+    @discardableResult
+    func capture(_ draft: CaptureDraft, now: Date = Date()) -> CaptureOutcome {
+        let word = draft.frenchWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return .rejected }
+        if let existing = existingGap(forWord: word) { return .duplicate(existing) }
+
+        let level = CaptureBuilder.level(sourceLevel: draft.sourceLevel, learnerLevel: learnerLevel)
+        let category = CaptureBuilder.category(explicit: draft.category, partOfSpeech: draft.partOfSpeech,
+                                               register: draft.register, frenchWord: word)
+        let difficulty = CaptureBuilder.difficulty(explicit: draft.difficulty, level: level,
+                                                   learnerLevel: learnerLevel, register: draft.register)
+        let note = draft.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explanation = [draft.explanation.trimmingCharacters(in: .whitespacesAndNewlines),
+                           note.isEmpty ? "" : "Note: \(note)"]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        let context = draft.contextSentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The example is the gloss's own sentence, else the sentence the word was
+        // met in — never the bare term.
+        let example = draft.exampleSentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        let exampleSentence = example.isEmpty ? context : example
+        let exampleTranslation = example.isEmpty ? "" : draft.exampleTranslation
+        let translation = draft.needsTranslation ? "" : draft.englishTranslation.trimmingCharacters(in: .whitespacesAndNewlines)
+        let linked = concept(draft.conceptId)
+
+        var gap = makeCapturedGap(
+            frenchWord: word,
+            englishTranslation: translation,
+            explanation: explanation,
+            exampleSentence: exampleSentence,
+            exampleTranslation: exampleTranslation,
+            pronunciation: draft.pronunciation,
+            sourceType: draft.sourceType,
+            category: category,
+            cefrLevel: level,
+            difficulty: difficulty,
+            partOfSpeech: draft.partOfSpeech,
+            gender: draft.gender,
+            article: draft.article,
+            baseForm: draft.baseForm,
+            register: draft.register,
+            relatedWords: draft.relatedWords,
+            originalContext: context.isEmpty ? nil : OriginalContext(sentence: context, translation: nil,
+                                                                      sourceTab: draft.sourceTab, capturedAt: now,
+                                                                      reExposureCount: 0),
+            conceptId: linked?.id,
+            now: now
+        )
+        gap.needsTranslation = translation.isEmpty
+        gap.isTestable = draft.isTestable
+        guard captureGap(gap) else {
+            return existingGap(forWord: word).map { .duplicate($0) } ?? .rejected
+        }
+        return .saved(gaps.first { $0.id == gap.id } ?? gap)
+    }
+
+    // MARK: Pending translations (E4)
+
+    /// Gaps captured without a meaning that still need one.
+    var pendingTranslations: [GapItem] {
+        gaps.filter { $0.needsTranslation && !$0.isProbe }
+    }
+
+    /// Fill a pending gap in from a real gloss: meaning, example (when it had
+    /// none), pronunciation and dictionary detail. A gloss with no meaning is
+    /// ignored. Once the gap has English the tagger has something to work with,
+    /// so tagging is queued if it is still untagged.
+    @discardableResult
+    func applyResolvedTranslation(gapId: String, gloss: WordGloss) -> Bool {
+        guard gloss.isUsable, let idx = gaps.firstIndex(where: { $0.id == gapId }) else { return false }
+        gaps[idx].englishTranslation = gloss.translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        gaps[idx].needsTranslation = false
+        if gaps[idx].explanation.isEmpty || gaps[idx].explanation.hasPrefix("Note:") {
+            let note = gaps[idx].explanation
+            gaps[idx].explanation = [gloss.explanation, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
+        if !gloss.example.isEmpty, gaps[idx].exampleSentence.isEmpty || gaps[idx].exampleSentence == gaps[idx].originalContext?.sentence {
+            gaps[idx].exampleSentence = gloss.example
+            gaps[idx].exampleTranslation = gloss.exampleTranslation
+        }
+        if gaps[idx].pronunciation == nil, !gloss.pronunciation.isEmpty { gaps[idx].pronunciation = gloss.pronunciation }
+        if gaps[idx].partOfSpeech == nil, !gloss.partOfSpeech.isEmpty { gaps[idx].partOfSpeech = gloss.partOfSpeech }
+        if gaps[idx].gender == nil, !gloss.gender.isEmpty { gaps[idx].gender = gloss.gender }
+        if gaps[idx].article == nil, !gloss.article.isEmpty { gaps[idx].article = gloss.article }
+        if gaps[idx].baseForm == nil, !gloss.baseForm.isEmpty { gaps[idx].baseForm = gloss.baseForm }
+        if gaps[idx].register == nil, !gloss.register.isEmpty { gaps[idx].register = gloss.register }
+        if gaps[idx].relatedWords == nil, !gloss.relatedWords.isEmpty { gaps[idx].relatedWords = gloss.relatedWords }
+        // The category may have been a guess without dictionary detail; re-derive
+        // from what the gloss says (an explicit concept link keeps its category).
+        if gaps[idx].conceptId == nil {
+            gaps[idx].category = CaptureBuilder.category(explicit: nil, partOfSpeech: gaps[idx].partOfSpeech,
+                                                         register: gaps[idx].register, frenchWord: gaps[idx].frenchWord)
+        }
+        save()
+        tagConcept(for: gapId)
+        return true
+    }
+
+    /// Retry the pending captures now that a lookup has just succeeded (so the
+    /// network is evidently reachable). At most `limit` gaps per pass, oldest
+    /// first; the pass stops at the first failure (offline again). Returns how
+    /// many were resolved. `resolver` is `TranslationService.lookup` in the app
+    /// and a fake in tests.
+    @discardableResult
+    func resolvePendingTranslations(using resolver: (String, String) async -> GlossLookup,
+                                    limit: Int = Tuning.pendingTranslationBatch) async -> Int {
+        guard !isResolvingTranslations else { return 0 }
+        isResolvingTranslations = true
+        defer { isResolvingTranslations = false }
+        let batch = pendingTranslations.sorted { $0.createdAt < $1.createdAt }.prefix(max(0, limit))
+        var resolved = 0
+        for gap in batch {
+            let context = gap.originalContext?.sentence ?? ""
+            switch await resolver(gap.frenchWord, context) {
+            case .gloss(let g):
+                if applyResolvedTranslation(gapId: gap.id, gloss: g) { resolved += 1 }
+            case .unavailable:
+                return resolved
+            }
+        }
+        return resolved
+    }
 }
 
 extension AppStore {
     // MARK: Package E-talk — converse / speaking store methods
+
+    /// Minutes practiced in a modality over the last `Tuning.speakStatsWindowDays`
+    /// days, today included (the Speak header's "this week").
+    func minutesThisWeek(_ modality: LearningModality, now: Date = Date()) -> Int {
+        let days = max(1, Tuning.speakStatsWindowDays)
+        var total = 0
+        for offset in 0..<days {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: now) else { continue }
+            total += activityProgress["\(dayKey(day))|\(modality.rawValue)"] ?? 0
+        }
+        return total
+    }
+
+    /// What one round of speaking feedback left behind (E13).
+    nonisolated struct SpeakFeedbackOutcome: Equatable {
+        /// Gaps newly saved to the deck (the corrected line and/or the natural phrasing).
+        var savedGaps: [GapItem] = []
+        /// Planned gaps that were already in the deck (nothing re-added).
+        var duplicateCount: Int = 0
+        /// Concepts that received a miss.
+        var missedConceptIds: [String] = []
+        /// Concepts that received a hit.
+        var strongConceptIds: [String] = []
+
+        var savedCount: Int { savedGaps.count }
+        var recordedEvidence: Bool { !missedConceptIds.isEmpty || !strongConceptIds.isEmpty }
+    }
+
+    /// The note a speaking gap carries: the feedback's explanation plus the
+    /// prompt the learner was answering, so the card keeps why the phrase exists.
+    nonisolated static func speakGapExplanation(_ explanation: String, promptText: String) -> String {
+        let prompt = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return explanation }
+        return explanation.isEmpty ? "Prompt: \(prompt)" : "\(explanation) · Prompt: \(prompt)"
+    }
+
+    /// Speaking feedback → deck and evidence (E13): the corrected and the natural
+    /// phrasing become gaps through the capture factory (deduped on the headword),
+    /// carrying the English the feedback supplied — or waiting for a translation
+    /// when it gave none, never an empty answer that is treated as a meaning. The
+    /// corrected gap starts with the miss the learner just made, the prompt they
+    /// were answering is kept on the card, and every concept the feedback names —
+    /// validated against the taxonomy by the parser — gets speaking evidence. The
+    /// learner's own unchanged line is never saved.
+    @discardableResult
+    func recordSpeakFeedback(original: String, feedback: SpeakFeedback, promptText: String,
+                             now: Date = Date()) -> SpeakFeedbackOutcome {
+        var outcome = SpeakFeedbackOutcome()
+        let specs = SpeakGapPlan.specs(original: original, feedback: feedback)
+        for spec in specs {
+            if let existing = existingGap(forWord: spec.french) {
+                outcome.duplicateCount += 1
+                if spec.kind == .corrected {
+                    recordAnswer(gapId: existing.id, correct: false, format: .speaking, firstTry: true, now: now)
+                }
+                continue
+            }
+            let linked = concept(spec.conceptId)
+            let english = spec.english.trimmingCharacters(in: .whitespacesAndNewlines)
+            var gap = makeCapturedGap(
+                frenchWord: spec.french,
+                englishTranslation: english,
+                explanation: Self.speakGapExplanation(spec.explanation, promptText: promptText),
+                exampleSentence: spec.french,
+                exampleTranslation: english,
+                sourceType: .speech,
+                category: linked?.category ?? .phrasing,
+                cefrLevel: linked?.cefrLevel,
+                originalContext: OriginalContext(sentence: spec.originalFrench, translation: nil, sourceTab: "speak",
+                                                 capturedAt: now, reExposureCount: 0),
+                conceptId: linked?.id,
+                now: now
+            )
+            gap.needsTranslation = english.isEmpty
+            guard captureGap(gap) else { outcome.duplicateCount += 1; continue }
+            if spec.kind == .corrected {
+                recordAnswer(gapId: gap.id, correct: false, format: .speaking, firstTry: true, now: now)
+            }
+            if let saved = gaps.first(where: { $0.id == gap.id }) { outcome.savedGaps.append(saved) }
+        }
+        for id in feedback.mistakeConceptIds where concept(id) != nil {
+            recordSpeakingEvidence(conceptId: id, correct: false, now: now)
+            outcome.missedConceptIds.append(id)
+        }
+        for id in feedback.strongConceptIds where concept(id) != nil && !outcome.missedConceptIds.contains(id) {
+            recordSpeakingEvidence(conceptId: id, correct: true, now: now)
+            outcome.strongConceptIds.append(id)
+        }
+        if !specs.isEmpty || outcome.recordedEvidence { save() }
+        return outcome
+    }
+
+    /// Every tutor correction from a Converse call, saved as the CORRECTED line
+    /// with the slip recorded against it (E10). Returns the gap each correction
+    /// landed on, keyed by the correction id, so the recap can show what was kept.
+    @discardableResult
+    func recordConverseCorrections(_ corrections: [ConverseCorrection], now: Date = Date()) -> [UUID: GapItem] {
+        var result: [UUID: GapItem] = [:]
+        for correction in corrections {
+            let gap = recordConverseCorrection(
+                originalFrench: correction.originalFrench,
+                correctedFrench: correction.correctedFrench,
+                explanation: correction.explanation,
+                conceptId: correction.conceptId,
+                englishTranslation: correction.englishTranslation,
+                now: now
+            )
+            if let gap { result[correction.id] = gap }
+        }
+        if !result.isEmpty { save() }
+        return result
+    }
+
+    /// A tutor line from a Converse call saved as said (E9). English may be empty
+    /// (older reply shape) — then the gap waits for a translation rather than
+    /// carrying a placeholder. Returns false when the phrase was already in the deck.
+    @discardableResult
+    func captureConversePhrase(french: String, english: String, scenarioTitle: String, now: Date = Date()) -> Bool {
+        let phrase = french.trimmingCharacters(in: .whitespacesAndNewlines)
+        let translation = english.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !phrase.isEmpty else { return false }
+        var gap = makeCapturedGap(
+            frenchWord: phrase,
+            englishTranslation: translation,
+            explanation: "Phrase from your “\(scenarioTitle)” conversation.",
+            exampleSentence: phrase,
+            exampleTranslation: translation,
+            sourceType: .speech,
+            category: .phrasing,
+            originalContext: OriginalContext(sentence: phrase, translation: translation.isEmpty ? nil : translation,
+                                             sourceTab: "converse", capturedAt: now, reExposureCount: 0),
+            now: now
+        )
+        gap.needsTranslation = translation.isEmpty
+        guard captureGap(gap) else { return false }
+        save()
+        return true
+    }
 }
 
 extension AppStore {
     // MARK: Package E-media — listening / watching store methods
+
+    /// What a hold-to-capture on a dialogue left behind (E8).
+    nonisolated struct ListeningCaptureOutcome: Equatable {
+        /// Gaps newly saved, one per dialogue line.
+        var savedGaps: [GapItem] = []
+        /// Lines that were already in the deck (nothing re-added).
+        var duplicateCount: Int = 0
+
+        var savedCount: Int { savedGaps.count }
+    }
+
+    /// Save ONE dialogue line as a gap (E8 / E7): the turn's own French as the
+    /// headword, the turn's own English as the translation, `.phrasing`, the
+    /// dialogue's level as the gap's level and the difficulty relative to the
+    /// learner from `CaptureBuilder`. Built through the capture factory so it
+    /// starts scheduled, and deduped on the headword by `captureGap`.
+    @discardableResult
+    func captureListeningTurn(_ spec: ListeningCaptureSpec, from item: ListeningItem, now: Date = Date()) -> CaptureOutcome {
+        let french = spec.french.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !french.isEmpty else { return .rejected }
+        if let existing = existingGap(forWord: french) { return .duplicate(existing) }
+        let english = spec.english.trimmingCharacters(in: .whitespacesAndNewlines)
+        let level = item.difficulty.captureLevel
+        let difficulty = CaptureBuilder.difficulty(explicit: nil, level: level, learnerLevel: learnerLevel, register: nil)
+        var gap = makeCapturedGap(
+            frenchWord: french,
+            englishTranslation: english,
+            explanation: ListeningCapture.explanation(for: item),
+            exampleSentence: french,
+            exampleTranslation: english,
+            sourceType: .listening,
+            category: .phrasing,
+            cefrLevel: level,
+            difficulty: difficulty,
+            originalContext: OriginalContext(sentence: french, translation: english.isEmpty ? nil : english,
+                                             sourceTab: "listen", capturedAt: now, reExposureCount: 0),
+            now: now
+        )
+        gap.needsTranslation = english.isEmpty
+        guard captureGap(gap) else {
+            return existingGap(forWord: french).map { .duplicate($0) } ?? .rejected
+        }
+        return .saved(gaps.first { $0.id == gap.id } ?? gap)
+    }
+
+    /// Save every line of a hold-to-capture selection, one gap per turn — never a
+    /// joined passage (E8). Persists once at the end.
+    @discardableResult
+    func captureListeningTurns(_ specs: [ListeningCaptureSpec], from item: ListeningItem, now: Date = Date()) -> ListeningCaptureOutcome {
+        var outcome = ListeningCaptureOutcome()
+        for spec in specs {
+            switch captureListeningTurn(spec, from: item, now: now) {
+            case .saved(let gap): outcome.savedGaps.append(gap)
+            case .duplicate: outcome.duplicateCount += 1
+            case .rejected: break
+            }
+        }
+        if !outcome.savedGaps.isEmpty { save() }
+        return outcome
+    }
 }

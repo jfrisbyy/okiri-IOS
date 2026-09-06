@@ -15,13 +15,16 @@ struct AssessmentView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    /// True on first launch (replaces sample gaps); false when re-taking.
+    /// True on first launch (starts the record from zero); false when re-taking
+    /// ("Recalibrate": the result blends with existing evidence, D8).
     let isFirstRun: Bool
 
     private enum Stage { case intro, quiz, results }
 
     @State private var stage: Stage = .intro
-    @State private var engine = PlacementEngine()
+    /// Replaced with a content-backed bank in `beginQuiz` (the store is not
+    /// available to a property initializer).
+    @State private var engine = PlacementEngine(bank: [])
     @State private var current: AssessmentQuestion? = nil
     @State private var selected: String? = nil
     @State private var revealed = false
@@ -56,13 +59,20 @@ struct AssessmentView: View {
             }
             Text(isFirstRun ? "Welcome ! Let's find your level" : "Recalibrate your level")
                 .font(.serifDisplay(28, weight: .bold)).foregroundStyle(Theme.text).multilineTextAlignment(.center)
-            Text("A few quick questions that adapt to you. We'll set your starting point and only teach what you don't already know.")
-                .font(.system(size: 15)).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+            Text(isFirstRun
+                 ? "A few quick questions that adapt to you. We'll set your starting point and only teach what you don't already know."
+                 : "A short retake to update your level. It adds to what you've already shown — it never lowers what you've earned.")
+                .font(.callout).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
             VStack(spacing: 10) {
-                infoRow("dial.medium.fill", "Adapts as you answer — no fixed length")
+                infoRow("dial.medium.fill", "Adapts as you answer — \(engineMin) to \(engineMax) questions")
                 infoRow("textformat.abc", "Estimates vocabulary & grammar separately")
-                infoRow("signpost.right.fill", "Routes you to the right starting point")
+                if isFirstRun {
+                    infoRow("signpost.right.fill", "Routes you to the right starting point")
+                } else {
+                    infoRow("arrow.triangle.merge", "Blends with your evidence: skills you've mastered stay mastered")
+                    infoRow("plus.circle", "Anything you miss becomes something to teach — nothing is wiped")
+                }
             }
             .padding(Space.lg)
             .frame(maxWidth: .infinity)
@@ -82,11 +92,16 @@ struct AssessmentView: View {
     private func infoRow(_ icon: String, _ text: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).font(.system(size: 18)).foregroundStyle(Self.accent).frame(width: 28)
-            Text(text).font(.system(size: 15)).foregroundStyle(Theme.text)
+                .accessibilityHidden(true)
+            Text(text).font(.callout).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
     }
+
+    /// The staircase's bounds, read from the engine (never hard-coded in copy — D17).
+    private var engineMin: Int { engine.minItems }
+    private var engineMax: Int { engine.maxItems }
 
     // MARK: Quiz
 
@@ -126,24 +141,38 @@ struct AssessmentView: View {
             if !isFirstRun {
                 Button { dismiss() } label: {
                     Image(systemName: "xmark").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textMuted)
+                        .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("Close")
             }
-            // Adaptive test has no fixed length — show an indeterminate "finding your
-            // level" bar that fills toward the max as evidence accumulates.
+            // The adaptive test has no fixed length: the bar fills toward the engine's
+            // maximum as evidence accumulates, with a tick at its minimum (D17).
             GeometryReader { geo in
+                let fraction = min(1, Double(engine.asked.count) / Double(max(engineMax, 1)))
+                let minFraction = Double(engineMin) / Double(max(engineMax, 1))
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.border).frame(height: 10)
                     Capsule().fill(Self.indigo)
-                        .frame(width: max(10, geo.size.width * min(1, Double(engine.asked.count) / 8.0)), height: 10)
+                        .frame(width: max(10, geo.size.width * fraction), height: 10)
                         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: engine.asked.count)
+                    Rectangle().fill(Theme.card.opacity(0.9))
+                        .frame(width: 2, height: 10)
+                        .offset(x: geo.size.width * minFraction)
                 }
                 .frame(height: 10)
             }
             .frame(height: 10)
-            Text("Q\(engine.asked.count + (revealed ? 0 : 1))").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textMuted)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Placement progress")
+            .accessibilityValue("Question \(questionNumber) of at most \(engineMax); at least \(engineMin)")
+            Text("Q\(questionNumber)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textMuted)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, Space.xl).padding(.top, 16).padding(.bottom, 8)
     }
+
+    /// The question number shown on the bar (the one on screen until it is checked).
+    private var questionNumber: Int { engine.asked.count + (revealed ? 0 : 1) }
 
     private func bandLabel(_ band: Int) -> String {
         switch band {
@@ -183,6 +212,9 @@ struct AssessmentView: View {
             .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(stroke, lineWidth: 1.5))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(option)
+        .accessibilityValue(revealed ? (isCorrect ? "Correct answer" : (isSelected ? "Your answer, incorrect" : "")) : (isSelected ? "Selected" : ""))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func explanation(_ q: AssessmentQuestion) -> some View {
@@ -225,9 +257,11 @@ struct AssessmentView: View {
                         Circle().fill(Self.indigo).frame(width: 130, height: 130).softLift(radius: 20, y: 10, strength: 2)
                         VStack(spacing: 0) {
                             Text(result.estimatedLevel.rawValue).font(.system(size: 40, weight: .heavy)).foregroundStyle(.white)
-                            Text("your level").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                            Text("placed at").font(.footnote.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
                         }
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Placed at \(result.estimatedLevel.rawValue)")
                     Text(headline(result)).font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
                         .multilineTextAlignment(.center)
                     Text(blurb(result)).font(.system(size: 15)).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
@@ -278,6 +312,9 @@ struct AssessmentView: View {
                 }
             }
             .frame(height: 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(label) strength")
+            .accessibilityValue(bandStrength(band))
         }
     }
 
@@ -330,6 +367,9 @@ struct AssessmentView: View {
         if result.isTrueBeginner {
             return "No worries — we'll guide you from the very first words and build up step by step."
         }
+        if !isFirstRun {
+            return "Blended with what you'd already shown: nothing you've earned was lowered, and what you slipped on joins your gaps."
+        }
         if result.vocabBand > result.grammarBand + 1 {
             return "Your vocabulary is ahead of your grammar — we'll shore up the rules as you go."
         }
@@ -343,7 +383,9 @@ struct AssessmentView: View {
 
     private func beginQuiz() {
         Haptics.select()
-        engine = PlacementEngine()
+        // The bank is the content probes (three real items per concept, D6/B9);
+        // hand-written items only fill in where content is missing.
+        engine = PlacementEngine(bank: AssessmentService.placementBank(concepts: store.concepts, probes: store.probeContent))
         result = nil
         loadNext()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { stage = .quiz }
@@ -399,7 +441,9 @@ struct AssessmentView: View {
             Button { dismiss() } label: {
                 Image(systemName: "xmark").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textMuted)
                     .frame(width: 32, height: 32).background(Theme.card).clipShape(.circle).softLift(strength: 0.5)
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("Close")
         }
     }
 

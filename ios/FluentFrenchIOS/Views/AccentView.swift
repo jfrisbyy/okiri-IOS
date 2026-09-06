@@ -3,8 +3,9 @@
 //  FluentFrenchIOS
 //
 //  Pronunciation practice — browse sound categories, then step through word
-//  cards with phonetics, hints, and a listen button. Recording-based scoring
-//  requires a real device microphone, so it shows the standard install note.
+//  cards with phonetics, hints, and a listen button. Scored recording lives in
+//  Speak; this page says so honestly and lets the learner save a word to the
+//  deck under its pronunciation concept (E25).
 //
 
 import SwiftUI
@@ -88,12 +89,40 @@ private struct AccentPracticeView: View {
     let category: PronunciationCategory
     let onBack: () -> Void
 
+    @Environment(AppStore.self) private var store
     @State private var index: Int = 0
     @State private var mastered: Set<String> = []
     @State private var showTips = false
+    /// The word being saved to the deck (E25).
+    @State private var captureDraft: CaptureDraft? = nil
 
     private var word: PronunciationWord { category.words[index] }
     private var progress: Double { Double(index + 1) / Double(category.words.count) }
+
+    /// The taxonomy concept this sound category is evidence of (nil when none fits).
+    private var conceptId: String? {
+        switch category.id {
+        case "nasal-vowels": return "nasal-vowels"
+        case "french-r": return "guttural-r"
+        default: return nil
+        }
+    }
+
+    /// What saving a practice word stores: the word, its meaning, the IPA and
+    /// the hint as the explanation — a pronunciation gap at A1.
+    private func draft(for w: PronunciationWord) -> CaptureDraft {
+        CaptureDraft(
+            frenchWord: w.word,
+            englishTranslation: w.translation,
+            explanation: "\(w.ipa) — \(w.audioHint)",
+            pronunciation: w.ipa,
+            sourceType: .reading,
+            sourceTab: "accent",
+            sourceLevel: .A1,
+            category: .pronunciation,
+            conceptId: conceptId
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -109,6 +138,9 @@ private struct AccentPracticeView: View {
             .scrollIndicators(.hidden)
             navBar
         }
+        .sheet(item: $captureDraft) { draft in
+            CaptureSheet(draft: draft, accent: category.color)
+        }
     }
 
     private var header: some View {
@@ -120,14 +152,18 @@ private struct AccentPracticeView: View {
                     Button { Haptics.tap(); onBack() } label: {
                         Image(systemName: "chevron.left").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
                             .frame(width: 38, height: 38).background(Color.white.opacity(0.2), in: Circle())
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Back to sound categories")
                     Spacer()
                     Button { Haptics.tap(); withAnimation { showTips.toggle() } } label: {
                         Image(systemName: "lightbulb.fill").font(.system(size: 15)).foregroundStyle(.white)
                             .frame(width: 38, height: 38).background(Color.white.opacity(0.2), in: Circle())
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showTips ? "Hide tips" : "Show tips")
                 }
                 Text(category.name).font(.serifDisplay(26, weight: .bold)).foregroundStyle(.white)
                 HStack(spacing: 8) {
@@ -205,20 +241,37 @@ private struct AccentPracticeView: View {
     }
 
     private var recordCard: some View {
-        VStack(spacing: 12) {
+        let saved = store.hasGap(forWord: word.word)
+        return VStack(spacing: 12) {
             Image(systemName: "waveform").font(.system(size: 26)).foregroundStyle(category.color)
                 .frame(width: 64, height: 64).background(category.color.opacity(0.12)).clipShape(.circle)
-            Text("Score your pronunciation").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
-            Text("Install this app on your device via the Rork App to record and score your accent.")
-                .font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+            Text("Say it out loud").font(.headline).foregroundStyle(Theme.text)
+            Text("Listen, repeat, and mark it when it feels right. Scored pronunciation practice lives in Speak.")
+                .font(.subheadline).foregroundStyle(Theme.textMuted)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Button { Haptics.success(); markMastered() } label: {
-                Text("Mark as practiced").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                Text("Mark as practiced").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(minHeight: 46)
                     .background(category.color).clipShape(.rect(cornerRadius: Radius.chip))
             }
             .buttonStyle(.plain)
             .padding(.top, 4)
+            Button {
+                guard !saved else { return }
+                Haptics.tap()
+                captureDraft = draft(for: word)
+            } label: {
+                Label(saved ? "In your deck" : "Save to my deck",
+                      systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(saved ? Theme.success : category.color)
+                    .frame(maxWidth: .infinity).frame(minHeight: 44)
+                    .background(saved ? Theme.successLight : category.color.opacity(0.1))
+                    .clipShape(.rect(cornerRadius: Radius.chip))
+            }
+            .buttonStyle(.plain)
+            .disabled(saved)
         }
         .padding(20)
         .frame(maxWidth: .infinity)

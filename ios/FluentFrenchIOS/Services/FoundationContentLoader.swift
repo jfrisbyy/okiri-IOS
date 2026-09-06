@@ -208,6 +208,12 @@ nonisolated enum FoundationContentLoader {
         try JSONDecoder().decode(FoundationContentFile.self, from: data)
     }
 
+    /// Decode a content file from an explicit location — for tests and tooling
+    /// that run where `Bundle.main` is not the app bundle (the Linux harness).
+    static func load(from url: URL) throws -> FoundationContentFile {
+        try decode(Data(contentsOf: url))
+    }
+
     // MARK: Lookups (content v2)
 
     static func skill(for conceptId: String, in file: FoundationContentFile? = file) -> FoundationSkillContent? {
@@ -231,9 +237,10 @@ nonisolated enum FoundationContentLoader {
 
     /// Build the full set of seeded Foundation gaps from the bundled curriculum.
     /// Falls back to a compact inline set only if the resource can't be read.
-    static func gaps() -> [GapItem] {
+    /// Every gap is due at `now`; the store staggers them at seeding time (D3).
+    static func gaps(now: Date = Date()) -> [GapItem] {
         guard let file else { return FoundationCurriculum.fallbackGaps() }
-        return gaps(from: file)
+        return gaps(from: file, now: now)
     }
 
     /// Seeded gaps for a decoded content file (v1 or v2). Content v2 fields ride

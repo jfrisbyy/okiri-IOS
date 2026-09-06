@@ -2,10 +2,11 @@
 //  VoiceRecorder.swift
 //  FluentFrenchIOS
 //
-//  Records short microphone clips for speech-to-text. Detects whether a real
-//  microphone is available (the cloud preview has none) so callers can keep
-//  showing the on-device notice. Recorded audio is transcribed with
-//  `SpeechToText` (ElevenLabs Scribe).
+//  Records short microphone clips for speech-to-text with a hard cap on their
+//  length (E16), and tells the surfaces exactly why the microphone cannot be
+//  used when it cannot (E14): permission denied, no transcription key, or no
+//  input device — three distinct `MicAvailability` states, never a generic
+//  "install elsewhere" notice. Recorded audio is transcribed with `SpeechToText`.
 //
 
 import AVFoundation
@@ -13,39 +14,62 @@ import Foundation
 
 @MainActor
 @Observable
-final class VoiceRecorder: NSObject {
+final class VoiceRecorder {
     private(set) var isRecording = false
     private(set) var isTranscribing = false
+    /// Seconds left before the cap stops the recording (0 when idle).
+    private(set) var secondsLeft = 0
+    /// The cap the current / last recording ran under, in seconds.
+    private(set) var capSeconds = 0
+    /// Flips to true when the recorder stopped itself at the cap; the view then
+    /// transcribes what was recorded. Cleared by the next start / cancel.
+    private(set) var stoppedAtCap = false
 
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
+    private var countdown: Task<Void, Never>?
 
-    /// Whether a usable microphone input exists. False in the cloud simulator.
-    var micAvailable: Bool {
-        AVAudioSession.sharedInstance().isInputAvailable && SpeechToText.hasKey
+    /// Why `start` would fail.
+    enum StartFailure: Error, Equatable {
+        case unavailable(MicAvailability)
+        case audioSessionFailed
+        case alreadyRecording
     }
 
-    /// Requests microphone permission, returning whether it was granted.
+    /// The microphone path's state right now (re-read on every access so a
+    /// Settings change is picked up when the learner comes back).
+    var availability: MicAvailability {
+        MicAvailability.resolve(
+            hasTranscriptionKey: SpeechToText.hasKey,
+            inputAvailable: AVAudioSession.sharedInstance().isInputAvailable,
+            permissionDenied: AVAudioApplication.shared.recordPermission == .denied
+        )
+    }
+
+    /// Requests microphone permission (prompting when undetermined), returning
+    /// whether it is granted.
     func requestPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            AVAudioApplication.requestRecordPermission { granted in
-                continuation.resume(returning: granted)
-            }
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return true
+        case .denied: return false
+        default: break
         }
+        return await AVAudioApplication.requestRecordPermission()
     }
 
-    /// Begins recording to a temporary file. Returns whether recording started.
-    @discardableResult
-    func start() async -> Bool {
-        guard !isRecording else { return false }
-        guard await requestPermission() else { return false }
+    /// Begins recording to a temporary file, stopping itself after `maxSeconds`.
+    func start(maxSeconds: Int) async -> Result<Void, StartFailure> {
+        guard !isRecording else { return .failure(.alreadyRecording) }
+        let state = availability
+        guard state.isReady || state == .permissionDenied else { return .failure(.unavailable(state)) }
+        guard await requestPermission() else { return .failure(.unavailable(.permissionDenied)) }
 
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
             try session.setActive(true)
         } catch {
-            return false
+            return .failure(.audioSessionFailed)
         }
 
         let url = FileManager.default.temporaryDirectory
@@ -60,42 +84,64 @@ final class VoiceRecorder: NSObject {
         do {
             let rec = try AVAudioRecorder(url: url, settings: settings)
             rec.prepareToRecord()
-            guard rec.record() else { return false }
+            guard rec.record() else { return .failure(.audioSessionFailed) }
             recorder = rec
             fileURL = url
             isRecording = true
-            return true
+            stoppedAtCap = false
+            capSeconds = max(1, maxSeconds)
+            secondsLeft = capSeconds
+            startCountdown()
+            return .success(())
         } catch {
-            return false
+            return .failure(.audioSessionFailed)
         }
     }
 
-    /// Stops recording and transcribes the clip. Returns the recognized text.
-    func stopAndTranscribe(language: String? = nil) async -> String? {
-        guard isRecording, let recorder, let url = fileURL else {
-            isRecording = false
-            return nil
+    /// Ticks `secondsLeft` once a second and stops the recorder at the cap.
+    private func startCountdown() {
+        countdown?.cancel()
+        countdown = Task { [weak self] in
+            while let self, self.isRecording, self.secondsLeft > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, self.isRecording else { return }
+                self.secondsLeft = max(0, self.secondsLeft - 1)
+            }
+            guard let self, !Task.isCancelled, self.isRecording else { return }
+            self.stopRecorder()
+            self.stoppedAtCap = true
         }
-        recorder.stop()
-        self.recorder = nil
-        isRecording = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
 
+    /// Stops the audio recorder, keeping the file for transcription.
+    private func stopRecorder() {
+        countdown?.cancel()
+        countdown = nil
+        recorder?.stop()
+        recorder = nil
+        isRecording = false
+        secondsLeft = 0
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    /// Stops recording (if still running) and transcribes the clip.
+    func stopAndTranscribe(language: String? = nil) async -> TranscriptionOutcome {
+        if isRecording { stopRecorder() }
+        stoppedAtCap = false
+        guard let url = fileURL else { return .nothingHeard }
+        fileURL = nil
         isTranscribing = true
-        let text = await SpeechToText.transcribe(fileURL: url, language: language)
+        let outcome = await SpeechToText.transcribe(fileURL: url, language: language)
         isTranscribing = false
         try? FileManager.default.removeItem(at: url)
-        fileURL = nil
-        return text
+        return outcome
     }
 
     /// Cancels recording without transcribing.
     func cancel() {
-        recorder?.stop()
-        recorder = nil
-        isRecording = false
+        stopRecorder()
+        stoppedAtCap = false
         if let url = fileURL { try? FileManager.default.removeItem(at: url) }
         fileURL = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 }

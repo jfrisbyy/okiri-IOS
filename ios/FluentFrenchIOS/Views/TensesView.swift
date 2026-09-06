@@ -10,7 +10,10 @@ import SwiftUI
 
 struct TensesView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppStore.self) private var store
     @State private var selectedTense: String = "Present"
+    /// The paradigm being saved to the deck (E25).
+    @State private var captureDraft: CaptureDraft? = nil
 
     private var currentTense: FrenchTense? {
         TensesData.tenses.first { $0.name == selectedTense }
@@ -33,6 +36,59 @@ struct TensesView: View {
         }
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
+        .sheet(item: $captureDraft) { draft in
+            CaptureSheet(draft: draft, accent: Theme.indigo)
+        }
+    }
+
+    /// The headword a saved paradigm is filed under ("être — Imparfait"), so the
+    /// same verb can be saved in several tenses without colliding.
+    private func headword(_ verb: FrenchVerb, _ tense: FrenchTense) -> String {
+        "\(verb.infinitive) — \(tense.frenchName)"
+    }
+
+    /// What saving a conjugation table stores: the verb in this tense, its
+    /// meaning, the six forms as the explanation and the first-person form as the
+    /// example — filed under the matching grammar concept when the taxonomy has one.
+    /// A paradigm is a recognition-only card (`isTestable: false`): the lesson
+    /// shows it as multiple choice and never asks the learner to type, blank or
+    /// arrange the "être — Imparfait" headword (E25).
+    private func draft(for verb: FrenchVerb, in tense: FrenchTense) -> CaptureDraft? {
+        guard let conj = verb.tenses[tense.name] else { return nil }
+        let forms = conj.forms().map { "\(verbPhrase(pronoun: $0.pronoun, form: $0.form))" }.joined(separator: ", ")
+        return CaptureDraft(
+            frenchWord: headword(verb, tense),
+            englishTranslation: "\(verb.meaning) — \(tense.name.lowercased())",
+            explanation: "\(tense.detail). \(forms)",
+            exampleSentence: verbPhrase(pronoun: "je", form: conj.je),
+            exampleTranslation: "",
+            sourceType: .reading,
+            sourceTab: "tenses",
+            sourceLevel: Self.level(for: tense),
+            category: .grammar,
+            partOfSpeech: "verb",
+            conceptId: Self.conceptId(for: tense, verb: verb),
+            isTestable: false
+        )
+    }
+
+    /// The taxonomy concept a tense/verb pair is evidence of (nil when none fits).
+    private static func conceptId(for tense: FrenchTense, verb: FrenchVerb) -> String? {
+        switch tense.name {
+        case "Present": return verb.group == "er" ? "present-er-verbs" : (verb.group == "irregular" ? "present-irregular" : nil)
+        case "Passé Composé": return verb.tenses[tense.name]?.je.hasPrefix("suis") == true ? "passe-compose-etre" : "passe-compose-avoir"
+        case "Imparfait": return "imparfait"
+        case "Subjonctif": return "subjunctive-intro"
+        default: return nil
+        }
+    }
+
+    private static func level(for tense: FrenchTense) -> CEFRLevel {
+        switch tense.name {
+        case "Present": return .A1
+        case "Passé Composé": return .A2
+        default: return .B1
+        }
     }
 
     private var header: some View {
@@ -52,12 +108,13 @@ struct TensesView: View {
                     Button { Haptics.tap(); withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { selectedTense = tense.name } } label: {
                         Text(tense.name).font(.system(size: 13, weight: .medium))
                             .foregroundStyle(active ? .white : Theme.text)
-                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .padding(.horizontal, 14).frame(minHeight: 44)
                             .background(active ? Theme.indigo : Theme.card)
                             .clipShape(.capsule)
                             .overlay(Capsule().stroke(active ? Color.clear : Theme.border.opacity(0.7), lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
         }
@@ -116,15 +173,18 @@ struct TensesView: View {
                             Button { NaturalVoice.shared.speak(verbPhrase(pronoun: item.pronoun, form: item.form)) } label: {
                                 Image(systemName: "speaker.wave.2.fill").font(.system(size: 12)).foregroundStyle(Theme.indigo)
                                     .frame(width: 28, height: 28).background(Theme.indigo.opacity(0.1)).clipShape(.circle)
+                                    .frame(minWidth: 44, minHeight: 44)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Listen to \(item.pronoun) \(item.form)")
                         }
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 2)
                         if i < conj.forms().count - 1 {
                             Rectangle().fill(Theme.borderLight).frame(height: 1)
                         }
                     }
                 }
+                if let tense = currentTense { saveRow(for: verb, in: tense) }
             }
         }
         .padding(18)
@@ -135,9 +195,34 @@ struct TensesView: View {
         .softLift(radius: 14, y: 5, strength: 0.85)
     }
 
-    /// Build a natural spoken phrase, picking the first pronoun variant.
+    /// Save-to-deck affordance (E25) for the verb in the selected tense.
+    private func saveRow(for verb: FrenchVerb, in tense: FrenchTense) -> some View {
+        let saved = store.hasGap(forWord: headword(verb, tense))
+        return Button {
+            guard !saved, let draft = draft(for: verb, in: tense) else { return }
+            Haptics.tap()
+            captureDraft = draft
+        } label: {
+            Label(saved ? "In your deck" : "Save \(tense.name.lowercased()) forms to my deck",
+                  systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(saved ? Theme.success : Theme.indigo)
+                .frame(maxWidth: .infinity).frame(minHeight: 44)
+                .background(saved ? Theme.successLight : Theme.indigo.opacity(0.08))
+                .clipShape(.rect(cornerRadius: Radius.chip))
+        }
+        .buttonStyle(.plain)
+        .disabled(saved)
+    }
+
+    /// Build a natural spoken phrase, picking the first pronoun variant and
+    /// eliding "je" before a vowel ("j'ai", "j'étais").
     private func verbPhrase(pronoun: String, form: String) -> String {
         let p = pronoun.split(separator: "/").first.map(String.init) ?? pronoun
+        if p == "je", let first = form.lowercased().unicodeScalars.first,
+           "aeiouyàâäéèêëîïôöùûüh".unicodeScalars.contains(first) {
+            return "j'\(form)"
+        }
         return "\(p) \(form)"
     }
 }

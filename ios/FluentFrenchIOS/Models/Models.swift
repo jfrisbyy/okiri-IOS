@@ -288,3 +288,11 @@ nonisolated struct FailableDecodable<Element: Decodable>: Decodable {
         value = try? Element(from: decoder)
     }
 }
+
+// MARK: - CEFR ordering
+
+/// Rank of a CEFR level (A1 = 0 … C2 = 5) so levels can be compared. Pure model
+/// logic (nonisolated): the selector, tagger, lesson and scenario gate all read it.
+nonisolated extension CEFRLevel {
+    var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+}

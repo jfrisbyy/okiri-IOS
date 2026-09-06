@@ -67,7 +67,11 @@ final class SyntheticLearner {
         case .forgetful: forgetRate = 0.05
         default: break
         }
-        for concept in concepts {
+        // Ground truth only for the concepts the product has content for: one with
+        // no items is never taught, never observed and never mastered, so it has no
+        // truth to model — and drawing for it would shift every later draw in this
+        // seeded stream, re-rolling the whole archetype whenever the map grows.
+        for concept in EngineFixtures.authoredConcepts(concepts) {
             var base = 0.02
             if archetype == .falseBeginner {
                 // Vocabulary and grammar DISSOCIATED, as in the sim.
@@ -300,7 +304,12 @@ struct SimulatedRun {
         }
         let result = engine.result()
         store.applyPlacement(result, isFirstRun: true, now: driver.now)
-        store.gaps = EngineFixtures.foundationGaps(for: store.concepts, perConcept: gapsPerConcept, at: driver.now)
+        // Only the bands Foundation actually has content for (EngineFixtures.authoredLevels):
+        // a concept with no authored content has no gaps in the app either, so
+        // fabricating cards for the whole A1–C1 map would simulate a curriculum the
+        // product does not ship (D6.5 widens this band by band).
+        store.gaps = EngineFixtures.foundationGaps(for: EngineFixtures.authoredConcepts(store.concepts),
+                                                   perConcept: gapsPerConcept, at: driver.now)
         placement = PlacementOutcome(result: result, seededConceptIds: result.masteredConceptIds,
                                      inferredConceptIds: result.inferredConceptIds)
     }

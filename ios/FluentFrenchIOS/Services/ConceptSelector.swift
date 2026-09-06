@@ -61,10 +61,31 @@ struct ConceptSelector {
     var weights: ConceptSelectionWeights = .tuning
     var config: LessonAssemblyConfig = .tuning
 
+    /// How many concepts list each concept as a prerequisite, and the busiest count.
+    /// Built once per selector rather than per `leverageScore` call: `dependents(of:)`
+    /// is an O(n) filter, so recomputing the maximum inside the scorer made ranking
+    /// O(n^3) — about 6 million operations per selection once the taxonomy grew from
+    /// 49 concepts to the full A1-C1 map (D6.1). One pass over the prerequisite lists
+    /// gives the same numbers.
+    private let dependentCounts: [String: Int]
+    private let maxDependents: Int
+
     init(store: AppStore, weights: ConceptSelectionWeights = .tuning, config: LessonAssemblyConfig = .tuning) {
         self.store = store
         self.weights = weights
         self.config = config
+        // Only prerequisite ids that name a real concept, matching the filter the
+        // previous per-call computation walked: a dangling id in a synthetic graph
+        // must not be able to raise the maximum this score normalizes against.
+        let known = Set(store.concepts.map { $0.id })
+        var counts: [String: Int] = [:]
+        for concept in store.concepts {
+            for prerequisiteId in concept.prerequisites where known.contains(prerequisiteId) {
+                counts[prerequisiteId, default: 0] += 1
+            }
+        }
+        self.dependentCounts = counts
+        self.maxDependents = counts.values.max() ?? 0
     }
 
     /// The weights the ranker actually uses. While the retention governor is active
@@ -306,12 +327,8 @@ struct ConceptSelector {
     /// How many other concepts list this as a prerequisite, normalized by the
     /// busiest concept in the taxonomy.
     private func leverageScore(_ concept: Concept) -> Double {
-        let dependents = store.dependents(of: concept.id).count
-        let maxDependents = store.concepts
-            .map { store.dependents(of: $0.id).count }
-            .max() ?? 0
         guard maxDependents > 0 else { return 0 }
-        return Double(dependents) / Double(maxDependents)
+        return Double(dependentCounts[concept.id] ?? 0) / Double(maxDependents)
     }
 
     /// 1.0 for frontier concepts; for learning concepts, tapers toward 0 the

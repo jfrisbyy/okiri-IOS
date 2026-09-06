@@ -436,7 +436,7 @@ struct Pass3EngineTests {
     @Test func contentProbesBecomePlacementItemsForGrammarAndVocabularyOnly() {
         let s = EngineFixtures.store()
         let bank = AssessmentService.contentBank(concepts: s.concepts, probes: EngineFixtures.syntheticProbes)
-        let eligible = s.concepts.filter { $0.category == .grammar || $0.category == .vocabulary }
+        let eligible = EngineFixtures.authoredConcepts(s.concepts).filter { $0.category == .grammar || $0.category == .vocabulary }
         #expect(bank.count == eligible.count * 3, "three items per grammar / vocabulary concept, none for the rest")
         #expect(!bank.contains { $0.conceptId == "liaison" })
         let item = bank.first { $0.conceptId == "definite-articles" }!
@@ -889,8 +889,25 @@ struct Pass3EngineTests {
         let file = try FoundationContentLoader.decode(data)
         #expect(file.version == 2)
         let taxonomy = ConceptTaxonomy.seed()
-        #expect(Set(file.skills.map { $0.id }).isSuperset(of: taxonomy.map { $0.id }), "every taxonomy concept has a skill block")
-        for concept in taxonomy {
+        // Content is authored band by band (D6.5) while the map already spans A1–C1
+        // (D6.1), so a concept may legitimately have no skill block yet: it shows on
+        // the map with its real state and seeds no gaps. What must always hold is
+        // that every skill block IS a taxonomy concept, and that every concept which
+        // does have content is complete — teaching, three probes, verified blanks.
+        #expect(Set(taxonomy.map { $0.id }).isSuperset(of: file.skills.map { $0.id }),
+                "a skill block names a concept the taxonomy doesn't have")
+        let authored = taxonomy.filter { FoundationContentLoader.skill(for: $0.id, in: file) != nil }
+        // Pin the authored set exactly, not a floor: a floor lets one concept lose
+        // content while another gains it. This is also what keeps
+        // EngineFixtures.authoredConceptIds honest — as D6.5 authors each band,
+        // this test fails until that list grows with it, so no simulation can quietly
+        // go on measuring a curriculum the product no longer ships.
+        let authoredIds = Set(authored.map { $0.id })
+        let contentOnly = authoredIds.subtracting(EngineFixtures.authoredConceptIds).sorted()
+        let fixtureOnly = EngineFixtures.authoredConceptIds.subtracting(authoredIds).sorted()
+        #expect(authoredIds == EngineFixtures.authoredConceptIds,
+                "authored content and EngineFixtures.authoredConceptIds have drifted: content-only \(contentOnly), fixture-only \(fixtureOnly)")
+        for concept in authored {
             let teaching = FoundationContentLoader.teaching(for: concept.id, in: file)
             #expect(teaching != nil && !(teaching?.rule.isEmpty ?? true), "\(concept.id): teaching present")
             let probes = FoundationContentLoader.probes(for: concept.id, in: file)

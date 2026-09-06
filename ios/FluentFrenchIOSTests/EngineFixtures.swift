@@ -33,10 +33,42 @@ enum EngineFixtures {
         return s
     }
 
+    /// The concepts the shipped `FoundationContent.json` actually covers. The map
+    /// spans A1–C1 (D6.1) but content is authored band by band (D6.5): a concept
+    /// with no content has no teaching, no probes and no items in the app — it shows
+    /// on the map with its real state and seeds nothing. Fixtures must not invent
+    /// content for it either, or every simulation measures a curriculum the product
+    /// does not ship. GROW THIS LIST as each band is authored.
+    nonisolated static let authoredConceptIds: Set<String> = [
+        "definite-articles", "indefinite-articles", "noun-gender", "subject-pronouns",
+        "present-er-verbs", "present-irregular", "basic-prepositions", "plurals", "negation",
+        "questions", "possessive-adjectives", "c-est-il-y-a", "everyday-vocab", "numbers-time",
+        "family-vocab", "food-drink-vocab", "home-vocab", "colors-vocab", "body-vocab",
+        "clothing-vocab", "weather-vocab", "places-town-vocab", "directions-vocab", "jobs-vocab",
+        "days-months-seasons", "common-adjectives", "common-verbs", "guttural-r", "nasal-vowels",
+        "greetings-politeness", "tu-vs-vous", "adjective-agreement", "adjective-placement",
+        "partitive-articles", "near-future", "reflexive-verbs", "passe-compose-avoir",
+        "passe-compose-etre", "prepositions-place-time", "liaison", "everyday-connectors",
+        "imparfait", "imparfait-vs-pc", "object-pronouns", "subjunctive-intro",
+        "savoir-vs-connaitre", "spoken-fillers", "idioms", "formal-register",
+    ]
+
+    /// Taxonomy concepts with no authored content yet.
+    nonisolated static let unauthoredConceptIds: Set<String> =
+        ConceptTaxonomy.ids.subtracting(authoredConceptIds)
+
+    /// The concepts a fixture builds content for: the authored taxonomy concepts,
+    /// plus anything outside the taxonomy (a synthetic graph names its own).
+    nonisolated static func authoredConcepts(_ concepts: [Concept]) -> [Concept] {
+        concepts.filter { !unauthoredConceptIds.contains($0.id) }
+    }
+
     /// Three synthetic content-v2 probes per concept (tokens, not French): the
     /// prompt, the answer and three distractors, exactly the shape the loader yields.
+    /// A concept in an unauthored band has none, exactly as in the shipped file.
     nonisolated static func syntheticProbes(for conceptId: String) -> [FoundationProbeContent] {
-        (0..<3).map { i in
+        guard !unauthoredConceptIds.contains(conceptId) else { return [] }
+        return (0..<3).map { i in
             FoundationProbeContent(fr: "\(conceptId)-probe-\(i)-fr", en: "\(conceptId)-probe-\(i)-answer",
                                    ex: "\(conceptId)-probe-\(i)-ex", exEn: "\(conceptId)-probe-\(i)-exEn",
                                    options: ["\(conceptId)-d1", "\(conceptId)-d2", "\(conceptId)-d3"])

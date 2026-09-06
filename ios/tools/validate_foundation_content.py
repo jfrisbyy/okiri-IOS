@@ -85,11 +85,20 @@ def main():
                 elif key in fr_seen: errs.append(f'{sid}: items[{i}] fr "{it.get("fr")}" duplicated within skill')
                 fr_seen[key] = sid
             if re.search(r'\b(the|and|is|are|you|with)\b', fr): errs.append(f'{sid}: items[{i}].fr looks English: "{it.get("fr")}"')
-    if full:
-        for cid in tax:
-            if cid not in seen_ids: errs.append(f'{cid}: missing from full file')
+    # A skill block naming a concept the taxonomy does not have is always an error:
+    # it is content nothing can ever reach.
+    orphans = sorted(sid for sid in seen_ids if sid not in tax)
+    for sid in orphans:
+        errs.append(f'{sid}: skill block names a concept not in the taxonomy')
+    unauthored = sorted(cid for cid in tax if cid not in seen_ids)
     if errs:
         for e in errs: print(e)
         print(f'INVALID: {len(errs)} problem(s)'); sys.exit(1)
     print(f'OK: {len(skills)} skills, {sum(len(s.get("items", [])) for s in skills)} items')
+    if full and unauthored:
+        # Not a failure. The concept map spans A1-C1 (D6.1) while content is authored
+        # band by band (D6.5); a concept with no skill block shows on the map with its
+        # real state and seeds no gaps. Reported so the remaining work stays visible.
+        print(f'{len(unauthored)} taxonomy concept(s) not yet authored:')
+        for cid in unauthored: print(f'  - {cid}')
 main()

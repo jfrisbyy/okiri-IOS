@@ -13,6 +13,7 @@
 import AVFoundation
 import CryptoKit
 import Foundation
+import Observation
 
 /// Distinct ElevenLabs voices used across the app. IDs are stable public voices
 /// that support the `eleven_multilingual_v2` model (good French pronunciation).

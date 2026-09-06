@@ -1081,9 +1081,107 @@ struct StoreTests {
         #expect(abs((s.concept(cid)?.beta ?? 0) - (1 + w)) < 1e-9)
         #expect(abs((s.concept(cid)?.observationCount ?? 0) - 2 * w) < 1e-9)
         #expect(s.concept(cid)?.lastTestedAt == now)
-        #expect(s.gaps.isEmpty, "no gap is involved")
+        #expect(s.gaps.allSatisfy { $0.sourceType == .foundation && $0.reviewCount == 0 },
+                "no captured gap, and no schedule moved: the evidence is concept-level")
         #expect(s.concepts.filter { $0.alpha != 1 || $0.beta != 1 }.count == 1)
         #expect(s.localUpdatedAt != nil, "evidence is learner activity")
+    }
+
+    /// engine-5-1: evidence from Speak/Converse leaves the concept `.learning`, which
+    /// takes it off the frontier for good — so it can never be probed again, and the
+    /// probe was the only path that ever seeded its curriculum. It would then rank in
+    /// the plan forever with an empty spine and could never be taught. The first
+    /// evidence from ANY surface now opens the skill's material.
+    @Test func firstEvidenceFromSpeakingOpensTheSkillsCurriculum() {
+        let s = EngineFixtures.store()
+        let cid = "subjunctive-intro"
+        #expect(s.concept(cid) != nil, "a B1 concept nothing ever seeds")
+        // Its curriculum exists in the content file; no seeding path reaches it.
+        let items = (0..<6).map { i in
+            FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                  ex: "x \(cid)-w\(i) y", exEn: "t", blank: "\(cid)-w\(i)")
+        }
+        let file = FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: cid, category: GapCategory.grammar.rawValue,
+                                   teaching: FoundationTeachingContent(rule: "r"),
+                                   probes: EngineFixtures.syntheticProbes(for: cid), items: items),
+        ])
+        s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
+        #expect(s.gaps(forConcept: cid).isEmpty)
+
+        s.recordSpeakingEvidence(conceptId: cid, correct: false, now: now)
+        #expect(s.concept(cid)?.state == .learning)
+        let seeded = s.gaps(forConcept: cid).filter { !$0.isProbe }
+        #expect(!seeded.isEmpty, "the app can now teach what Speak just diagnosed")
+
+        // Idempotent: more evidence does not re-seed the same curriculum.
+        s.recordSpeakingEvidence(conceptId: cid, correct: true, now: now)
+        #expect(s.gaps(forConcept: cid).filter { !$0.isProbe }.count == seeded.count)
+
+        // And it is a real lesson target now, not a rank with nothing behind it.
+        s.sessionIndex = 1
+        let output = ConceptSelector(store: s).select(.smart(now: now))
+        #expect(output.targetConceptId == cid)
+        #expect(!output.items.isEmpty)
+    }
+
+    /// The A2 bridge slice is seeded exactly once, on the transition where reading
+    /// opens — so "already seeded" must not be true after a single skill was opened on
+    /// demand (a probe, or the first Speak evidence on it). It used to be, which left
+    /// every other bridge skill with no content the app could ever teach.
+    @Test func oneOnDemandBridgeSkillDoesNotCancelTheBridgeSlice() {
+        let s = EngineFixtures.store()
+        let bridge = FoundationSeeder.bridgeConceptIds
+        #expect(bridge.count > 1)
+        let skills = bridge.map { cid in
+            FoundationSkillContent(id: cid, category: GapCategory.grammar.rawValue,
+                                   items: (0..<3).map { i in
+                                       FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                                             ex: "x \(cid)-w\(i) y", exEn: "t", blank: "\(cid)-w\(i)")
+                                   })
+        }
+        let file = FoundationContentFile(version: 2, skills: skills)
+        s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
+
+        #expect(!s.hasBridgeContent)
+        #expect(s.seedConceptContentIfNeeded(bridge[0], now: now) > 0)
+        #expect(!s.hasBridgeContent, "one skill is not the slice")
+        for cid in bridge.dropFirst() { s.seedConceptContentIfNeeded(cid, now: now) }
+        #expect(s.hasBridgeContent)
+    }
+
+    /// engine-5-2: `newlyUnlocked` is the "already celebrated" bit. Clearing every
+    /// flag immediately before recomputing it made each completed lesson re-announce
+    /// the identical "New skills unlocked" list, for the whole dozen concepts that sit
+    /// on the frontier until reading opens.
+    @Test func unlocksAreAnnouncedOnceNotAfterEveryLesson() {
+        let s = EngineFixtures.store(concepts: [
+            EngineFixtures.mastered("root"),
+            EngineFixtures.concept("opened", level: .A2, prerequisites: ["root"]),
+            EngineFixtures.concept("later", level: .A2, prerequisites: ["root", "second"]),
+            EngineFixtures.learning("second", mastery: 0.4),
+        ], gaps: [])
+
+        let first = s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(first == ["Concept opened"])
+        #expect(s.concept("opened")?.newlyUnlocked == true)
+
+        for _ in 0..<3 {
+            #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now).isEmpty,
+                    "the same unlock is never celebrated twice")
+        }
+
+        // A concept that becomes selectable later is still announced, once.
+        s.concepts[3] = EngineFixtures.mastered("second")
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now) == ["Concept later"])
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now).isEmpty)
+
+        // Once the learner has actually worked on it, it stops being "new" so the
+        // lesson copy ("New skill you're ready for") retires with it.
+        s.recordConceptAnswer(conceptId: "opened", correct: true, now: now)
+        s.completeLesson(targetConceptId: "opened", isCapstone: false, now: now)
+        #expect(s.concept("opened")?.state != .neverObserved)
+        #expect(s.concept("opened")?.newlyUnlocked == false)
     }
 
     @Test func converseCorrectionCreatesADedupedGapAndRecordsALapse() throws {

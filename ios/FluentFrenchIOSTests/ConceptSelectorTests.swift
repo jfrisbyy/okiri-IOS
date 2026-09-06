@@ -595,6 +595,34 @@ struct ConceptSelectorTests {
         #expect(output.items.allSatisfy { !$0.reason.contains("missed") })
     }
 
+    /// engine-5-3: "This unlocks X" is a promise about what comes next, so it must
+    /// name a skill the learner has NOT already finished. Late in a run almost every
+    /// dependent is mastered, and the reason then reads as noise on nearly every item.
+    @Test func unlockReasonNamesOnlyAnUnmasteredDependent() {
+        let now = EngineFixtures.now
+        let store = EngineFixtures.store(concepts: [
+            EngineFixtures.learning("focus", mastery: 0.4),
+            EngineFixtures.mastered("child-done", prerequisites: ["focus"]),
+        ], gaps: [])
+        store.gaps = (0..<3).map { i in
+            store.makeCapturedGap(frenchWord: "focus-w\(i)", englishTranslation: "focus-w\(i)-en",
+                                  sourceType: .foundation, conceptId: "focus", now: now)
+        }
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(output.targetConceptId == "focus")
+        #expect(output.items.allSatisfy { !$0.reason.contains("This unlocks") },
+                "the only dependent is already mastered")
+        #expect(output.items.contains { $0.reason == "Today's focus: Concept focus." })
+
+        // An unmastered dependent is a real promise, so it is named.
+        store.concepts.append(EngineFixtures.concept("child-open", level: .A2, prerequisites: ["focus"]))
+        let after = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(after.targetConceptId == "focus")
+        #expect(after.items.contains { $0.reason == "This unlocks Concept child-open." })
+    }
+
     @Test func smartHeadlineCountsLapsesNotReviews() {
         let now = EngineFixtures.now
         let concept = EngineFixtures.learning("focus", mastery: 0.4)

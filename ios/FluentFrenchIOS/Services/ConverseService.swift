@@ -16,6 +16,7 @@
 
 import Foundation
 import Network
+import Observation
 
 // MARK: - Reachability (E11)
 

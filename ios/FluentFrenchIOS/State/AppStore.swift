@@ -2561,9 +2561,17 @@ extension AppStore {
     }
 
     /// True once the bridge slice (every non-base concept up to A2) has been seeded.
+    /// Measured per concept, not on the first bridge gap: a single skill can be seeded
+    /// on demand long before reading opens (a blind-spot probe, or the first Speak /
+    /// Converse evidence on it — engine-4-4 / engine-5-1), and one such concept must
+    /// not cancel the whole A2 slice. The slice itself dedupes, so this only decides
+    /// whether there is anything left to add.
     var hasBridgeContent: Bool {
-        let bridge = Set(FoundationSeeder.bridgeConceptIds)
-        return gaps.contains { $0.sourceType == .foundation && !$0.isProbe && bridge.contains($0.conceptId ?? "") }
+        let seeded = Set(gaps.compactMap { gap -> String? in
+            guard gap.sourceType == .foundation, !gap.isProbe else { return nil }
+            return gap.conceptId
+        })
+        return FoundationSeeder.bridgeConceptIds.allSatisfy { seeded.contains($0) }
     }
 
     /// Seed the A2 bridge slice once reading is open (D3/D4): the Foundation gaps of

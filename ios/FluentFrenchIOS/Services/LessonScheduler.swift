@@ -299,10 +299,12 @@ nonisolated struct LessonScheduler {
             }
             var explanation = "“\(gap.frenchWord)” means “\(gap.englishTranslation)”."
             if !note.isEmpty { explanation += "\n\(note)" }
-            return LessonQuestion(gap: gap, kind: .trueFalse, prompt: "True or false?",
-                                  correctAnswer: makeTrue ? "True" : "False",
-                                  statement: "“\(gap.frenchWord)” means “\(shown)”.",
-                                  hint: nil, role: role, explanation: explanation)
+            var tf = LessonQuestion(gap: gap, kind: .trueFalse, prompt: "True or false?",
+                                    correctAnswer: makeTrue ? "True" : "False",
+                                    statement: "“\(gap.frenchWord)” means “\(shown)”.",
+                                    hint: nil, role: role, explanation: explanation)
+            tf.claimedMeaning = shown
+            return tf
 
         case .translation:
             guard gap.isTestable else {
@@ -380,9 +382,18 @@ nonisolated struct LessonScheduler {
         // Many probes are cloze items — "___ gare", "tu ___ (parler)" — whose answer
         // is the French form that fills the blank, not a meaning. Asking "What does
         // “___ gare” mean?" over four French options is unanswerable as written.
-        let prompt = AnswerGrader.isCloze(gap.frenchWord)
-            ? "Which one fits? \(gap.frenchWord)"
-            : "What does “\(gap.frenchWord)” mean?"
+        // Others answer a claim about the French — how it is pronounced, whether the
+        // adjective sits in the right place — and carry their own stem from the
+        // content; the meaning stem would ask a question the options never answer.
+        let authored = (gap.probePrompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt: String
+        if !authored.isEmpty {
+            prompt = authored
+        } else if AnswerGrader.isCloze(gap.frenchWord) {
+            prompt = "Which one fits? \(gap.frenchWord)"
+        } else {
+            prompt = "What does “\(gap.frenchWord)” mean?"
+        }
         var q = LessonQuestion(gap: gap, kind: .multipleChoice,
                                prompt: prompt,
                                correctAnswer: gap.englishTranslation, options: options,

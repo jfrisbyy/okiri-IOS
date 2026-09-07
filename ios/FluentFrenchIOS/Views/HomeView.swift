@@ -153,9 +153,18 @@ struct HomeView: View {
         HomeCopy.greeting(hour: Calendar.current.component(.hour, from: Date()))
     }
 
+    /// The day's prescribed number of lessons — the plan of record's pacing item,
+    /// falling back to the Foundation pace while the plan is still being computed.
+    /// The greeting and the Foundation card read the SAME number so they cannot
+    /// contradict each other ("done — see you tomorrow" over "Lesson 2 of 3").
+    private var lessonTarget: Int {
+        dailyPlan.lessonItem?.target ?? Tuning.foundationLessonsPerDay
+    }
+
     private var greetingSubtitle: String {
         HomeCopy.subtitle(streak: store.currentStreak, dueNow: store.dueNow.count,
-                          lessonsToday: store.lessonsCompletedToday, placed: placed)
+                          lessonsToday: store.lessonsCompletedToday,
+                          lessonTarget: lessonTarget, placed: placed)
     }
 
     private var kiriMood: KiriMood {
@@ -599,15 +608,21 @@ struct HomeView: View {
         let id: String
         let category: GapCategory
         let count: Int
+        /// How many of the counted gaps the learner has actually been asked about.
+        /// Zero on day one (the seeded Foundation batch), which is why the row says
+        /// "to learn" rather than "to review" (HomeCopy.gapsToReview).
+        let practised: Int
     }
 
     private var recommendations: [Recommendation] {
         let due = store.dueNow
         var result: [Recommendation] = []
         for category in GapCategory.allCases {
-            let count = due.filter { $0.category == category }.count
-            if count > 0 {
-                result.append(Recommendation(id: "rec-\(category.rawValue)", category: category, count: count))
+            let inCategory = due.filter { $0.category == category }
+            if !inCategory.isEmpty {
+                result.append(Recommendation(id: "rec-\(category.rawValue)", category: category,
+                                             count: inCategory.count,
+                                             practised: inCategory.filter { !$0.isNew }.count))
             }
         }
         return Array(result.sorted { $0.count > $1.count }.prefix(3))
@@ -635,7 +650,8 @@ struct HomeView: View {
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(rec.category.label).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
-                            Text(HomeCopy.gapsToReview(rec.count)).font(.caption2).foregroundStyle(Theme.textSecondary)
+                            Text(HomeCopy.gapsToReview(rec.count, practised: rec.practised))
+                                .font(.caption2).foregroundStyle(Theme.textSecondary)
                         }
                         Spacer()
                         HStack(spacing: 4) {
@@ -657,7 +673,7 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
                 .pressable()
-                .accessibilityLabel("\(rec.category.label), \(HomeCopy.gapsToReview(rec.count)), \(HomeCopy.dueNowLabel)")
+                .accessibilityLabel("\(rec.category.label), \(HomeCopy.gapsToReview(rec.count, practised: rec.practised)), \(HomeCopy.dueNowLabel)")
                 .accessibilityHint("Starts a lesson on what is due in \(rec.category.label)")
             }
         }
@@ -685,7 +701,6 @@ struct HomeView: View {
         let progressCaption = HomeCopy.foundationProgress(done: mastered, target: total,
                                                           governorHeld: store.isGovernorActive)
         let next = nextTargetConcept
-        let lessonTarget = dailyPlan.lessonItem?.target ?? Tuning.foundationLessonsPerDay
         let lessonsDone = store.lessonsCompletedToday
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -1399,16 +1414,28 @@ struct HomeView: View {
     // MARK: - Headlines (an entry into Read — never sample headlines)
 
     private var headlinesSection: some View {
+        // THREE states, not two. `canOpen(.reading)` is true in the bridge
+        // (`.foundation`) as well, but ReadView withholds the live feed and search
+        // there and shows the curated ≤A2 library instead — so this row may only
+        // promise news once Reading is fully unlocked. Below that it names what the
+        // surface actually holds.
+        let hasNews = store.readiness(for: .reading) == .unlocked
         let locked = !store.canOpen(.reading)
         let condition = store.unlockCondition(for: .reading)
+        let title = hasNews ? "Today's Headlines" : "Today's Reading"
+        let headline = hasNews ? "Fresh French news at your level"
+                               : (locked ? "French news unlocks with Reading" : ReadinessCopy.bridgeStat)
+        let detail = hasNews ? "Tap any word to save it as a gap"
+                             : (condition ?? (locked ? ReadinessCopy.lockedLabel : ReadinessCopy.bridgeCondition))
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 HStack(spacing: 8) {
-                    Image(systemName: "newspaper.fill").font(.footnote).foregroundStyle(Theme.secondary)
+                    Image(systemName: hasNews ? "newspaper.fill" : "book.fill")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
                         .frame(width: 28 * tile, height: 28 * tile)
                         .background(Theme.secondaryLight).clipShape(.rect(cornerRadius: 8))
                         .accessibilityHidden(true)
-                    Text("Today's Headlines").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
+                    Text(title).scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
                         .accessibilityAddTraits(.isHeader)
                 }
                 Spacer()
@@ -1420,11 +1447,11 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(locked)
-                .accessibilityLabel(locked ? "See all headlines, locked" : "See all headlines")
+                .accessibilityLabel(locked ? "See all reading, locked" : "See all reading")
             }
             Button { open(.read) } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: locked ? "lock.fill" : "newspaper")
+                    Image(systemName: locked ? "lock.fill" : (hasNews ? "newspaper" : "book"))
                         .font(.headline)
                         .foregroundStyle(locked ? Theme.textSecondary : Theme.success)
                         .frame(width: 38 * tile, height: 38 * tile)
@@ -1432,12 +1459,11 @@ struct HomeView: View {
                         .clipShape(.rect(cornerRadius: 11))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(locked ? "French news unlocks with Reading" : "Fresh French news at your level")
+                        Text(headline)
                             .font(.subheadline.weight(.medium)).foregroundStyle(locked ? Theme.textSecondary : Theme.text)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
-                        Text(locked ? (condition ?? ReadinessCopy.lockedLabel)
-                                    : (condition ?? "Tap any word to save it as a gap"))
+                        Text(detail)
                             .font(.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
@@ -1462,7 +1488,8 @@ struct HomeView: View {
             .buttonStyle(.plain)
             .pressable()
             .disabled(locked)
-            .accessibilityLabel(locked ? "Headlines, locked. \(condition ?? "")" : "Read today's French news")
+            .accessibilityLabel(locked ? "\(title), locked. \(condition ?? "")"
+                                       : (hasNews ? "Read today's French news" : "\(headline). \(detail)"))
         }
     }
 
@@ -1486,6 +1513,7 @@ struct HomeView: View {
     private func resourceButton(_ r: HomeResource) -> some View {
         let locked = r.modality.map { !store.canOpen($0) } ?? false
         let condition = r.modality.flatMap { store.unlockCondition(for: $0) }
+        let lockedLabel = "\(r.label), locked." + (condition.map { " \($0)" } ?? "")
         return Button { open(r) } label: {
             VStack(spacing: 8) {
                 Image(systemName: r.icon).font(.title2)
@@ -1510,8 +1538,12 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .pressable()
-        .disabled(locked)
-        .accessibilityLabel(locked ? "\(r.label), locked. \(condition ?? "")" : r.label)
+        // NOT disabled: a disabled button swallows the tap, so the unlock condition
+        // computed above would never reach the screen and the padlock would just be
+        // dead. `open(_:)` gates the resource and shows the condition as a toast,
+        // exactly like every other locked entry point on this screen.
+        .accessibilityLabel(locked ? lockedLabel : r.label)
+        .accessibilityHint(locked ? "Shows what unlocks \(r.label)" : "")
     }
 }
 

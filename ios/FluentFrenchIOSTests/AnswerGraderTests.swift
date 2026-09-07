@@ -61,7 +61,7 @@ struct AnswerGraderTests {
             Case(typed: "le pain", expected: "le pain", gap: bread, kind: .translation, verdict: .correct, note: "headword with article"),
             Case(typed: "Le pain.", expected: "le pain", gap: bread, kind: .translation, verdict: .correct, note: "trailing full stop"),
             Case(typed: "la pain", expected: "le pain", gap: bread, kind: .translation, verdict: .incorrect, note: "wrong article is wrong"),
-            Case(typed: "le pain", expected: "pain", gap: bread, kind: .fillBlank, verdict: .correct, note: "article added to a bare blank"),
+            Case(typed: "le pain", expected: "pain", gap: bread, kind: .fillBlank, verdict: .incorrect, note: "an article the sentence already supplies does not fit the blank"),
             Case(typed: "pain!", expected: "pain", gap: bread, kind: .fillBlank, verdict: .correct, note: "trailing bang"),
             // typographic vs straight apostrophe in j'ai, alts
             Case(typed: "j'ai", expected: "j'ai", gap: jai, kind: .translation, verdict: .correct, note: "straight apostrophe"),
@@ -142,14 +142,40 @@ struct AnswerGraderTests {
                 "the masculine form is not the feminine agreement")
         #expect(AnswerGrader.grade(typed: "verte", against: green, expected: "verte", kind: .fillBlank) == .correct)
 
-        // Article leniency survives: the blank IS the article-stripped headword.
+        // The headword is still the headword — but only where the headword is asked for.
         let bread = gap("le pain", en: "bread", ex: "Je veux du pain.", blank: "pain")
-        #expect(AnswerGrader.grade(typed: "le pain", against: bread, expected: "pain", kind: .fillBlank) == .correct)
         #expect(AnswerGrader.acceptsHeadword(bread, expected: "pain"))
         #expect(!AnswerGrader.acceptsHeadword(eat, expected: "mange"))
+        #expect(AnswerGrader.grade(typed: "le pain", against: bread, expected: "pain", kind: .translation) == .correct)
         // Article leniency stays one-directional for vocabulary.
         let hands = gap("la main", en: "hand", ex: "Lave-toi les mains.", blank: "mains")
         #expect(AnswerGrader.grade(typed: "la main", against: hands, expected: "mains", kind: .fillBlank) == .incorrect)
+    }
+
+    /// lesson-6-2: a fill-blank gets NO article leniency in either direction — the
+    /// sentence around the blank already supplies (or withholds) the determiner, so
+    /// the dictionary headword cannot stand in the hole and is never advertised as
+    /// "Also accepted" under it.
+    @Test func fillBlankRejectsTheHeadwordsArticle() {
+        // "Ma _____ est gentille." — "la mère" would read "Ma la mère est gentille."
+        let mother = gap("la mère", en: "mother", ex: "Ma mère est gentille.", blank: "mère")
+        #expect(AnswerGrader.grade(typed: "mère", against: mother, expected: "mère", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "la mère", against: mother, expected: "mère", kind: .fillBlank) == .incorrect)
+        #expect(AnswerGrader.acceptedForms(for: mother, expected: "mère", kind: .fillBlank).map { $0.display } == ["mère"],
+                "nothing else is offered under “Also accepted”")
+        // The same word asked as a translation keeps its leniency.
+        #expect(AnswerGrader.grade(typed: "la mère", against: mother, expected: "mère", kind: .translation) == .correct)
+        #expect(AnswerGrader.acceptedForms(for: mother, expected: "mère", kind: .translation).map { $0.display } == ["mère", "la mère"])
+
+        // …and the other way: "Je bois de _____." wants "l'eau", not "eau".
+        let water = gap("l'eau", en: "water", ex: "Je bois de l'eau.", blank: "l'eau")
+        #expect(AnswerGrader.grade(typed: "l'eau", against: water, expected: "l'eau", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "eau", against: water, expected: "l'eau", kind: .fillBlank) == .incorrect)
+        #expect(AnswerGrader.grade(typed: "eau", against: water, expected: "l'eau", kind: .translation) == .correct)
+        // An accent slip inside the blank is still an accent slip, not a miss.
+        let pupil = gap("l'élève", en: "the pupil", ex: "Je vois l'élève.", blank: "l'élève")
+        #expect(AnswerGrader.grade(typed: "l'eleve", against: pupil, expected: "l'élève", kind: .fillBlank)
+                == .closeAccents(expected: "l'élève"))
     }
 
     /// An accent-stripped spelling in the content's `alts` is an accent slip, not a

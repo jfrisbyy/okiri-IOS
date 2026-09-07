@@ -391,6 +391,10 @@ final class AppStore {
         )
         probe.isProbe = true
         probe.probeOptions = content.options
+        // A probe whose answer is a claim about the French rather than its meaning
+        // carries its own question stem; the scheduler asks it instead of "What does
+        // “<fr>” mean?".
+        probe.probePrompt = content.ask
         // Like every gap the store creates, a probe starts with a schedule (B4).
         probe.fsrs = FSRS.makeUnseenState(now: now)
         gaps.insert(probe, at: 0)
@@ -1303,7 +1307,7 @@ final class AppStore {
                                   now: Date = Date()) -> GapItem? {
         let corrected = correctedFrench.trimmingCharacters(in: .whitespacesAndNewlines)
         let original = originalFrench.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !corrected.isEmpty, captureKey(corrected) != captureKey(original) else { return nil }
+        guard !corrected.isEmpty, Self.captureKey(corrected) != Self.captureKey(original) else { return nil }
         // A card holds a word or a short phrase, so a rewritten paragraph is cut
         // down to the part the tutor changed. A shortened card cannot keep the
         // tutor's English — that described the whole line — so it waits for a lookup.
@@ -1487,7 +1491,7 @@ final class AppStore {
     /// collapsed, so "l’eau" tapped in a live headline is the same card as the
     /// deck's "l'eau". Diacritics are deliberately KEPT — "ou" and "où" are
     /// different words and must stay different cards.
-    private func captureKey(_ word: String) -> String {
+    nonisolated static func captureKey(_ word: String) -> String {
         let normalised = word
             .replacingOccurrences(of: "\u{2019}", with: "'")
             .replacingOccurrences(of: "\u{2018}", with: "'")
@@ -1498,13 +1502,24 @@ final class AppStore {
 
     /// The (non-probe) gap with the same headword, if one is already saved.
     func existingGap(forWord word: String) -> GapItem? {
-        let key = captureKey(word)
-        return gaps.first { !$0.isProbe && captureKey($0.frenchWord) == key }
+        let key = Self.captureKey(word)
+        return gaps.first { !$0.isProbe && Self.captureKey($0.frenchWord) == key }
     }
 
     /// True when a (non-probe) gap with the same headword already exists.
     func hasGap(forWord word: String) -> Bool {
         existingGap(forWord: word) != nil
+    }
+
+    /// Every (non-probe) headword the deck holds, under the same key `capture`
+    /// de-duplicates on. A surface that asks "is this already saved?" about many
+    /// words at once — the reader marks every word it draws — reads this once and
+    /// then tests each word with `AppStore.captureKey`, instead of scanning the
+    /// whole deck per word (read-6-3).
+    func savedHeadwordKeys() -> Set<String> {
+        var keys = Set<String>(minimumCapacity: gaps.count)
+        for gap in gaps where !gap.isProbe { keys.insert(Self.captureKey(gap.frenchWord)) }
+        return keys
     }
 
     /// Store a captured gap unless the same headword is already saved (case-
@@ -2956,7 +2971,7 @@ extension AppStore {
         // One attempt is one attempt: pressing "Get feedback" again on text that
         // was just graded would book a second lapse on the same card and a second
         // miss on every concept the feedback named.
-        let key = "\(captureKey(original))|\(captureKey(feedback.corrected))"
+        let key = "\(Self.captureKey(original))|\(Self.captureKey(feedback.corrected))"
         if key == lastSpeakFeedbackKey, let last = lastSpeakFeedbackAt,
            now.timeIntervalSince(last) < Tuning.speakFeedbackRepeatWindow {
             outcome.repeatedSubmission = true

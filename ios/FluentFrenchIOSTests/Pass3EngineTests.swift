@@ -739,12 +739,33 @@ struct Pass3EngineTests {
         var gap = EngineFixtures.gap("p", concept: "c")
         gap.isProbe = true
         gap.probeOptions = ["x", "y", "z"]
+        gap.probePrompt = "How is “x” pronounced?"
         let round = try decoder.decode(GapItem.self, from: encoder.encode(gap))
         #expect(round.probeOptions == ["x", "y", "z"])
+        #expect(round.probePrompt == "How is “x” pronounced?")
         var object = try #require(JSONSerialization.jsonObject(with: encoder.encode(gap)) as? [String: Any])
         object.removeValue(forKey: "probeOptions")
+        object.removeValue(forKey: "probePrompt")
         let legacy = try decoder.decode(GapItem.self, from: JSONSerialization.data(withJSONObject: object))
-        #expect(legacy.probeOptions == nil)
+        #expect(legacy.probeOptions == nil && legacy.probePrompt == nil)
+    }
+
+    /// lesson-6-1: the content's own question stem reaches the probe gap, so the
+    /// scheduler can ask a probe whose answer is a claim about the French rather
+    /// than its meaning.
+    @Test func materializedProbeCarriesTheContentsQuestionStem() throws {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("liaison", category: .pronunciation)], gaps: [])
+        s.probeContent = { _ in
+            [FoundationProbeContent(fr: "vous avez", en: "the s links as a z", ask: "How is “vous avez” pronounced?",
+                                    options: ["the s is silent", "the s is an s", "the v is dropped"]),
+             FoundationProbeContent(fr: "rire", en: "to laugh", options: ["to cry", "to run", "to read"])]
+        }
+        s.sessionIndex = 0
+        let asked = try #require(s.materializeProbeGap(id: "probe-liaison-0", for: s.concept("liaison")!, now: now))
+        #expect(asked.probePrompt == "How is “vous avez” pronounced?")
+        s.sessionIndex = 1
+        let plain = try #require(s.materializeProbeGap(id: "probe-liaison-1", for: s.concept("liaison")!, now: now))
+        #expect(plain.probePrompt == nil, "a meaning probe keeps the default stem")
     }
 
     // MARK: B14 — engine metrics
@@ -881,6 +902,14 @@ struct Pass3EngineTests {
         return nil
     }
 
+    /// Whether a probe answer reads as a claim ABOUT the French rather than a
+    /// meaning of it: a verdict ("correct: …", "wrong: …") or a rule / pronunciation
+    /// stated after a colon.
+    static func readsAsClaim(_ s: String) -> Bool {
+        let t = s.lowercased()
+        return t.contains(": ") || t.hasPrefix("correct") || t.hasPrefix("wrong")
+    }
+
     @Test func shippedContentDecodesWithTeachingProbesAndVerifiedBlanksForEveryConcept() throws {
         guard let data = bundledContentData() else {
             print("[Pass3EngineTests] FoundationContent.json not reachable from this host — skipping the shipped-content check")
@@ -914,6 +943,14 @@ struct Pass3EngineTests {
             #expect(probes.count == Tuning.placementProbesPerConcept, "\(concept.id): \(probes.count) usable probes")
             for probe in probes {
                 #expect(probe.options.count == 3 && !probe.options.contains(probe.en), "\(concept.id): probe distractors")
+                // lesson-6-1: a probe whose answer or options are CLAIMS about the
+                // French ("correct: colour adjectives go after the noun", "the s links
+                // as a z: 'vou-za-vé'") cannot be asked as "What does “<fr>” mean?" —
+                // the graded-correct option would answer a different question — so it
+                // has to carry its own stem.
+                let claims = ([probe.en] + probe.options).contains { Self.readsAsClaim($0) }
+                #expect(!claims || !(probe.ask ?? "").isEmpty,
+                        "\(concept.id): probe “\(probe.fr)” answers a claim, so it needs its own `ask` stem")
             }
             let skill = try #require(FoundationContentLoader.skill(for: concept.id, in: file))
             #expect(GapCategory(rawValue: skill.category) == concept.category, "\(concept.id): category matches the taxonomy")

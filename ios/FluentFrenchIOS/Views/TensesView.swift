@@ -81,13 +81,18 @@ struct TensesView: View {
             if !answers.contains(candidate) { answers.append(candidate) }
         }
         if !answers.contains(phrase) { answers.insert(phrase, at: 0) }
+        let meaning = ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
+                                              tense: tense.name)
         return CaptureDraft(
             frenchWord: word,
-            englishTranslation: ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
-                                                        tense: tense.name),
+            englishTranslation: meaning,
             explanation: "\(tense.frenchName) of \(verb.infinitive) (\(verb.meaning)). \(tense.detail).",
             exampleSentence: phrase,
-            exampleTranslation: "",
+            // The example IS the form with its pronoun, so the recall question is
+            // "j'_____" — and the hint under it is the example's reading. Without
+            // one, nothing on screen names the verb or the tense and the card is
+            // unanswerable the second time it comes up (read-6-2).
+            exampleTranslation: meaning,
             sourceType: .reading,
             sourceTab: "tenses",
             sourceLevel: Self.level(for: tense),

@@ -1023,6 +1023,45 @@ struct LessonSessionTests {
         #expect(missed.kind == .trueFalse && missed.answer == "g1-en")
     }
 
+    // MARK: lesson-6-3 — the persisted mistake log keeps the meaning
+
+    /// A true/false answers "True" or "False", so logging the submission verbatim
+    /// files a mistake that reads "~~True~~ / False" in Retention — no word, no
+    /// meaning, and it is the second question of every recall-level gap. What is
+    /// logged is the meaning pair the statement was really about.
+    @Test func trueFalseMissesAreLoggedAsAMeaningPair() throws {
+        let g = gap("g1")
+
+        // A false statement accepted: the learner took the distractor for the meaning.
+        var falseStatement = LessonQuestion(gap: g, kind: .trueFalse, prompt: "True or false?",
+                                            correctAnswer: "False", statement: "“g1-fr” means “g9-en”.")
+        falseStatement.claimedMeaning = "g9-en"
+        let accepted = LessonSession.loggedPair(for: falseStatement, given: "True")
+        #expect(accepted.given == "g9-en" && accepted.correct == "g1-en")
+
+        // A true statement rejected: the learner turned down the real meaning.
+        var trueStatement = LessonQuestion(gap: g, kind: .trueFalse, prompt: "True or false?",
+                                           correctAnswer: "True", statement: "“g1-fr” means “g1-en”.")
+        trueStatement.claimedMeaning = "g1-en"
+        let rejected = LessonSession.loggedPair(for: trueStatement, given: "False")
+        #expect(rejected.given == "not “g1-en”" && rejected.correct == "g1-en")
+
+        // Every other format already answers in its own words.
+        let mc = LessonQuestion(gap: g, kind: .multipleChoice, prompt: "What does “g1-fr” mean?",
+                                correctAnswer: "g1-en", options: ["g1-en", "g2-en"])
+        let picked = LessonSession.loggedPair(for: mc, given: "g2-en")
+        #expect(picked.given == "g2-en" && picked.correct == "g1-en")
+
+        // End to end: what the store would file for a missed true/false.
+        var s = LessonSession(lesson: lesson([g]), isCapstone: false, config: config())
+        s.start(with: [falseStatement])
+        let submitted = s.submit(.option("True"))
+        let outcome = try #require(submitted)
+        let evidence = try #require(outcome.evidence.first)
+        #expect(evidence.loggedAnswer == "g9-en" && evidence.correctAnswer == "g1-en")
+        #expect(evidence.loggedAnswer != "True" && evidence.correctAnswer != "False")
+    }
+
     // MARK: lesson-4-3 / lesson-4-4 — what a lesson may teach before it asks
 
     /// A word card (and the intro's meaning line) is withheld from anything the

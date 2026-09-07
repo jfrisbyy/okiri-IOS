@@ -470,6 +470,36 @@ struct LessonSchedulerTests {
         #expect(AnswerGrader.isCloze("tu ___ (parler)") && !AnswerGrader.isCloze("rire"))
     }
 
+    /// lesson-6-1: a probe whose answer is a CLAIM about the French — how it is
+    /// pronounced, whether the adjective sits in the right place — carries its own
+    /// stem from the content. Asking "What does “vous avez” mean?" over four
+    /// pronunciation claims asks a question none of the options answers.
+    @Test func probesWithAnAuthoredStemAskItInsteadOfTheMeaning() throws {
+        var liaison = gap("p-liaison", concept: "liaison", category: .pronunciation)
+        liaison.isProbe = true
+        liaison.frenchWord = "vous avez"
+        liaison.englishTranslation = "the s links as a z: 'vou-za-vé'"
+        liaison.probeOptions = ["the s is silent: 'vou a-vé'", "the s is pronounced as s: 'vou-sa-vé'",
+                                "the v of avez is dropped: 'vou-zé'"]
+        liaison.probePrompt = "How is “vous avez” pronounced?"
+        var rng = LessonRandom(seed: 5)
+        let q = try #require(scheduler.probeQuestion(for: liaison, rng: &rng))
+        #expect(q.prompt == "How is “vous avez” pronounced?")
+        #expect(!q.prompt.contains("mean"), "the meaning stem asks what the options never answer")
+        #expect(q.correctAnswer == liaison.englishTranslation && q.options.count == 4)
+
+        // Blank or absent, the scheduler falls back to its own stems.
+        var blank = liaison
+        blank.probePrompt = "   "
+        let fallback = try #require(scheduler.probeQuestion(for: blank, rng: &rng))
+        #expect(fallback.prompt == "What does “vous avez” mean?")
+        var cloze = liaison
+        cloze.probePrompt = nil
+        cloze.frenchWord = "___ gare"
+        let clozeQ = try #require(scheduler.probeQuestion(for: cloze, rng: &rng))
+        #expect(clozeQ.prompt == "Which one fits? ___ gare")
+    }
+
     @Test func releaseTrackerFiresOnceAtTheStreak() {
         var tracker = ConceptReleaseTracker()
         let n = Tuning.conceptReleaseStreak

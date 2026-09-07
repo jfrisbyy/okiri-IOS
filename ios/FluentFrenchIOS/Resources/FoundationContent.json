@@ -7368,6 +7368,7 @@
         {
           "fr": "une voiture rouge",
           "en": "correct: colour adjectives go after the noun",
+          "ask": "Is “une voiture rouge” right, and why?",
           "ex": "Elle a acheté une voiture rouge.",
           "exEn": "She bought a red car.",
           "options": [
@@ -7379,6 +7380,7 @@
         {
           "fr": "un vieil homme",
           "en": "correct: vieux is an Age adjective (BAGS), so it goes before the noun",
+          "ask": "Is “un vieil homme” right, and why?",
           "ex": "Un vieil homme attend le bus.",
           "exEn": "An old man is waiting for the bus.",
           "options": [
@@ -9106,6 +9108,7 @@
         {
           "fr": "vous avez",
           "en": "the s links as a z: 'vou-za-vé'",
+          "ask": "How is “vous avez” pronounced?",
           "ex": "Vous avez des enfants ?",
           "exEn": "Do you have children?",
           "options": [
@@ -9117,6 +9120,7 @@
         {
           "fr": "un grand hôtel",
           "en": "the d links as a t: 'gran-tô-tel'",
+          "ask": "How is “un grand hôtel” pronounced?",
           "ex": "Ils travaillent dans un grand hôtel.",
           "exEn": "They work in a big hotel.",
           "options": [
@@ -9128,6 +9132,7 @@
         {
           "fr": "Paul et Anne",
           "en": "no liaison after et: 'é An'",
+          "ask": "How is “Paul et Anne” pronounced?",
           "ex": "Paul et Anne arrivent demain.",
           "exEn": "Paul and Anne arrive tomorrow.",
           "options": [

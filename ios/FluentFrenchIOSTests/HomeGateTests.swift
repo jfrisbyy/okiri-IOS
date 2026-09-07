@@ -61,6 +61,24 @@ struct HomeGateTests {
         }
     }
 
+    /// Round 6 (firstrun-6-1): `canOpen(.reading)` is TRUE in the bridge, but the
+    /// bridge Read surface has no news feed and no search — only the curated
+    /// level-capped library. So "is there news?" is `readiness == .unlocked`, never
+    /// `canOpen`, and the bridge has its own copy to say what is actually there.
+    @Test func theBridgeOpensReadingWithoutOpeningTheNewsFeed() {
+        let bridged = store(coverage: config.readingBridge)
+        #expect(bridged.canOpen(.reading), "the surface opens")
+        #expect(bridged.readiness(for: .reading) != .unlocked, "…but not on authentic content")
+        #expect(bridged.unlockCondition(for: .reading) != nil,
+                "the bridge still has a condition to print under the headline")
+        #expect(ReadinessCopy.bridgeStat == "Short pieces at your level")
+        #expect(!ReadinessCopy.bridgeStat.lowercased().contains("news"))
+
+        let open = store(coverage: config.readingUnlock)
+        #expect(open.readiness(for: .reading) == .unlocked && open.canOpen(.reading))
+        #expect(open.unlockCondition(for: .reading) == nil, "nothing left to explain once news is real")
+    }
+
     @Test func unlockedReadingOpensAndTheHigherBarShowsProgress() {
         let s = store(coverage: config.readingUnlock)
         #expect(s.readiness(for: .reading) == .unlocked)
@@ -298,25 +316,62 @@ struct HomeGateTests {
     }
 
     @Test func subtitleNeverCelebratesAZeroStreak() {
-        let zero = HomeCopy.subtitle(streak: 0, dueNow: 0, lessonsToday: 0, placed: true)
+        let target = Tuning.foundationLessonsPerDay
+        let zero = HomeCopy.subtitle(streak: 0, dueNow: 0, lessonsToday: 0, lessonTarget: target, placed: true)
         #expect(zero == "No streak yet — one lesson starts it.")
         #expect(!zero.contains("0-day") && !zero.lowercased().contains("amazing"))
-        #expect(HomeCopy.subtitle(streak: 0, dueNow: 4, lessonsToday: 0, placed: true) == "4 due now — a short lesson clears them.")
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: 4, lessonsToday: 0, lessonTarget: target, placed: true)
+                == "4 due now — a short lesson clears them.")
         // More due than one lesson holds → the day's lessons, not "a short lesson"
         // (the Foundation card right below reads "Lesson 1 of 3 today").
-        #expect(HomeCopy.subtitle(streak: 0, dueNow: Tuning.lessonSize, lessonsToday: 0, placed: true)
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: Tuning.lessonSize, lessonsToday: 0, lessonTarget: target, placed: true)
                 == "\(Tuning.lessonSize) due now — a short lesson clears them.")
-        #expect(HomeCopy.subtitle(streak: 0, dueNow: Tuning.lessonSize + 1, lessonsToday: 0, placed: true)
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: Tuning.lessonSize + 1, lessonsToday: 0, lessonTarget: target, placed: true)
                 == "\(Tuning.lessonSize + 1) due now — today's lessons work through them.")
-        #expect(!HomeCopy.subtitle(streak: 0, dueNow: 24, lessonsToday: 0, placed: true).contains("a short lesson clears"))
-        #expect(HomeCopy.subtitle(streak: 0, dueNow: 4, lessonsToday: 1, placed: true) == "Good start today — tomorrow makes it a streak.")
-        #expect(HomeCopy.subtitle(streak: 0, dueNow: 9, lessonsToday: 0, placed: false) == "Take the short placement to start your plan.")
-        #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: 0, placed: true) == "Day 1 — a lesson today keeps it going.")
-        #expect(HomeCopy.subtitle(streak: 2, dueNow: 0, lessonsToday: 2, placed: true) == "Day 2 done — see you tomorrow.")
-        #expect(HomeCopy.subtitle(streak: Tuning.streakMomentumDays, dueNow: 0, lessonsToday: 0, placed: true)
+        #expect(!HomeCopy.subtitle(streak: 0, dueNow: 24, lessonsToday: 0, lessonTarget: target, placed: true)
+                .contains("a short lesson clears"))
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: 4, lessonsToday: 1, lessonTarget: target, placed: true)
+                == "Good start today — tomorrow makes it a streak.")
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: 9, lessonsToday: 0, lessonTarget: target, placed: false)
+                == "Take the short placement to start your plan.")
+        #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: 0, lessonTarget: target, placed: true)
+                == "Day 1 — a lesson today keeps it going.")
+        #expect(HomeCopy.subtitle(streak: 2, dueNow: 0, lessonsToday: 2, lessonTarget: 2, placed: true)
+                == "Day 2 done — see you tomorrow.")
+        #expect(HomeCopy.subtitle(streak: Tuning.streakMomentumDays, dueNow: 0, lessonsToday: 0, lessonTarget: target, placed: true)
                 == "\(Tuning.streakMomentumDays) days in a row — nice momentum.")
-        #expect(HomeCopy.subtitle(streak: Tuning.streakStrongDays, dueNow: 0, lessonsToday: 0, placed: true)
+        #expect(HomeCopy.subtitle(streak: Tuning.streakStrongDays, dueNow: 0, lessonsToday: 0, lessonTarget: target, placed: true)
                 == "\(Tuning.streakStrongDays)-day streak — keep it going!")
+    }
+
+    /// Round 6 (firstrun-6-2): the greeting may not wave the learner off after one
+    /// of the day's three lessons while the Foundation card below still reads
+    /// "Lesson 2 of 3 today". The two lines read the SAME target.
+    @Test func subtitleOnlyCallsTheDayDoneWhenTheDaysLessonsAreDone() {
+        let target = Tuning.foundationLessonsPerDay
+        #expect(target > 1, "the contradiction only exists with a multi-lesson day")
+
+        // Day one, first lesson of three: a correct answer already makes the streak 1.
+        let afterOne = HomeCopy.subtitle(streak: 1, dueNow: 20, lessonsToday: 1, lessonTarget: target, placed: true)
+        #expect(!afterOne.contains("see you tomorrow"))
+        #expect(afterOne == "Day 1 — \(HomeCopy.lessonsLeft(target - 1)) to go today.")
+        #expect(HomeCopy.lessonPace(done: 1, target: target) == "Lesson 2 of \(target) today")
+
+        // The last one left reads singular.
+        #expect(HomeCopy.subtitle(streak: 1, dueNow: 6, lessonsToday: target - 1, lessonTarget: target, placed: true)
+                == "Day 1 — 1 more lesson to go today.")
+
+        // All three done → the day really is over.
+        #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: target, lessonTarget: target, placed: true)
+                == "Day 1 done — see you tomorrow.")
+        // More than the target (extra practice) still reads done.
+        #expect(Tuning.streakMomentumDays > 2, "streak 2 is still in the day-N branch")
+        #expect(HomeCopy.subtitle(streak: 2, dueNow: 0, lessonsToday: target + 2, lessonTarget: target, placed: true)
+                == "Day 2 done — see you tomorrow.")
+        // A nonsense target never divides by zero or promises negative lessons.
+        #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: 1, lessonTarget: 0, placed: true)
+                == "Day 1 done — see you tomorrow.")
+        #expect(HomeCopy.lessonsLeft(0) == "1 more lesson" && HomeCopy.lessonsLeft(2) == "2 more lessons")
     }
 
     @Test func kiriMoodComesFromRealData() {
@@ -333,9 +388,24 @@ struct HomeGateTests {
         #expect(HomeCopy.lessonPace(done: 1, target: 3) == "Lesson 2 of 3 today")
         #expect(HomeCopy.lessonPace(done: 3, target: 3) == "All 3 lessons done today — extra practice is welcome.")
         #expect(HomeCopy.lessonPace(done: 2, target: 1) == "Today's lesson is done — extra practice is welcome.")
-        #expect(HomeCopy.gapsToReview(1) == "1 gap to review" && HomeCopy.gapsToReview(3) == "3 gaps to review")
+        #expect(HomeCopy.gapsToReview(1, practised: 1) == "1 gap to review")
+        #expect(HomeCopy.gapsToReview(3, practised: 3) == "3 gaps to review")
         #expect(HomeCopy.captured(1) == "Saved 1 thing you didn't know")
         #expect(HomeCopy.dueNowLabel == "Due now" && HomeCopy.upcomingLabel == "Coming up")
+    }
+
+    /// Round 6 (firstrun-6-5): "review" is a claim about evidence. On day one the
+    /// due bucket is the freshly seeded Foundation batch — never-seen cards — so the
+    /// Home row says "to learn", the same distinction `toLearnLabel` was added for.
+    @Test func theDueRowOnlySaysReviewOnceTheGapsHaveBeenPractised() {
+        #expect(HomeCopy.gapsToReview(24, practised: 0) == "24 to learn")
+        #expect(!HomeCopy.gapsToReview(24, practised: 0).contains("review"))
+        #expect(HomeCopy.gapsToReview(1, practised: 0) == "1 to learn")
+        #expect(HomeCopy.gapsToReview(6, practised: 6) == "6 gaps to review")
+        #expect(HomeCopy.gapsToReview(6, practised: 2) == "4 to learn · 2 to review")
+        // Nonsense inputs never produce a negative or over-claimed count.
+        #expect(HomeCopy.gapsToReview(3, practised: 9) == "3 gaps to review")
+        #expect(HomeCopy.gapsToReview(3, practised: -1) == "3 to learn")
     }
 
     // MARK: D10 (round 3) — the Foundation bar counts to the gate's finish line

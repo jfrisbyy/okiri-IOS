@@ -120,8 +120,9 @@ nonisolated enum LessonQuestionParser {
     /// prompt the model is given carries the dictionary headword — "ne... pas",
     /// "je suis" — and answering with it would build a question whose stated answer
     /// cannot go in its own sentence ("Je _____ anglais." → "Je ne... pas anglais.").
-    /// `acceptedForms` still admits the headword when the blank IS the headword
-    /// modulo its article ("le pain" / "pain"), which is the only case it fits.
+    /// The headword's ARTICLE is no exception: the sentence around a blank already
+    /// supplies the determiner, so "le pain" is not an answer to a blank whose form
+    /// is "pain" ("J'aime le _____." → "J'aime le le pain.").
     static func isContentForm(_ answer: String, of gap: GapItem, kind: QuestionKind) -> Bool {
         let target = AnswerGrader.normalize(answer)
         guard !target.isEmpty else { return false }
@@ -278,9 +279,11 @@ nonisolated enum LessonQuestionParser {
             var explanation = "“\(gap.frenchWord)” means “\(gap.englishTranslation)”."
             if !isTrue { explanation += " It does not mean “\(claim.english)”." }
             if let note { explanation += "\n\(note)" }
-            return LessonQuestion(gap: gap, kind: .trueFalse, prompt: "True or false?",
-                                  correctAnswer: isTrue ? "True" : "False", statement: statement,
-                                  hint: nil, explanation: explanation)
+            var tf = LessonQuestion(gap: gap, kind: .trueFalse, prompt: "True or false?",
+                                    correctAnswer: isTrue ? "True" : "False", statement: statement,
+                                    hint: nil, explanation: explanation)
+            tf.claimedMeaning = claim.english
+            return tf
 
         case "translation", "translate":
             guard gap.isTestable else { return nil }

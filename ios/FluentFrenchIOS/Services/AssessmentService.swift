@@ -456,7 +456,13 @@ nonisolated enum AssessmentService {
         let band = bandForLevel(concept.cefrLevel)
         return probes.compactMap { probe in
             guard !probe.fr.isEmpty, !probe.en.isEmpty, !probe.options.isEmpty else { return nil }
-            let prompt = probe.fr.contains("___") ? "Fill in the blank: “\(probe.fr)”" : "What does “\(probe.fr)” mean?"
+            // A probe whose answer is a claim about the French (a pronunciation, a
+            // placement rule) carries its own stem: the meaning stem would ask a
+            // question its options never answer.
+            let authored = (probe.ask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let prompt = !authored.isEmpty
+                ? authored
+                : (probe.fr.contains("___") ? "Fill in the blank: “\(probe.fr)”" : "What does “\(probe.fr)” mean?")
             var item = q(band, concept.category, prompt, probe.fr, probe.en, probe.options, probe.en,
                          "", probe.ex, probe.exEn, concept.id)
             item.isProbe = true          // a cloze stem is not a headword — never seed a card from it

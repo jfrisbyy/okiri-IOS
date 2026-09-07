@@ -112,15 +112,21 @@ struct LessonCompleteStage: View {
     }
 
     private func capstoneTally(_ summary: LessonSummary) -> some View {
-        VStack(spacing: 10) {
+        // The missed card below already lists every slipped item WITH its answer, so
+        // naming them here too prints the same French words twice in one scroll. Only
+        // a slip that card cannot show (one with no missed entry) is listed here.
+        let listed = Set(summary.missed.map(\.gap.id))
+        var seen = Set<String>()
+        let unlisted = summary.slipped.filter { !listed.contains($0.id) && seen.insert($0.id).inserted }
+        return VStack(spacing: 10) {
             HStack(spacing: 10) {
                 tallyChip("checkmark.circle.fill", Theme.success, "\(summary.held.count)", "held")
                 tallyChip("xmark.circle.fill", Theme.error, "\(summary.slipped.count)", "slipped")
             }
-            if !summary.slipped.isEmpty {
+            if !unlisted.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("SLIPPED").font(.caption.weight(.bold)).foregroundStyle(Theme.error).tracking(0.3)
-                    ForEach(summary.slipped) { gap in
+                    ForEach(unlisted) { gap in
                         HStack(spacing: 8) {
                             Text(gap.frenchWord).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
                             Text("— \(gap.englishTranslation)").font(.footnote).foregroundStyle(Theme.textSecondary)

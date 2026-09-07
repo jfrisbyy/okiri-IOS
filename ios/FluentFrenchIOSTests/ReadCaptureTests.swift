@@ -810,16 +810,21 @@ struct ReadCaptureTests {
     // MARK: - read-4-2 A form two tenses spell alike names both tenses
 
     private func conjugationDraft(_ form: String, pronouns: [String], verb: FrenchVerb,
-                                  tense: FrenchTense) -> CaptureDraft {
-        CaptureDraft(frenchWord: form,
-                     englishTranslation: ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
-                                                                 tense: tense.name),
-                     explanation: "\(tense.frenchName) of \(verb.infinitive) (\(verb.meaning)). \(tense.detail).",
-                     exampleSentence: "\(pronouns[0]) \(form)",
-                     sourceType: .reading, sourceTab: "tenses", sourceLevel: .B1,
-                     category: .grammar, partOfSpeech: "verb",
-                     acceptedAnswers: ["\(pronouns[0]) \(form)"],
-                     mergeIntoExisting: true)
+                                  tense: FrenchTense, example: String? = nil) -> CaptureDraft {
+        let meaning = ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns, tense: tense.name)
+        let phrase = example ?? "\(pronouns[0]) \(form)"
+        // As TensesView builds it: the example is the form with its pronoun and
+        // the example's translation is the card's reading, so the recall blank
+        // has a hint that names the verb and the tense (read-6-2).
+        return CaptureDraft(frenchWord: form,
+                            englishTranslation: meaning,
+                            explanation: "\(tense.frenchName) of \(verb.infinitive) (\(verb.meaning)). \(tense.detail).",
+                            exampleSentence: phrase,
+                            exampleTranslation: meaning,
+                            sourceType: .reading, sourceTab: "tenses", sourceLevel: .B1,
+                            category: .grammar, partOfSpeech: "verb",
+                            acceptedAnswers: [phrase],
+                            mergeIntoExisting: true)
     }
 
     @Test func aFormSharedByTwoTensesNamesBothTenses() throws {
@@ -961,5 +966,92 @@ struct ReadCaptureTests {
         // story still shows under "All".
         #expect(ReadRegionGroup.forSource(name: "Sports Daily", url: "https://example.com/x") == nil)
         #expect(ReadRegionGroup.forSource(name: nil, url: nil) == nil)
+    }
+
+    // MARK: - read-6-1 An untriggered taxonomy skill never matches its own English name
+
+    @Test func ordinaryNounsAreNeverFiledOnASkillThatOnlySharesAWordOfItsName() {
+        // The taxonomy is far bigger than the curated trigger table. Matching a
+        // shipped skill on the tokens of its ENGLISH NAME would file "un ami" on
+        // False friends, "le train" on être en train de and "le passé" on past
+        // participle agreement — B1–C1 skills with no items, no probes and no
+        // teaching — and would book the answer as evidence for a skill the card
+        // is not evidence of. Below the floor, the gap stays untagged (and an
+        // untagged card is still practicable).
+        let ordinary = [("un ami", "friend"), ("une question", "question"), ("le train", "train"),
+                        ("le passé", "past"), ("un mot", "word"), ("une lettre", "letter"),
+                        ("le style", "style"), ("la santé", "health"), ("un avis", "opinion")]
+        for (word, english) in ordinary {
+            let result = HeuristicTagger.tag(gap: captured(word, english: english, pos: "noun", level: .B1),
+                                             concepts: taxonomy)
+            guard case .untagged = result else {
+                Issue.record("“\(word)” (\(english)) was filed as \(result)"); continue
+            }
+        }
+        let friend = HeuristicTagger.rank(gap: captured("un ami", english: "friend", pos: "noun", level: .B1),
+                                          concepts: taxonomy)
+        #expect(!friend.contains { $0.conceptId == "false-friends" }, "a skill with no triggers scores nothing")
+    }
+
+    @Test func aConceptTheLearnerOrAIMadeIsStillMatchedOnItsName() {
+        // A concept outside the taxonomy has no curated row, and its own name is
+        // the only description of it there is — so the name tokens still count.
+        let mine = Concept(id: "kitchen-verbs", name: "Kitchen verbs", category: .vocabulary,
+                           cefrLevel: .B1, prerequisites: [], description: "Verbs used in cooking.")
+        let gap = captured("mijoter", english: "to simmer in the kitchen", pos: "verb", level: .B1)
+        #expect(HeuristicTagger.rank(gap: gap, concepts: taxonomy + [mine]).contains { $0.conceptId == "kitchen-verbs" })
+    }
+
+    // MARK: - read-6-2 A conjugation saved from the tenses page can be answered
+
+    @Test func aSavedConjugationsFillBlankNamesTheVerbAndTheTense() throws {
+        let s = quietStore()
+        let etre = try #require(TensesData.verbs.first { $0.infinitive == "être" })
+        let imparfait = try #require(TensesData.tenses.first { $0.name == "Imparfait" })
+        guard case .saved(let saved) = s.capture(conjugationDraft("étais", pronouns: ["je", "tu"], verb: etre,
+                                                                  tense: imparfait, example: "j'étais"),
+                                                 now: now) else {
+            Issue.record("expected a save"); return
+        }
+        var card = saved
+        // One correct review moves the card to recall, where it is asked as a blank.
+        card.reviewCount = 1
+        card.consecutiveCorrect = 1
+        var config = LessonSchedulerConfig.tuning
+        config.seed = 3
+        let scheduler = LessonScheduler(config: config)
+        #expect(scheduler.level(for: card) == .recall)
+        #expect(scheduler.kinds(for: card) == [.fillBlank, .trueFalse])
+        var rng = LessonRandom(seed: 3)
+        let q = try #require(scheduler.question(for: card, kind: .fillBlank, pool: [card], optionCount: 4, rng: &rng))
+        #expect(q.prompt == "j'_____")
+        #expect(q.correctAnswer == "étais")
+        // The prompt names neither the verb nor the tense, so the hint has to.
+        let hint = try #require(q.hint)
+        #expect(hint.contains(etre.meaning))
+        #expect(hint.lowercased().contains(imparfait.name.lowercased()))
+    }
+
+    // MARK: - read-6-3 The reader marks every word the deck already holds
+
+    @Test func savedHeadwordKeysAreEveryHeadwordTheDeckHolds() {
+        let s = quietStore()
+        s.capture(CaptureDraft(frenchWord: "L’Énergie", englishTranslation: "energy",
+                               sourceType: .reading, sourceTab: "read"), now: now)
+        let keys = s.savedHeadwordKeys()
+        #expect(keys.contains(AppStore.captureKey("l'énergie")), "capital and typographic apostrophe fold away")
+        #expect(keys.contains(AppStore.captureKey(" l’Énergie ")))
+        #expect(!keys.contains(AppStore.captureKey("energie")), "diacritics still separate two words")
+        #expect(!keys.contains(AppStore.captureKey("ordinateur")))
+        // The same answer the gloss sheet's per-word check gives, for every word.
+        for gap in s.gaps where !gap.isProbe {
+            #expect(keys.contains(AppStore.captureKey(gap.frenchWord)) == s.hasGap(forWord: gap.frenchWord))
+        }
+        // A diagnostic probe is not a word the learner saved.
+        var probe = EngineFixtures.gap("p1", concept: "c")
+        probe.frenchWord = "probe-fr"
+        probe.isProbe = true
+        s.gaps.append(probe)
+        #expect(!s.savedHeadwordKeys().contains(AppStore.captureKey("probe-fr")))
     }
 }

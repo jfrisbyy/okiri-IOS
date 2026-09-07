@@ -245,6 +245,28 @@ struct PlacementFlowTests {
         #expect(result.masteredConceptIds.isEmpty && result.inferredConceptIds.isEmpty)
     }
 
+    /// Round 6 (firstrun-6-4): `next()` checks the bottom-out BEFORE the `minItems`
+    /// guard, so an all-wrong run ends below the "at least `placementMinItems`" floor.
+    /// That is the right engine behaviour — nothing is learned by asking a bottomed-out
+    /// category again — so the VIEW must stop promising the floor; `bottomedOutCategories`
+    /// is the signal it reads (AssessmentView.minimumStillApplies).
+    @Test func aFullBottomOutEndsThePlacementBelowItsAdvertisedMinimum() {
+        for seed in UInt64(1)...8 {
+            var engine = PlacementEngine(bank: smallBank(), seed: seed)
+            let asked = run(&engine) { _ in false }
+            #expect(engine.next() == nil, "seed \(seed): the test is over")
+            #expect(!engine.bottomedOutCategories.isEmpty, "seed \(seed): a category bottomed out")
+            #expect(asked.count < Tuning.placementMinItems,
+                    "seed \(seed): stopped at \(asked.count), below the advertised \(Tuning.placementMinItems)")
+        }
+        // A learner who keeps answering never bottoms out, so the floor holds for them.
+        var strong = PlacementEngine(bank: smallBank(), seed: 3)
+        let askedStrong = run(&strong) { _ in true }
+        #expect(strong.bottomedOutCategories.isEmpty)
+        #expect(askedStrong.count >= Tuning.placementMinItems || askedStrong.count == smallBank().count,
+                "no bottom-out → at least the minimum, unless the bank ran dry")
+    }
+
     @Test func aCorrectAnswerResetsTheBottomOutCounter() {
         // Three band-1 vocabulary concepts, one item each: miss, hit, miss must NOT
         // read as two lowest-band misses in a row (D7).
@@ -353,6 +375,33 @@ struct PlacementFlowTests {
         // urgency, not eligibility.
         #expect(s.gaps.allSatisfy { $0.isPracticable(at: now) })
         #expect(s.selectionRequest(for: .mixed, now: now).mode.isScoped)
+    }
+
+    /// Round 6 (firstrun-6-5): Home's "Recommended for You" buckets `store.dueNow`
+    /// by category. On day one every one of those cards is a never-seen Foundation
+    /// seed, so no bucket may be described as something to "review".
+    @Test func everyDayOneDueGapIsNewSoTheHomeRowSaysToLearn() {
+        let s = contentStore()
+        var engine = PlacementEngine(bank: [])
+        engine.declareBeginner()
+        s.applyPlacement(engine.result(), isFirstRun: true, now: now)
+
+        let due = s.dueNow(at: now)
+        #expect(!due.isEmpty, "placement seeds the first Foundation batch")
+        #expect(due.allSatisfy { $0.isNew }, "nothing has been answered on day one")
+        for category in GapCategory.allCases {
+            let bucket = due.filter { $0.category == category }
+            guard !bucket.isEmpty else { continue }
+            let line = HomeCopy.gapsToReview(bucket.count, practised: bucket.filter { !$0.isNew }.count)
+            #expect(line == "\(bucket.count) to learn", "a day-one bucket must not claim review: \(line)")
+        }
+
+        // Once a card has actually been answered the same row switches to review.
+        let first = due[0]
+        s.recordAnswer(gapId: first.id, correct: true, format: .multipleChoice, firstTry: true, now: now)
+        let practised = s.gaps.first { $0.id == first.id }
+        #expect(practised?.isNew == false, "an answered gap is no longer new")
+        #expect(HomeCopy.gapsToReview(3, practised: 3) == "3 gaps to review")
     }
 
     @Test func placementSeedsKeepTheirGapsAndMissedHeadwordsAreNotSeededTwice() {

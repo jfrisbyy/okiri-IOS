@@ -83,6 +83,11 @@ nonisolated struct LessonQuestion: Identifiable {
     /// Multiple choice in the reverse direction: an English prompt with French
     /// options (the view speaks nothing for the prompt and French for the options).
     var isReversed: Bool = false
+    /// True/false only: the meaning the statement CLAIMS for the French word — the
+    /// item's own gloss when the statement is true, a distractor when it is false.
+    /// The mistake log needs it, because "True" and "False" name neither the word
+    /// nor what the learner got wrong. Nil for every other format.
+    var claimedMeaning: String? = nil
     /// What the learner sees after answering, right or wrong (C10): the real meaning
     /// for true/false, the target sentence for arrange, the completed sentence for
     /// fill-blank, the content note otherwise.

@@ -323,12 +323,16 @@ struct LessonQuestionParserTests {
         #expect(LessonQuestionParser.isContentForm("ne... pas", of: negation, kind: .translation),
                 "the headword is still the answer to a translation")
 
-        // The blank IS the headword without its article: the headword still fits.
+        // lesson-6-2: the blank is the headword without its article ("J'aime le
+        // _____."), so the article-carrying headword does not fit it either.
         var pain = gap("pain")
         pain.frenchWord = "le pain"
         pain.englishTranslation = "bread"
         pain.exampleSentence = "J'aime le pain."
-        #expect(LessonQuestionParser.isContentForm("le pain", of: pain, kind: .fillBlank))
+        #expect(!LessonQuestionParser.isContentForm("le pain", of: pain, kind: .fillBlank),
+                "the sentence around the blank already carries the article")
+        #expect(LessonQuestionParser.isContentForm("le pain", of: pain, kind: .translation),
+                "the headword is still the answer to a translation")
         #expect(LessonQuestionParser.isContentForm("pain", of: pain, kind: .fillBlank))
         #expect(!LessonQuestionParser.isContentForm("pains", of: pain, kind: .fillBlank))
     }

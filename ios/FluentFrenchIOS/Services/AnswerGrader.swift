@@ -26,17 +26,23 @@ nonisolated enum AnswerGrader {
     /// accepted alternatives, and (for vocabulary) the headword with or without
     /// its leading article.
     ///
-    /// Article leniency (vocabulary only) is one-directional: "pain" is accepted
-    /// for "le pain" and "le pain" for "pain", but "la pain" is NOT accepted for
-    /// "le pain" — when the content carries an article, the article is part of
+    /// Article leniency (vocabulary TRANSLATIONS only) is one-directional: "pain" is
+    /// accepted for "le pain" and "le pain" for "pain", but "la pain" is NOT accepted
+    /// for "le pain" — when the content carries an article, the article is part of
     /// the answer.
+    ///
+    /// A FILL-BLANK gets no article leniency at all: the sentence around the blank
+    /// already supplies (or withholds) the determiner, so an added or dropped article
+    /// does not fit the hole. "Ma _____ est gentille." wants "mère" — "la mère" would
+    /// read "Ma la mère est gentille."; "Je bois de _____." wants "l'eau" — "eau"
+    /// would read "Je bois de eau."
     static func grade(typed: String, against gap: GapItem, expected: String, kind: QuestionKind) -> AnswerVerdict {
         let typedNorm = normalize(typed)
         guard !typedNorm.isEmpty else { return .incorrect }
 
         let candidates = acceptedForms(for: gap, expected: expected, kind: kind)
         guard !candidates.isEmpty else { return .incorrect }
-        let lenient = gap.category == .vocabulary
+        let lenient = gap.category == .vocabulary && kind != .fillBlank
 
         // 1. Exact (case-insensitive, normalised) match.
         for candidate in candidates where matches(typedNorm, candidate.normalized, articleLenient: lenient, fold: { $0 }) {
@@ -77,7 +83,12 @@ nonisolated enum AnswerGrader {
         raw.append(contentsOf: (gap.acceptedAnswers ?? []).filter {
             kind != .fillBlank || fitsBlank($0, gap: gap, expected: expected)
         })
-        if kind.isTyped, gap.category == .vocabulary, acceptsHeadword(gap, expected: expected) {
+        // The headword is an article-leniency alternative ("le pain" for "pain"), so
+        // like every other alternative it has to fit the blank: in a fill-blank the
+        // sentence already carries the determiner, and "Also accepted: la mère" under
+        // "Ma _____ est gentille." advertises "Ma la mère est gentille."
+        if kind.isTyped, gap.category == .vocabulary, acceptsHeadword(gap, expected: expected),
+           kind != .fillBlank || fitsBlank(gap.frenchWord, gap: gap, expected: expected) {
             raw.append(gap.frenchWord)
         }
         // "a / b" glosses: either side is a valid answer.

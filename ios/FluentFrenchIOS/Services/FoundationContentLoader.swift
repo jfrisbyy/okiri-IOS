@@ -90,20 +90,27 @@ nonisolated struct FoundationExampleContent: Codable, Hashable {
 
 /// Content v2 diagnostic probe: `fr` is the prompt, `en` the correct answer, and
 /// `options` the three distractors (the answer is NOT repeated in `options`).
+///
+/// `ask` is the question stem to print. Most probes are asked "What does “<fr>”
+/// mean?" — but a probe whose answer is a CLAIM about `fr` rather than its meaning
+/// ("the s links as a z: 'vou-za-vé'", "correct: colour adjectives go after the
+/// noun") is unanswerable under that stem, so those items carry their own.
 nonisolated struct FoundationProbeContent: Codable, Hashable {
     let fr: String
     let en: String
+    var ask: String? = nil
     var ex: String = ""
     var exEn: String = ""
     var options: [String] = []
 
     enum CodingKeys: String, CodingKey {
-        case fr, en, ex, exEn, options
+        case fr, en, ask, ex, exEn, options
     }
 
-    init(fr: String, en: String, ex: String = "", exEn: String = "", options: [String] = []) {
+    init(fr: String, en: String, ask: String? = nil, ex: String = "", exEn: String = "", options: [String] = []) {
         self.fr = fr
         self.en = en
+        self.ask = ask
         self.ex = ex
         self.exEn = exEn
         self.options = options
@@ -113,6 +120,7 @@ nonisolated struct FoundationProbeContent: Codable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         fr = try c.decode(String.self, forKey: .fr)
         en = try c.decode(String.self, forKey: .en)
+        ask = try c.decodeIfPresent(String.self, forKey: .ask)
         ex = try c.decodeIfPresent(String.self, forKey: .ex) ?? ""
         exEn = try c.decodeIfPresent(String.self, forKey: .exEn) ?? ""
         options = try c.decodeIfPresent([String].self, forKey: .options) ?? []

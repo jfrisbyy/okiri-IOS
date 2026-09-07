@@ -383,9 +383,13 @@ struct WordReader: View {
     // MARK: Body
 
     private var articleBody: some View {
-        VStack(alignment: .leading, spacing: Space.lg) {
+        // The deck's headwords, read ONCE for the whole body: a word saved in an
+        // earlier session is underlined the first time this story is opened, and
+        // the per-word test stays a set lookup (read-6-3).
+        let savedKeys = store.savedHeadwordKeys()
+        return VStack(alignment: .leading, spacing: Space.lg) {
             ForEach(blocks) { block in
-                blockView(block)
+                blockView(block, savedKeys: savedKeys)
             }
         }
         .coordinateSpace(.named("reader"))
@@ -396,41 +400,44 @@ struct WordReader: View {
     }
 
     @ViewBuilder
-    private func blockView(_ block: ContentBlock) -> some View {
+    private func blockView(_ block: ContentBlock, savedKeys: Set<String>) -> some View {
         switch block.kind {
         case .heading:
             HStack(alignment: .top, spacing: 10) {
                 RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 4)
-                tokenFlow(block, size: 20, weight: .bold, color: Theme.text)
+                tokenFlow(block, size: 20, weight: .bold, color: Theme.text, savedKeys: savedKeys)
             }
             .padding(.top, 4)
         case .bullet:
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(tint).frame(width: 6, height: 6).padding(.top, 9)
-                tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
+                tokenFlow(block, size: 17, weight: .regular, color: Theme.text, savedKeys: savedKeys)
             }
         case .numbered:
             HStack(alignment: .top, spacing: 10) {
                 Text("\(block.number ?? 1)")
                     .scaledFont(13, weight: .bold).foregroundStyle(.white)
                     .frame(width: 22 * Theme.chromeScale(typeScale), height: 22 * Theme.chromeScale(typeScale)).background(tint).clipShape(.circle)
-                tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
+                tokenFlow(block, size: 17, weight: .regular, color: Theme.text, savedKeys: savedKeys)
             }
         case .paragraph:
-            tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
+            tokenFlow(block, size: 17, weight: .regular, color: Theme.text, savedKeys: savedKeys)
         }
     }
 
-    private func tokenFlow(_ block: ContentBlock, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
+    private func tokenFlow(_ block: ContentBlock, size: CGFloat, weight: Font.Weight, color: Color,
+                           savedKeys: Set<String>) -> some View {
         FlowLayout(spacing: 5, lineSpacing: 7) {
             ForEach(block.tokens) { token in
-                tokenView(token, blockId: block.id, size: size, weight: weight, color: color)
+                tokenView(token, blockId: block.id, size: size, weight: weight, color: color,
+                          savedKeys: savedKeys)
             }
         }
     }
 
     @ViewBuilder
-    private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
+    private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color,
+                           savedKeys: Set<String>) -> some View {
         // The word as the deck would keep it, so the underline below marks a
         // saved word wherever it is met: "l'énergie" in the body and the
         // "énergie" chip are the same card (read-5-1).
@@ -439,7 +446,10 @@ struct WordReader: View {
         // no "opens the translation" promise the reader cannot keep.
         let lookupable = Self.isLookupable(headword)
         let highlighted = isHighlighted(token.id)
-        let saved = lookupable && savedTerms.contains(headword.lowercased())
+        // Saved in THIS reading, or already in the deck from an earlier one — a word
+        // the learner owns is marked wherever it is met (read-6-3).
+        let saved = lookupable && (savedTerms.contains(headword.lowercased())
+                                   || savedKeys.contains(AppStore.captureKey(headword)))
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
         let wordView = Text(token.text)
             .font(Theme.scaledFontValue(size, weight: weight, for: sizeCategory))
@@ -488,11 +498,13 @@ struct WordReader: View {
     @ViewBuilder
     private var keyVocabSection: some View {
         if !keyVocab.isEmpty {
+            let savedKeys = store.savedHeadwordKeys()
             VStack(alignment: .leading, spacing: Space.md) {
                 SectionHeader(title: "Key Vocabulary", trailing: "\(keyVocab.count) words")
                 FlowLayout(spacing: 8, lineSpacing: 8) {
                     ForEach(keyVocab, id: \.self) { word in
                         let saved = savedTerms.contains(word.lowercased())
+                            || savedKeys.contains(AppStore.captureKey(word))
                         Button {
                             Haptics.tap()
                             present(term: word)

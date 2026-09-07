@@ -281,8 +281,17 @@ struct ErrorPatternDetailView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("YOUR MISTAKES").scaledFont(11, weight: .semibold).foregroundStyle(Theme.textSecondary).tracking(0.4)
                     ForEach(pattern.records) { record in
+                        let spoken: String = record.frenchWord.isEmpty
+                            ? "You wrote \(record.userAnswer). The answer is \(record.correctAnswer)."
+                            : "\(record.frenchWord). You wrote \(record.userAnswer). The answer is \(record.correctAnswer)."
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
+                                // Without the word itself a row is unreadable: two
+                                // meanings with nothing to attach them to.
+                                if !record.frenchWord.isEmpty {
+                                    Text(record.frenchWord).scaledFont(14, weight: .bold).foregroundStyle(Theme.text)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                                 Text(record.userAnswer).scaledFont(14).strikethrough().foregroundStyle(Theme.error)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Text(record.correctAnswer).scaledFont(14, weight: .semibold).foregroundStyle(Theme.success)
@@ -295,7 +304,7 @@ struct ErrorPatternDetailView: View {
                         // Struck-through red vs green is the only visual cue for
                         // which answer was wrong, so VoiceOver gets it in words.
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("You wrote \(record.userAnswer). The answer is \(record.correctAnswer).")
+                        .accessibilityLabel(spoken)
                         .accessibilityValue(relativeDate(record.occurredAt))
                     }
                 }

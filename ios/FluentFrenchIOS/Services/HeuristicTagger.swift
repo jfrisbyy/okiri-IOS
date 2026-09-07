@@ -102,9 +102,13 @@ nonisolated enum HeuristicTagger {
     private static func keywordHits(_ concept: Concept, signals: Signals) -> Int {
         let themeVocabulary = concept.category == .vocabulary && concept.id != "savoir-vs-connaitre"
         if signals.isPhrase && themeVocabulary { return 0 }
-        // Taxonomy concepts have curated triggers; a learner- or AI-created concept
-        // is matched on the significant words of its own name.
-        let keys = triggers[concept.id] ?? nameTokens(concept.name)
+        // Taxonomy concepts are matched on their curated triggers ONLY. A shipped
+        // skill with no triggers scores 0 and the gap stays untagged: matching the
+        // tokens of a skill's English NAME would file "un ami" on false-friends and
+        // "le train" on être-en-train-de (read-6-1). A learner- or AI-created
+        // concept has no curated row, so it is matched on the significant words of
+        // its own name — that name is the only description of it there is.
+        let keys = triggers[concept.id] ?? (taxonomyIds.contains(concept.id) ? [] : nameTokens(concept.name))
         var hits = 0
         var seen = Set<String>()
         for key in keys {
@@ -292,6 +296,9 @@ nonisolated enum HeuristicTagger {
     }
 
     // MARK: Tables
+
+    /// Ids of the shipped taxonomy, read once: `keywordHits` asks per concept.
+    private static let taxonomyIds: Set<String> = ConceptTaxonomy.ids
 
     private static let subjectPronouns: Set<String> = ["je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles"]
     private static let definiteArticles: Set<String> = ["le", "la", "les", "l'"]

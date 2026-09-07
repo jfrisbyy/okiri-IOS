@@ -88,7 +88,7 @@ struct AssessmentView: View {
                 .font(.callout).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
             VStack(spacing: 10) {
-                infoRow("dial.medium.fill", "Adapts as you answer — \(engineMin) to \(engineMax) questions")
+                infoRow("dial.medium.fill", "Adapts as you answer — up to \(engineMax) questions, fewer if we can tell sooner")
                 infoRow("textformat.abc", "Estimates vocabulary & grammar separately")
                 if isFirstRun {
                     infoRow("signpost.right.fill", "Routes you to the right starting point")
@@ -188,7 +188,11 @@ struct AssessmentView: View {
                 .accessibilityHint("Leaves the placement check")
             }
             // The adaptive test has no fixed length: the bar fills toward the engine's
-            // maximum as evidence accumulates, with a tick at its minimum (D17).
+            // maximum as evidence accumulates, with a tick at its minimum (D17). Once
+            // a category has bottomed out the staircase may stop BEFORE that minimum
+            // (`PlacementEngine.next()` returns nil on a full bottom-out ahead of the
+            // `minItems` guard), so the tick — and the "at least" it promises — is
+            // withdrawn rather than left as a mark the bar can never reach.
             GeometryReader { geo in
                 let fraction = min(1, Double(engine.asked.count) / Double(max(engineMax, 1)))
                 let minFraction = Double(engineMin) / Double(max(engineMax, 1))
@@ -197,16 +201,20 @@ struct AssessmentView: View {
                     Capsule().fill(Self.indigo)
                         .frame(width: max(10, geo.size.width * fraction), height: 10)
                         .reducedMotionAnimation(.spring(response: 0.5, dampingFraction: 0.8), value: engine.asked.count)
-                    Rectangle().fill(Theme.card.opacity(0.9))
-                        .frame(width: 2, height: 10)
-                        .offset(x: geo.size.width * minFraction)
+                    if minimumStillApplies {
+                        Rectangle().fill(Theme.card.opacity(0.9))
+                            .frame(width: 2, height: 10)
+                            .offset(x: geo.size.width * minFraction)
+                    }
                 }
                 .frame(height: 10)
             }
             .frame(height: 10)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Placement progress")
-            .accessibilityValue("Question \(questionNumber) of at most \(engineMax); at least \(engineMin)")
+            .accessibilityValue(minimumStillApplies
+                                ? "Question \(questionNumber) of at most \(engineMax); at least \(engineMin)"
+                                : "Question \(questionNumber) of at most \(engineMax)")
             Text("Q\(questionNumber)").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                 .accessibilityHidden(true)
         }
@@ -215,6 +223,11 @@ struct AssessmentView: View {
 
     /// The question number shown on the bar (the one on screen until it is checked).
     private var questionNumber: Int { engine.asked.count + (revealed ? 0 : 1) }
+
+    /// Whether the "at least `engineMin` questions" floor is still true. A category
+    /// that has bottomed out at the lowest band can end the test early, so the floor
+    /// stops being a promise the moment one does.
+    private var minimumStillApplies: Bool { engine.bottomedOutCategories.isEmpty }
 
     private func bandLabel(_ band: Int) -> String {
         switch band {

@@ -44,9 +44,16 @@ nonisolated enum HomeCopy {
     }
 
     /// The line under the greeting. Reads the streak honestly: nothing is
-    /// "amazing" at zero, and a real streak is named by its length.
-    static func subtitle(streak: Int, dueNow: Int, lessonsToday: Int, placed: Bool) -> String {
+    /// "amazing" at zero, and a real streak is named by its length. `lessonTarget`
+    /// is the day's prescribed number of lessons (the plan's `lessonItem`): the day
+    /// is only "done" once that many are finished, otherwise the greeting would
+    /// wave the learner off after the first of three while the card right below it
+    /// still reads "Lesson 2 of 3 today".
+    static func subtitle(streak: Int, dueNow: Int, lessonsToday: Int,
+                         lessonTarget: Int, placed: Bool) -> String {
         guard placed else { return "Take the short placement to start your plan." }
+        let target = max(1, lessonTarget)
+        let dayComplete = lessonsToday >= target
         if streak >= Tuning.streakStrongDays {
             return "\(streak)-day streak — keep it going!"
         }
@@ -54,10 +61,14 @@ nonisolated enum HomeCopy {
             return "\(streak) days in a row — nice momentum."
         }
         if streak >= 1 {
-            if lessonsToday > 0 { return "Day \(streak) done — see you tomorrow." }
+            if dayComplete { return "Day \(streak) done — see you tomorrow." }
+            if lessonsToday > 0 { return "Day \(streak) — \(lessonsLeft(target - lessonsToday)) to go today." }
             return "Day \(streak) — a lesson today keeps it going."
         }
-        if lessonsToday > 0 { return "Good start today — tomorrow makes it a streak." }
+        if lessonsToday > 0 {
+            return dayComplete ? "Today's lessons are done — tomorrow makes it a streak."
+                               : "Good start today — tomorrow makes it a streak."
+        }
         if dueNow > 0 {
             // One lesson is `Tuning.lessonSize` items, so it only clears a queue
             // that small. On day one the staggered Foundation seed leaves far more
@@ -68,6 +79,12 @@ nonisolated enum HomeCopy {
                 : "\(dueNow) due now — today's lessons work through them."
         }
         return "No streak yet — one lesson starts it."
+    }
+
+    /// "1 more lesson" / "2 more lessons" — the remainder of the day's plan.
+    static func lessonsLeft(_ count: Int) -> String {
+        let count = max(1, count)
+        return "\(count) more lesson\(count == 1 ? "" : "s")"
     }
 
     /// Kiri's pose from real data: celebrating only on a long streak, happy on
@@ -124,9 +141,16 @@ nonisolated enum HomeCopy {
         "\(done) of \(max(0, goal)) days this week"
     }
 
-    /// "3 gaps to review" / "1 gap to review".
-    static func gapsToReview(_ count: Int) -> String {
-        "\(count) gap\(count == 1 ? "" : "s") to review"
+    /// The due-row stat. "Review" is a claim about evidence: on day one the whole
+    /// row is the freshly seeded Foundation batch, cards the learner has never been
+    /// asked about, which is exactly the claim `toLearnLabel` exists to stop making.
+    /// So the wording follows the evidence — never practised → "to learn", all
+    /// practised → "gaps to review", mixed → both halves named.
+    static func gapsToReview(_ count: Int, practised: Int) -> String {
+        let practised = min(max(0, practised), max(0, count))
+        if practised == 0 { return "\(count) to learn" }
+        if practised >= count { return "\(count) gap\(count == 1 ? "" : "s") to review" }
+        return "\(count - practised) to learn · \(practised) to review"
     }
 
     /// The capture toast after an activity: "Saved 3 things you didn't know".

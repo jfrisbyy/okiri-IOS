@@ -176,6 +176,11 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// Content v2 probe (B13): the multiple-choice DISTRACTORS for an `isProbe` item.
     /// The correct answer is `englishTranslation`; the prompt is `frenchWord`.
     var probeOptions: [String]? = nil
+    /// Content v2 probe: the question stem to print, when the probe's answer is a
+    /// CLAIM about `frenchWord` (a pronunciation, a placement rule) rather than its
+    /// meaning — asking "What does “vous avez” mean?" over pronunciation options is
+    /// unanswerable. Nil → the scheduler's default stem.
+    var probePrompt: String? = nil
 
     /// Explicit keys so the tolerant decoder below and the synthesized encoder agree.
     enum CodingKeys: String, CodingKey {
@@ -185,7 +190,7 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
         case currentInterval, irtDifficulty, fsrs, originalContext, confusionLinks
         case partOfSpeech, gender, article, baseForm, register, relatedWords, conceptId
         case isProbe, blankForm, acceptedAnswers, isTestable, tagConfidence, needsTranslation
-        case probeOptions
+        case probeOptions, probePrompt
     }
 
     /// The mastery badge (`Tuning.gapMasteryStreak` consecutive correct). A badge,
@@ -279,6 +284,7 @@ nonisolated extension GapItem {
         tagConfidence = try c.decodeIfPresent(Double.self, forKey: .tagConfidence)
         needsTranslation = try c.decodeIfPresent(Bool.self, forKey: .needsTranslation) ?? false
         probeOptions = try c.decodeIfPresent([String].self, forKey: .probeOptions)
+        probePrompt = try c.decodeIfPresent(String.self, forKey: .probePrompt)
     }
 }
 

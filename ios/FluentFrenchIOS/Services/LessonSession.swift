@@ -499,10 +499,11 @@ nonisolated struct LessonSession {
         // assembler puts the two side by side).
         let confusedWith = (logsError && q.kind == .multipleChoice)
             ? confusedGapId(for: given, excluding: q.gap.id) : nil
+        let logged = Self.loggedPair(for: q, given: given)
         outcome.evidence = [evidence(for: q.gap, role: role(for: q.gap, in: q), correct: correct,
                                      format: q.answerFormat, firstTry: firstTry, grade: grade,
-                                     loggedAnswer: logsError ? given : nil,
-                                     correctAnswer: q.correctAnswer,
+                                     loggedAnswer: logsError ? logged.given : nil,
+                                     correctAnswer: logged.correct,
                                      confusedWith: confusedWith)]
         if isCapstone {
             if correct { held.append(q.gap) } else { slipped.append(q.gap) }
@@ -604,6 +605,29 @@ nonisolated struct LessonSession {
         case .trueFalse, .translation, .match:
             return meaning
         }
+    }
+
+    /// The pair the persisted mistake log stores for a miss (C12): what the learner
+    /// answered and what the answer was.
+    ///
+    /// Every format answers in its own words — a typed French form, a tapped meaning —
+    /// except TRUE/FALSE, whose answers are the strings "True" and "False". Logging
+    /// those verbatim puts a row in Retention that reads only "~~True~~ / False": it
+    /// names neither the word nor the meaning, and every recall-level gap asks one.
+    /// So a true/false is logged as the meaning pair the statement was really about:
+    /// the wrong meaning the learner accepted, or the real one they rejected, against
+    /// the item's own gloss.
+    static func loggedPair(for q: LessonQuestion, given: String) -> (given: String, correct: String) {
+        guard q.kind == .trueFalse else { return (given, q.correctAnswer) }
+        let meaning = q.gap.englishTranslation.trimmingCharacters(in: .whitespacesAndNewlines)
+        let claimed = (q.claimedMeaning ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !meaning.isEmpty, !claimed.isEmpty else { return (given, q.correctAnswer) }
+        // A true statement rejected: the learner turned down the real meaning.
+        if AnswerGrader.normalize(claimed) == AnswerGrader.normalize(meaning) {
+            return ("not “\(meaning)”", meaning)
+        }
+        // A false statement accepted: the learner took the distractor for the meaning.
+        return (claimed, meaning)
     }
 
     /// "meaning — sentence", dropping either half when it is empty.

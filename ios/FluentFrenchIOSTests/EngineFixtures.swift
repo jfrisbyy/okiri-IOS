@@ -53,6 +53,24 @@ enum EngineFixtures {
         "savoir-vs-connaitre", "spoken-fillers", "idioms", "formal-register",
     ]
 
+    /// A `foundationContent` closure that supplies synthetic items for exactly the
+    /// named concepts. Anything that asks whether a concept is TEACHABLE reads this
+    /// same source (`AppStore.isTeachable`), so a fixture built on concepts that are
+    /// not in the shipped content file must say so here — otherwise the store is
+    /// correctly of the view that the app cannot teach them.
+    nonisolated static func syntheticContent(for conceptIds: [String],
+                                             itemsEach: Int = 3) -> (Date) -> [GapItem] {
+        let skills = conceptIds.map { cid in
+            FoundationSkillContent(id: cid, category: GapCategory.grammar.rawValue,
+                                   items: (0..<itemsEach).map { i in
+                                       FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                                             ex: "x \(cid)-w\(i) y", exEn: "t", blank: "\(cid)-w\(i)")
+                                   })
+        }
+        let file = FoundationContentFile(version: 2, skills: skills)
+        return { when in FoundationContentLoader.gaps(from: file, now: when) }
+    }
+
     /// Taxonomy concepts with no authored content yet.
     nonisolated static let unauthoredConceptIds: Set<String> =
         ConceptTaxonomy.ids.subtracting(authoredConceptIds)

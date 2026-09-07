@@ -616,8 +616,11 @@ struct ConceptSelectorTests {
                 "the only dependent is already mastered")
         #expect(output.items.contains { $0.reason == "Today's focus: Concept focus." })
 
-        // An unmastered dependent is a real promise, so it is named.
+        // An unmastered dependent is a real promise, so it is named — provided the
+        // app can actually teach it (engine-6-1), which for a synthetic concept means
+        // giving it content.
         store.concepts.append(EngineFixtures.concept("child-open", level: .A2, prerequisites: ["focus"]))
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["focus", "child-open"])
         let after = ConceptSelector(store: store).select(.smart(now: now))
         #expect(after.targetConceptId == "focus")
         #expect(after.items.contains { $0.reason == "This unlocks Concept child-open." })

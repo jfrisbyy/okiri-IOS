@@ -348,6 +348,23 @@ final class AppStore {
         !probeContent(conceptId).isEmpty
     }
 
+    /// The concepts the app can actually TEACH: those the content file has items
+    /// for, since an item is what becomes a gap and then a question. The concept
+    /// map spans A1-C1 (D6.1) while content is authored band by band (D6.5), so
+    /// 132 of the 181 concepts have no items today. Announcing one of those as
+    /// unlocked, promising it as a reward, or diagnosing it tells the learner
+    /// about a skill the app cannot deliver (store-6-2 / engine-6-1 / engine-6-2).
+    /// Read from the same injected content the seeder uses, so there is one
+    /// definition of teachable and tests can move it.
+    func teachableConceptIds(now: Date = Date()) -> Set<String> {
+        Set(foundationContent(now).compactMap { $0.conceptId })
+    }
+
+    /// True when the content file can supply at least one item for this concept.
+    func isTeachable(_ conceptId: String, now: Date = Date()) -> Bool {
+        foundationContent(now).contains { $0.conceptId == conceptId }
+    }
+
     /// Give a blind-spot probe (or a gap-less check-in) a gap record to be scored
     /// against. The selector decides THAT a concept is probed; this only creates (or
     /// reuses) the one-item diagnostic so its answer lands on the concept like any
@@ -787,9 +804,16 @@ final class AppStore {
     func expandFrontier() -> [String] {
         var unlocked: [String] = []
         var changed = false
+        // "Unlocked" has to mean the learner can now DO it. Prerequisites being met
+        // is only half of that: with the map at 181 concepts and content at 49, the
+        // frontier is full of skills with nothing behind them, and announcing those
+        // celebrated up to twenty things the app can never teach (store-6-2 /
+        // engine-6-2). A concept becomes announceable when its content lands.
+        let teachable = teachableConceptIds()
         for i in concepts.indices {
             let concept = concepts[i]
-            guard concept.state == .neverObserved, !concept.prerequisites.isEmpty else {
+            guard concept.state == .neverObserved, !concept.prerequisites.isEmpty,
+                  teachable.contains(concept.id) else {
                 if concept.newlyUnlocked {
                     concepts[i].newlyUnlocked = false
                     changed = true

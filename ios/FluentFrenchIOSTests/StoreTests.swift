@@ -1154,6 +1154,28 @@ struct StoreTests {
     /// flag immediately before recomputing it made each completed lesson re-announce
     /// the identical "New skills unlocked" list, for the whole dozen concepts that sit
     /// on the frontier until reading opens.
+    /// store-6-2 / engine-6-2. The concept map spans A1-C1 while content is authored
+    /// band by band, so most of the frontier is skills with nothing behind them.
+    /// Meeting the prerequisites for one of those is not an unlock the learner can
+    /// act on, and celebrating it promises a lesson that does not exist.
+    @Test func anUnlockIsNotAnnouncedForASkillTheAppCannotTeach() {
+        let s = EngineFixtures.store(concepts: [
+            EngineFixtures.mastered("root"),
+            EngineFixtures.concept("taught", level: .A2, prerequisites: ["root"]),
+            EngineFixtures.concept("untaught", level: .A2, prerequisites: ["root"]),
+        ], gaps: [])
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["taught"])
+
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now) == ["Concept taught"],
+                "only the skill with content behind it is announced")
+        #expect(s.concept("untaught")?.newlyUnlocked == false,
+                "an unteachable skill is not flagged as newly unlocked either")
+
+        // When its content lands, it becomes a real unlock and is announced then.
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["taught", "untaught"])
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now) == ["Concept untaught"])
+    }
+
     @Test func unlocksAreAnnouncedOnceNotAfterEveryLesson() {
         let s = EngineFixtures.store(concepts: [
             EngineFixtures.mastered("root"),
@@ -1161,6 +1183,10 @@ struct StoreTests {
             EngineFixtures.concept("later", level: .A2, prerequisites: ["root", "second"]),
             EngineFixtures.learning("second", mastery: 0.4),
         ], gaps: [])
+        // An unlock is only announced for a skill the app can teach (store-6-2), so
+        // these synthetic concepts need content behind them for the test to be about
+        // the announce-once rule rather than about teachability.
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["opened", "later", "second"])
 
         let first = s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
         #expect(first == ["Concept opened"])

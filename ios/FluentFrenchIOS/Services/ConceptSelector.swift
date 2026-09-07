@@ -736,7 +736,12 @@ struct ConceptSelector {
         // Only a dependent the learner has NOT mastered is still "unlocked" by this
         // item (engine-5-3) — late in a run nearly every dependent is already
         // mastered, and promising to unlock a finished skill reads as noise.
-        if let cid = gap.conceptId, let dep = store.dependents(of: cid).first(where: { !$0.isMastered }) {
+        // ...and only a dependent the app can actually teach. The map reaches C1
+        // while content stops at B1, so most dependents of a frontier concept have
+        // no items behind them, and promising one is a reward that never arrives
+        // (engine-6-1).
+        if let cid = gap.conceptId,
+           let dep = store.dependents(of: cid).first(where: { !$0.isMastered && store.isTeachable($0.id) }) {
             return "This unlocks \(dep.name)."
         }
         if let target, role == .target {

@@ -10,7 +10,9 @@
 //      no evidence (reviewCount == 0 or consecutiveCorrect == 0) → recognition (multiple choice, both directions)
 //      some evidence                                             → recall (fill-blank when blankable, true/false)
 //      strong evidence (consecutiveCorrect ≥ productionEvidenceFloor) → production (translation, arrange)
-//  Non-testable rule-label items only ever get multiple choice. Probes are one
+//  Non-testable rule-label items only ever get multiple choice, and a card whose
+//  headword is longer than `Tuning.maxCaptureWords` words stops at recall: it is
+//  saveable but never typed or arranged (talkmedia-6-1). Probes are one
 //  multiple-choice question built from the content's own distractors. Check-ins
 //  are one recall-level question. A capstone is one recall-level question per
 //  gap with no interstitial, no remedials.
@@ -78,22 +80,33 @@ nonisolated struct LessonScheduler {
 
     // MARK: Progression (C18)
 
-    /// The tier a gap is asked at, from its own evidence.
+    /// True when a gap may be asked in a format that makes the learner PRODUCE the
+    /// whole headword — a typed answer (fill-blank, translation) or an arrange. A
+    /// rule-label item never is (`isTestable`), and neither is a headword longer
+    /// than `Tuning.maxCaptureWords` words: a whole dialogue line saved from Listen
+    /// is a card to recognise, not one to write out (talkmedia-5-1 / talkmedia-6-1).
+    static func isProducible(_ gap: GapItem) -> Bool {
+        gap.isTestable && CaptureBuilder.isTypeableHeadword(gap.frenchWord)
+    }
+
+    /// The tier a gap is asked at, from its own evidence — never above the ceiling
+    /// its own shape allows.
     func level(for gap: GapItem) -> QuestionLevel {
         guard gap.isTestable else { return .recognition }
+        let ceiling = maxLevel(for: gap)
         if gap.reviewCount == 0 || gap.consecutiveCorrect == 0 { return .recognition }
-        if gap.consecutiveCorrect >= config.productionEvidenceFloor { return .production }
-        return .recall
+        if gap.consecutiveCorrect >= config.productionEvidenceFloor { return min(.production, ceiling) }
+        return min(.recall, ceiling)
     }
 
     /// The gap's example sentence contains its blank form exactly once as a whole word (C1).
     static func isBlankable(_ gap: GapItem) -> Bool {
-        gap.isTestable && AnswerGrader.blankedPrompt(for: gap) != nil
+        isProducible(gap) && AnswerGrader.blankedPrompt(for: gap) != nil
     }
 
     /// The gap's example sentence has enough — and not too many — words to arrange.
     func isArrangeable(_ gap: GapItem) -> Bool {
-        guard gap.isTestable else { return false }
+        guard Self.isProducible(gap) else { return false }
         let n = Self.tokens(of: gap.exampleSentence).count
         return n >= config.arrangeMinTokens && n <= config.arrangeMaxTokens
     }
@@ -107,7 +120,7 @@ nonisolated struct LessonScheduler {
 
     func kinds(for gap: GapItem, at level: QuestionLevel) -> [QuestionKind] {
         guard gap.isTestable else { return [.multipleChoice] }
-        switch level {
+        switch min(level, maxLevel(for: gap)) {
         case .recognition:
             return [.multipleChoice, .multipleChoice]
         case .recall:
@@ -124,7 +137,8 @@ nonisolated struct LessonScheduler {
         guard gap.isTestable, !gap.isProbe else { return gap.isProbe ? [] : [.multipleChoice] }
         switch level(for: gap) {
         case .recognition: return [.multipleChoice]
-        case .recall: return [.multipleChoice, .trueFalse, .fillBlank]
+        case .recall: return Self.isProducible(gap) ? [.multipleChoice, .trueFalse, .fillBlank]
+                                                    : [.multipleChoice, .trueFalse]
         case .production: return [.multipleChoice, .trueFalse, .fillBlank, .translation]
         }
     }
@@ -275,7 +289,7 @@ nonisolated struct LessonScheduler {
                                   explanation: note.isEmpty ? nil : note)
 
         case .fillBlank:
-            guard gap.isTestable, let prompt = AnswerGrader.blankedPrompt(for: gap) else {
+            guard Self.isProducible(gap), let prompt = AnswerGrader.blankedPrompt(for: gap) else {
                 return question(for: gap, kind: .multipleChoice, role: role, pool: pool, optionCount: count, rng: &rng)
             }
             let answer = AnswerGrader.blankForm(for: gap)
@@ -307,7 +321,7 @@ nonisolated struct LessonScheduler {
             return tf
 
         case .translation:
-            guard gap.isTestable else {
+            guard Self.isProducible(gap) else {
                 return question(for: gap, kind: .multipleChoice, role: role, pool: pool, optionCount: count, rng: &rng)
             }
             var explanation = "\(gap.frenchWord) — \(gap.englishTranslation)"
@@ -593,9 +607,12 @@ nonisolated struct LessonScheduler {
         return out
     }
 
-    /// The highest level a gap can be asked at regardless of evidence.
+    /// The highest level a gap can be asked at regardless of evidence: a rule-label
+    /// item is recognition only, and a card too long to write out stops at recall —
+    /// production means typing or arranging the whole headword (talkmedia-6-1).
     private func maxLevel(for gap: GapItem) -> QuestionLevel {
-        gap.isTestable ? .production : .recognition
+        guard gap.isTestable else { return .recognition }
+        return Self.isProducible(gap) ? .production : .recall
     }
 }
 

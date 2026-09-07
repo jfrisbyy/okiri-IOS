@@ -523,11 +523,14 @@ nonisolated struct ListeningCaptureSpec: Hashable, Identifiable {
     let english: String
     var id: Int { turnIndex }
 
-    /// True when the line is small enough to be a card — a word or a short
-    /// phrase from one sentence, the same rule every other capture surface
-    /// applies (`CaptureBuilder.isAcceptableHeadword`). A whole dialogue turn
-    /// often is not: the deck would later ask the learner to type it out
-    /// (talkmedia-5-1).
+    /// True when the deck can hold the line — the same rule every other capture
+    /// surface applies (`CaptureBuilder.isAcceptableHeadword`): a whole utterance
+    /// of at most `Tuning.maxCardWords` words. A dialogue turn IS a card, even a
+    /// long one or one made of two short sentences; what a long line must never
+    /// become is a question the learner has to type out, and the scheduler enforces
+    /// that separately (`LessonScheduler.isProducible`). Requiring a line to be
+    /// typeable before it could be saved refused half the shipped dialogue
+    /// (talkmedia-6-1 / talkmedia-5-1).
     var isCardSized: Bool { CaptureBuilder.isAcceptableHeadword(french) }
 }
 

@@ -570,10 +570,17 @@ struct ReadCaptureTests {
         #expect(CaptureBuilder.isAcceptableHeadword("du coup"))
         #expect(CaptureBuilder.wordCount("il y a") == 3)
         #expect(!CaptureBuilder.isAcceptableHeadword("2030"), "still no letters, still not a word")
-        // Exactly the cap is fine; one word more is not.
-        let cap = (1...Tuning.maxCaptureWords).map { "mot\($0)" }.joined(separator: " ")
-        #expect(CaptureBuilder.isAcceptableHeadword(cap))
-        #expect(!CaptureBuilder.isAcceptableHeadword(cap + " encore"))
+        // Two limits, two questions (talkmedia-6-1). What the deck can HOLD runs to
+        // `maxCardWords`, because a whole dialogue line is worth keeping even when it
+        // is too long to type back. What a lesson may ask the learner to WRITE stops
+        // at `maxCaptureWords`.
+        let typeable = (1...Tuning.maxCaptureWords).map { "mot\($0)" }.joined(separator: " ")
+        #expect(CaptureBuilder.isTypeableHeadword(typeable))
+        #expect(!CaptureBuilder.isTypeableHeadword(typeable + " encore"))
+        #expect(CaptureBuilder.isAcceptableHeadword(typeable + " encore"), "still a card, just not a typed one")
+        let card = (1...Tuning.maxCardWords).map { "mot\($0)" }.joined(separator: " ")
+        #expect(CaptureBuilder.isAcceptableHeadword(card))
+        #expect(!CaptureBuilder.isAcceptableHeadword(card + " encore"), "past this it is text, not a card")
         // A drag that swept past the end of a sentence is not a phrase.
         #expect(CaptureBuilder.spansSentences("café. Le serveur"))
         #expect(CaptureBuilder.endsSentence("Montmartre."), "the reader stops a selection here")
@@ -581,6 +588,13 @@ struct ReadCaptureTests {
         #expect(!CaptureBuilder.endsSentence("serveur"))
         #expect(!CaptureBuilder.spansSentences("le serveur m'a souri."))
         #expect(!CaptureBuilder.isAcceptableHeadword("café. Le serveur"))
+        // A COMPLETE two-sentence utterance is a card; only a cut-off one is not.
+        #expect(CaptureBuilder.isWholeUtterance("Bonjour ! Je voudrais un café."))
+        #expect(!CaptureBuilder.isWholeUtterance("café. Le serveur"))
+        #expect(CaptureBuilder.isAcceptableHeadword("Bonjour ! Je voudrais un café."))
+        // The production surfaces stay stricter: one sentence, typeable.
+        #expect(!CaptureBuilder.isShortPhrase("Bonjour ! Je voudrais un café."))
+        #expect(CaptureBuilder.isShortPhrase("Je voudrais un café."))
     }
 
     @Test func aParagraphSweptUpInTheReaderIsNeverSavedAsACard() {

@@ -127,7 +127,7 @@ nonisolated enum SpeakGapPlan {
         // phrase the model called natural, and the English it came with would no
         // longer be its meaning.
         if !natural.isEmpty, !PhraseKey.same(natural, learner), !PhraseKey.same(natural, corrected),
-           CaptureBuilder.isAcceptableHeadword(natural),
+           CaptureBuilder.isShortPhrase(natural),
            !plan.specs.contains(where: { PhraseKey.same($0.french, natural) }) {
             plan.specs.append(SpeakGapSpec(kind: .natural, french: natural,
                                            english: naturalEnglish.isEmpty ? correctedEnglish : naturalEnglish,

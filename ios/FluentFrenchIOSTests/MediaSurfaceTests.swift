@@ -118,24 +118,36 @@ struct MediaSurfaceTests {
 
     // MARK: - talkmedia-5-1 card-size rule on listening captures
 
-    @Test func aWholeDialogueLineTooLongForACardIsRefusedNotSaved() {
+    /// talkmedia-6-1. Requiring a line to be TYPEABLE before it could be saved
+    /// refused half the shipped dialogue. A dialogue turn is a card even when it is
+    /// long or made of two short sentences; what it must never become is a question
+    /// the learner types out, and the scheduler enforces that separately. Only a
+    /// line past `maxCardWords`, or one cut off mid-sentence, is text rather than a card.
+    @Test func aDialogueLineIsACardUnlessItIsTextRatherThanAnUtterance() {
         let store = EngineFixtures.store()
-        let long = (1...(Tuning.maxCaptureWords + 3)).map { "mot\($0)" }.joined(separator: " ")
+        let overCard = (1...(Tuning.maxCardWords + 1)).map { "mot\($0)" }.joined(separator: " ")
+        let longButWhole = (1...(Tuning.maxCaptureWords + 3)).map { "mot\($0)" }.joined(separator: " ") + " ."
         let twoSentences = "Bonjour ! Je voudrais un café."
-        let item = dialogue([("A", long, "en-long"), ("B", twoSentences, "en-two"), ("A", "un café", "a coffee")])
+        let item = dialogue([("A", overCard, "en-over"), ("B", twoSentences, "en-two"), ("A", longButWhole, "en-long")])
         let specs = ListeningCapture.specs(for: item, from: 0, to: 2)
-        #expect(specs.map(\.isCardSized) == [false, false, true],
+        #expect(specs.map(\.isCardSized) == [false, true, true],
                 "the sheet can tell which lines the deck would take")
         #expect(store.captureListeningTurn(specs[0], from: item, now: now) == .rejected,
-                "a line longer than \(Tuning.maxCaptureWords) words is text, not a card")
-        #expect(store.captureListeningTurn(specs[1], from: item, now: now) == .rejected,
-                "a line spanning two sentences is text, not a card")
-        #expect(store.gaps.filter { $0.sourceType == .listening }.isEmpty)
+                "past \(Tuning.maxCardWords) words it is text, not a card")
+        guard case .saved = store.captureListeningTurn(specs[1], from: item, now: now) else {
+            Issue.record("a complete two-sentence dialogue turn is a card"); return
+        }
+        guard case .saved = store.captureListeningTurn(specs[2], from: item, now: now) else {
+            Issue.record("a long but complete line is a card, just not a typed one"); return
+        }
+        #expect(store.gaps.filter { $0.sourceType == .listening }.count == 2)
+        #expect(!CaptureBuilder.isTypeableHeadword(longButWhole),
+                "saved, but the lesson may never ask the learner to write it out")
     }
 
     @Test func savingAWholeSelectionKeepsOnlyTheCardSizedLines() {
         let store = EngineFixtures.store()
-        let long = (1...(Tuning.maxCaptureWords + 1)).map { "mot\($0)" }.joined(separator: " ")
+        let long = (1...(Tuning.maxCardWords + 1)).map { "mot\($0)" }.joined(separator: " ")
         let item = dialogue([("A", "un café", "a coffee"), ("B", long, "en-long"), ("A", "s'il vous plaît", "please")])
         let outcome = store.captureListeningTurns(ListeningCapture.specs(for: item, from: 0, to: 2), from: item, now: now)
         #expect(outcome.savedCount == 2)

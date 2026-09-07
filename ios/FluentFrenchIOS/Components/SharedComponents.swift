@@ -624,8 +624,8 @@ struct SaveToDeckButton: View {
     }
 
     /// A draft the store would refuse (no letters, longer than
-    /// `Tuning.maxCaptureWords` words, or running across a sentence): the button
-    /// says so and stays disabled rather than silently doing nothing.
+    /// `Tuning.maxCardWords` words, or stopping in the middle of a sentence): the
+    /// button says so and stays disabled rather than silently doing nothing.
     private var isTooLong: Bool {
         guard let draft, !isDone else { return false }
         return !draft.isCapturable
@@ -654,7 +654,7 @@ struct SaveToDeckButton: View {
         if isDone { return "This word is already in your deck" }
         if isBusy || draft == nil { return "Available once the lookup finishes" }
         if isTooLong {
-            return "A card holds a word or a short phrase — up to \(Tuning.maxCaptureWords) words from one sentence"
+            return "A card holds up to \(Tuning.maxCardWords) words, and never stops in the middle of a sentence"
         }
         if draft?.needsTranslation == true {
             return "Saves the word without a meaning; it is translated once translation is available"

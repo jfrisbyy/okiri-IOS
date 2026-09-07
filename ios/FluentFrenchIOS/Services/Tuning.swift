@@ -200,6 +200,22 @@ nonisolated enum Tuning {
         }
     }
 
+    /// Whether an answer in this format may stand as a CHECK-IN on a mastered concept.
+    /// A check-in is a deliberate probe of a skill the engine believes is held, so its
+    /// outcome is trusted twice over: a miss weighs `checkInMissWeight`, shortens the
+    /// concept's check-in interval, and enters the retention governor's window. Free
+    /// speech and conversation are improvisation under pressure — a learner slips there
+    /// on things they would never miss on a graded item — so that evidence is too noisy
+    /// to carry a check-in's authority, and booking it as one let a chatty session trip
+    /// the governor and stop new material entirely (talkmedia-6-2). Listed exhaustively
+    /// so a new format has to make this choice on purpose.
+    static func isCheckInFormat(_ format: AnswerFormat) -> Bool {
+        switch format {
+        case .speaking, .converse: return false
+        case .multipleChoice, .fillBlank, .trueFalse, .translation, .arrange, .match, .probe: return true
+        }
+    }
+
     /// How much concept evidence one answer in a format carries (production > recognition).
     static func formatEvidenceWeight(_ format: AnswerFormat) -> Double {
         switch format {
@@ -460,12 +476,20 @@ nonisolated extension Tuning {
     static let tagLevelWeight: Double = 0.1
     /// Normalised-name token overlap (Jaccard) at or above which two concept names are near-duplicates — E3.
     static let tagNearDuplicateSimilarity: Double = 0.6
-    /// Most words a captured headword may contain: a phrase a lesson can ask about
-    /// is a few words, not the paragraph a finger swept across in the reader.
-    /// Sized to hold the bundled idiom set, whose longest expression ("C'est la
-    /// goutte d'eau qui fait déborder le vase") is nine words — a page must never
-    /// offer to save something the deck then refuses (read-4-3).
+    /// Most words a headword may contain and still be asked in a format the learner
+    /// WRITES OUT (fill-blank, "translate to French") or arranges — also the widest
+    /// drag the reader offers. Sized to hold the bundled idiom set, whose longest
+    /// expression ("C'est la goutte d'eau qui fait déborder le vase") is nine
+    /// words — a page must never offer to save something the deck then refuses
+    /// (read-4-3).
     static let maxCaptureWords: Int = 10
+    /// Most words a card may hold AT ALL. Wider than `maxCaptureWords` because a
+    /// whole dialogue line is worth keeping as something to recognise even when it
+    /// is too long to type back; sized to hold the longest shipped Listen line
+    /// ("Tu ne trouves pas que le télétravail brouille la frontière entre vie pro
+    /// et vie perso ?", seventeen words) — a surface must never offer a line the
+    /// deck then refuses (talkmedia-6-1).
+    static let maxCardWords: Int = 18
     /// Fewest letters a word needs before the reader offers it as key vocabulary
     /// (shorter words are the grammar the piece is made of, not what it teaches).
     static let keyVocabularyMinLength: Int = 6

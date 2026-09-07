@@ -223,8 +223,8 @@ nonisolated enum PhraseKey {
 }
 
 /// What a correction (spoken, written or from a tutor turn) may leave on a deck
-/// card. A card is a word or a short phrase — `CaptureBuilder.isAcceptableHeadword`,
-/// the same rule the reader enforces and the save button explains — so a
+/// card. A card here is a word or a short phrase from one sentence —
+/// `CaptureBuilder.isShortPhrase`, the rule the production surfaces share — so a
 /// correction of a whole spoken answer is reduced to the part it actually
 /// changed, and nothing is saved when even that will not fit. Without this a
 /// five-minute monologue became one card no lesson could ever ask about
@@ -253,7 +253,7 @@ nonisolated enum CorrectionCard {
                      limit: Int = Tuning.maxCorrectionCards) -> Result {
         let fixed = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fixed.isEmpty else { return Result() }
-        if CaptureBuilder.isAcceptableHeadword(fixed) { return Result(phrases: [fixed]) }
+        if CaptureBuilder.isShortPhrase(fixed) { return Result(phrases: [fixed]) }
 
         let learnerSentences = SentenceExtractor.sentences(in: original)
         var phrases: [String] = []
@@ -262,10 +262,10 @@ nonisolated enum CorrectionCard {
             guard phrases.count < max(0, limit) else { break }
             let source = nearest(sentence, in: learnerSentences)
             guard !PhraseKey.same(sentence, source) else { continue }   // the learner had this one right
-            let candidate = CaptureBuilder.isAcceptableHeadword(sentence)
+            let candidate = CaptureBuilder.isShortPhrase(sentence)
                 ? sentence
                 : changedPhrase(from: source, to: sentence)
-            guard let phrase = candidate, CaptureBuilder.isAcceptableHeadword(phrase) else { continue }
+            guard let phrase = candidate, CaptureBuilder.isShortPhrase(phrase) else { continue }
             let key = PhraseKey.normalized(phrase)
             guard !key.isEmpty, !seen.contains(key) else { continue }
             seen.insert(key)

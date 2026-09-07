@@ -101,9 +101,9 @@ struct ConceptSelector {
 
     // MARK: Eligibility — concept level
 
-    /// Learning concepts, plus frontier concepts (never-observed with all
-    /// prerequisites mastered) that have something to teach: at least one
-    /// practicable gap, or being this session's blind-spot probe (B12). A
+    /// Learning concepts the app has material for, plus frontier concepts
+    /// (never-observed with all prerequisites mastered) that have something to teach:
+    /// at least one practicable gap, or being this session's blind-spot probe (B12). A
     /// never-observed concept with unmet prereqs is never eligible; mastered
     /// concepts come back only through check-ins.
     func eligibleConcepts(now: Date = Date()) -> [Concept] {
@@ -111,7 +111,12 @@ struct ConceptSelector {
         return store.concepts.filter { concept in
             switch concept.state {
             case .learning:
-                return true
+                // Being `.learning` is not enough: concept-level evidence from Speak
+                // or Converse can put a concept with no items and no content into that
+                // state, and ranking it targets a lesson that can never be assembled —
+                // the app diagnosing a skill it cannot teach (store-6-3). It becomes
+                // eligible the moment it has material: a card of its own, or content.
+                return store.hasTeachableMaterial(concept.id, now: now)
             case .neverObserved:
                 guard store.arePrerequisitesMet(concept) else { return false }
                 return concept.id == probe || hasPracticableGap(concept, now: now)

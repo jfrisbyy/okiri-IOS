@@ -365,6 +365,22 @@ final class AppStore {
         foundationContent(now).contains { $0.conceptId == conceptId }
     }
 
+    /// True when the app has something it can actually put in front of the learner
+    /// for this concept: an item of its own already in the deck (a Foundation seed,
+    /// or a card captured from reading / Converse), or content it can still seed one
+    /// from. Concept-level evidence from Speak or Converse names a skill without
+    /// leaving any material behind, so it can move a concept the content file has
+    /// never heard of out of `.neverObserved` — and with 132 of the 181 concepts
+    /// unauthored today, `seedConceptContentIfNeeded` has nothing to open for it
+    /// (store-6-3). Such a concept KEEPS its evidence — it is real, and it counts the
+    /// day the band is authored — but until then it must not be ranked, targeted or
+    /// named as a gap: that diagnoses a weakness the app cannot act on. A probe gap
+    /// is not material: it is a one-item diagnostic, never a lesson spine.
+    func hasTeachableMaterial(_ conceptId: String, now: Date = Date()) -> Bool {
+        if gaps.contains(where: { $0.conceptId == conceptId && !$0.isProbe }) { return true }
+        return isTeachable(conceptId, now: now)
+    }
+
     /// Give a blind-spot probe (or a gap-less check-in) a gap record to be scored
     /// against. The selector decides THAT a concept is probed; this only creates (or
     /// reuses) the one-item diagnostic so its answer lands on the concept like any
@@ -1239,7 +1255,9 @@ final class AppStore {
     /// `isCheckIn` (Pass 3 F6): true when the item was selected as a check-in on a
     /// mastered concept (`SelectedItemRole.checkIn`) — a miss then weighs double and
     /// the outcome feeds the concept's check-in interval and the governor. Nil
-    /// derives it from the concept's state right now (mastered → check-in).
+    /// derives it from the concept's state right now (mastered → check-in) — which is
+    /// only ever right for a GRADED item: the format-aware entry points pin Speak and
+    /// Converse evidence to `false` first (`checkInRole`, talkmedia-6-2).
     func recordReview(gapId: String, correct: Bool, grade: ReviewGrade? = nil, conceptWeight: Double = 1,
                       isCheckIn: Bool? = nil, now: Date = Date()) {
         guard let idx = gaps.firstIndex(where: { $0.id == gapId }) else { return }
@@ -1305,7 +1323,20 @@ final class AppStore {
                       conceptWeight: Double = 1, isCheckIn: Bool? = nil, now: Date = Date()) {
         let grade = Tuning.gradeMapping(format: format, correct: correct, firstTry: firstTry)
         let weight = Tuning.formatEvidenceWeight(format) * conceptWeight
-        recordReview(gapId: gapId, correct: correct, grade: grade, conceptWeight: weight, isCheckIn: isCheckIn, now: now)
+        recordReview(gapId: gapId, correct: correct, grade: grade, conceptWeight: weight,
+                     isCheckIn: Self.checkInRole(isCheckIn, format: format), now: now)
+    }
+
+    /// The check-in role an answer in this format is allowed to carry. A format that
+    /// is not check-in evidence (`Tuning.isCheckInFormat` — Speak and Converse) is
+    /// pinned to `false` rather than left to the concept's state: otherwise a slip
+    /// while talking about a MASTERED concept books a failed check-in, doubles its
+    /// weight, shortens the concept's check-in interval and enters the retention
+    /// governor's window, so free conversation alone can stop new material
+    /// (talkmedia-6-2). Every other format keeps what the caller asked for — nil
+    /// still means "derive it from the concept".
+    nonisolated static func checkInRole(_ requested: Bool?, format: AnswerFormat) -> Bool? {
+        Tuning.isCheckInFormat(format) ? requested : false
     }
 
     // MARK: - Evidence from speaking and conversation (E13 / E10)
@@ -2425,7 +2456,7 @@ extension AppStore {
                             conceptWeight: Double = 1, isCheckIn: Bool? = nil, now: Date = Date()) {
         let weight = Tuning.formatEvidenceWeight(format) * conceptWeight
         recordReview(gapId: gapId, correct: grade != .again, grade: grade, conceptWeight: weight,
-                     isCheckIn: isCheckIn, now: now)
+                     isCheckIn: Self.checkInRole(isCheckIn, format: format), now: now)
     }
 }
 
@@ -2953,8 +2984,15 @@ extension AppStore {
         var savedGaps: [GapItem] = []
         /// Planned gaps that were already in the deck (nothing re-added).
         var duplicateCount: Int = 0
-        /// Concepts that received a miss.
+        /// Concepts that received a miss. Every one of them KEEPS that evidence,
+        /// whether or not the app has anything to teach for it yet.
         var missedConceptIds: [String] = []
+        /// The misses the recap may actually name — those the app has material for
+        /// (`AppStore.hasTeachableMaterial`). A concept whose band is not authored yet
+        /// would otherwise be announced as something to "work on" with no lesson,
+        /// probe or card behind it: a diagnosed weakness the learner cannot act on
+        /// (store-6-3). The evidence above is kept for the day its content lands.
+        var surfacedMissedConceptIds: [String] = []
         /// Concepts that received a hit.
         var strongConceptIds: [String] = []
         /// True when what was saved is the part of the correction that changed,
@@ -3042,6 +3080,9 @@ extension AppStore {
         for id in feedback.mistakeConceptIds where concept(id) != nil {
             recordSpeakingEvidence(conceptId: id, correct: false, now: now)
             outcome.missedConceptIds.append(id)
+            // Recorded either way; only announced when there is something behind it
+            // (store-6-3).
+            if hasTeachableMaterial(id, now: now) { outcome.surfacedMissedConceptIds.append(id) }
         }
         for id in feedback.strongConceptIds where concept(id) != nil && !outcome.missedConceptIds.contains(id) {
             recordSpeakingEvidence(conceptId: id, correct: true, now: now)
@@ -3082,7 +3123,10 @@ extension AppStore {
     func captureConversePhrase(french: String, english: String, scenarioTitle: String, now: Date = Date()) -> Bool {
         let phrase = french.trimmingCharacters(in: .whitespacesAndNewlines)
         let translation = english.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !phrase.isEmpty, CaptureBuilder.isAcceptableHeadword(phrase) else { return false }
+        // A production surface, so the stricter rule: this is a line the learner is
+        // meant to say back, and a tutor turn made of several sentences is several
+        // expressions rather than one card (talkmedia-4-1 / talkmedia-6-1).
+        guard !phrase.isEmpty, CaptureBuilder.isShortPhrase(phrase) else { return false }
         var gap = makeCapturedGap(
             frenchWord: phrase,
             englishTranslation: translation,

@@ -103,15 +103,49 @@ nonisolated enum CaptureBuilder {
         return tokens.dropLast().contains { endsSentence($0) }
     }
 
-    /// A headword the deck can ask a question about: it has at least one letter
-    /// (never "2030" or "%"), it is at most `Tuning.maxCaptureWords` words long,
-    /// and it stays inside one sentence. A paragraph swept up by a long drag in
-    /// the reader is text, not a card.
+    /// True when the headword is a COMPLETE quotation rather than a slice cut out
+    /// of the middle of one: it either stays inside a single sentence, or it runs
+    /// all the way to the end of the last sentence it contains. A dialogue turn
+    /// made of two short sentences ("Bonjour ! Je voudrais un café, s'il vous
+    /// plaît.") is whole; a drag that ran past a full stop and stopped mid-sentence
+    /// ("café. Le serveur") is not (talkmedia-6-1).
+    static func isWholeUtterance(_ word: String) -> Bool {
+        let tokens = word.split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+        guard let last = tokens.last else { return false }
+        return !spansSentences(word) || endsSentence(last)
+    }
+
+    /// A headword the deck can HOLD: it has at least one letter (never "2030" or
+    /// "%"), it is at most `Tuning.maxCardWords` words long, and it is a whole
+    /// utterance. A paragraph swept up by a long drag in the reader is text, not a
+    /// card — but a whole dialogue line is a card, because how long a card may be
+    /// and how it may later be TESTED are two different questions
+    /// (`isTypeableHeadword` answers the second) (talkmedia-6-1).
     static func isAcceptableHeadword(_ word: String) -> Bool {
         let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.contains(where: { $0.isLetter }) else { return false }
-        guard wordCount(trimmed) <= Tuning.maxCaptureWords else { return false }
-        return !spansSentences(trimmed)
+        guard wordCount(trimmed) <= Tuning.maxCardWords else { return false }
+        return isWholeUtterance(trimmed)
+    }
+
+    /// A headword a lesson may ask the learner to WRITE OUT or arrange: short
+    /// enough to type. Sentence shape is deliberately not part of this — "ne...
+    /// pas" is dictionary notation the grader already understands. A card that
+    /// fails this is still a card; it is only ever asked in formats the learner
+    /// taps (talkmedia-6-1).
+    static func isTypeableHeadword(_ word: String) -> Bool {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains(where: { $0.isLetter }) else { return false }
+        return wordCount(trimmed) <= Tuning.maxCaptureWords
+    }
+
+    /// One short phrase from ONE sentence: typeable and never spanning a sentence
+    /// break. The production surfaces (Speak, Converse, correction cards) build
+    /// cards the learner is meant to say back, so a run of sentences there is
+    /// several expressions rather than one card (talkmedia-4-1).
+    static func isShortPhrase(_ word: String) -> Bool {
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        return isTypeableHeadword(trimmed) && !spansSentences(trimmed)
     }
 
     static func rank(_ level: CEFRLevel) -> Int {

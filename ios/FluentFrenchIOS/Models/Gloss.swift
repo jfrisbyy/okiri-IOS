@@ -177,9 +177,9 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
     }
 
     /// Whether the store can turn this draft into a card at all: the headword has
-    /// a letter, is at most `Tuning.maxCaptureWords` words and stays inside one
-    /// sentence. Capture surfaces disable the save button when this is false
-    /// instead of letting it no-op.
+    /// a letter, is at most `Tuning.maxCardWords` words and is a whole utterance
+    /// rather than a slice cut out of the middle of a sentence. Capture surfaces
+    /// disable the save button when this is false instead of letting it no-op.
     var isCapturable: Bool { CaptureBuilder.isAcceptableHeadword(frenchWord) }
 
     /// A draft built from a real gloss: every dictionary field carried across, the

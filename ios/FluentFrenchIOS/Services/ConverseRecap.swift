@@ -138,7 +138,7 @@ nonisolated enum ConverseRecap {
         case .tutor:
             let french = turn.french.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !french.isEmpty else { return nil }
-            guard CaptureBuilder.isAcceptableHeadword(french) else { return .tooLongForACard }
+            guard CaptureBuilder.isShortPhrase(french) else { return .tooLongForACard }
             return .tutorPhrase(french: french, english: turn.english.trimmingCharacters(in: .whitespacesAndNewlines))
         case .user:
             guard let index = transcript.firstIndex(where: { $0.id == turn.id }),

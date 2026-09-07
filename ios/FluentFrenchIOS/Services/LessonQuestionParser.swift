@@ -235,7 +235,7 @@ nonisolated enum LessonQuestionParser {
                                   hint: nil, explanation: note ?? (gap.explanation.isEmpty ? nil : gap.explanation))
 
         case "fillblank", "fill_blank", "fill-blank":
-            guard gap.isTestable else { return nil }
+            guard LessonScheduler.isProducible(gap) else { return nil }
             let blank = AnswerGrader.blankToken
             if prompt.contains(blank) {
                 let expected = answer.isEmpty ? AnswerGrader.blankForm(for: gap) : answer
@@ -286,7 +286,7 @@ nonisolated enum LessonQuestionParser {
             return tf
 
         case "translation", "translate":
-            guard gap.isTestable else { return nil }
+            guard LessonScheduler.isProducible(gap) else { return nil }
             let expected = answer.isEmpty ? gap.frenchWord : answer
             guard isContentForm(expected, of: gap, kind: .translation) else { return nil }
             let english = statement.isEmpty ? gap.englishTranslation : statement

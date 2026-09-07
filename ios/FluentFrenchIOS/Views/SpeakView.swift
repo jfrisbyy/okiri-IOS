@@ -382,8 +382,8 @@ struct SpeakView: View {
                     .accessibilityHidden(true)
                 Text(outcomeHeadline(outcome)).font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.text)
             }
-            if !outcome.missedConceptIds.isEmpty || !outcome.strongConceptIds.isEmpty {
-                FlowChips(items: outcome.missedConceptIds.compactMap { store.concept($0)?.name }.map { "Work on: \($0)" }
+            if !outcome.surfacedMissedConceptIds.isEmpty || !outcome.strongConceptIds.isEmpty {
+                FlowChips(items: outcome.surfacedMissedConceptIds.compactMap { store.concept($0)?.name }.map { "Work on: \($0)" }
                           + outcome.strongConceptIds.compactMap { store.concept($0)?.name }.map { "Solid: \($0)" },
                           color: Theme.secondary)
             }

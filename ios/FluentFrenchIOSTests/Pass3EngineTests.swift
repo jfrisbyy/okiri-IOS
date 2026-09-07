@@ -539,7 +539,13 @@ struct Pass3EngineTests {
         let verify = output.checkInItems.first { $0.conceptId == "everyday-vocab" }
         #expect(verify != nil)
         #expect(verify?.reason == "Verifying what placement said you know: Everyday vocabulary.")
-        #expect(output.rankedConcepts.contains { $0.concept.id == "possessive-adjectives" },
+        // A learning concept is ranked only once the app has something to teach it
+        // from (store-6-3). possessive-adjectives is authored in the shipped file,
+        // but this fixture carries no content, so supply it here — the assertion is
+        // about placement inference, not about teachability.
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["possessive-adjectives"])
+        let ranked = ConceptSelector(store: s).select(.smart(now: at))
+        #expect(ranked.rankedConcepts.contains { $0.concept.id == "possessive-adjectives" },
                 "the inferred concept is eligible as a learning target")
     }
 
@@ -694,11 +700,19 @@ struct Pass3EngineTests {
         #expect(selector.probeConcept()?.id == "empty")
         #expect(Set(selector.eligibleConcepts(now: now).map { $0.id }) == ["empty", "full"])
 
-        // A learning concept is always eligible, gaps or not.
+        // A learning concept is eligible only when the app has material for it
+        // (store-6-3): concept-level evidence from Speak or Converse can push a
+        // concept with no cards and no content into `.learning`, and ranking it
+        // targets a lesson that can never be assembled.
         s.concepts[0] = EngineFixtures.learning("empty", mastery: 0.5)
         s.sessionIndex = 1
         selector = ConceptSelector(store: s)
-        #expect(Set(selector.eligibleConcepts(now: now).map { $0.id }) == ["empty", "full"])
+        #expect(selector.eligibleConcepts(now: now).map { $0.id } == ["full"],
+                "learning, but nothing to teach it from")
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["empty"])
+        selector = ConceptSelector(store: s)
+        #expect(Set(selector.eligibleConcepts(now: now).map { $0.id }) == ["empty", "full"],
+                "content arrives, and it becomes a real target")
 
         // A resting (not practicable) gap does not count as something to teach.
         let t = EngineFixtures.store(concepts: [EngineFixtures.concept("rest")],

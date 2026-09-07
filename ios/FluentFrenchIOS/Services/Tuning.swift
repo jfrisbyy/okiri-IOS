@@ -238,6 +238,26 @@ nonisolated enum Tuning {
     static let masteryThreshold: Double = 0.75
     /// Raw, undecayed observations a concept needs before it can read as mastered.
     static let minObservations: Double = 4
+    /// The evidence weight below which a concept can NEVER be mastered, however many
+    /// perfect answers it receives. `recordConceptAnswer` decays before it adds, so an
+    /// unbroken correct streak at weight w drives alpha to its fixed point
+    /// 1 + w/(1 − `evidenceRecency`) with beta at 1, and mastery converges to a
+    /// CEILING rather than climbing to 1. Setting that ceiling equal to
+    /// `masteryThreshold` and solving gives this floor; a weight at or under it makes
+    /// mastery unreachable in principle.
+    ///
+    /// Derived, never a literal, so it tracks the two constants it depends on. Every
+    /// shipped weight product clears it today (the lowest, true/false on an item
+    /// tagged easy, is 0.40 against a floor of 0.30) — but the margin is small and
+    /// invisible at the call site. It matters most for any future rule that would
+    /// SCALE evidence by how much the source is trusted: discounting a captured or
+    /// self-saved item by a factor is exactly what pushes a weak format under the
+    /// floor and makes that concept permanently unmasterable. Spend trust on
+    /// certification, selection and counting; never on this weight.
+    /// `EvidenceWeightFloorTests` holds the line.
+    static var masteryReachableWeightFloor: Double {
+        (1 - evidenceRecency) * (2 * masteryThreshold - 1) / (1 - masteryThreshold)
+    }
 
     // MARK: Check-ins on mastered concepts (Pass 3 F4/F6 — Package B6/B7)
     /// Evidence multiplier for a MISS on a check-in (an answer on a concept that was mastered when selected).

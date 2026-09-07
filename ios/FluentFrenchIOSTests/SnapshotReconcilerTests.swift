@@ -34,11 +34,46 @@ struct SnapshotReconcilerTests {
     }
 
     @Test func unchangedRowAndDirtyDevicePushes() {
+        // Genuinely unchanged: the server timestamp has not moved AND the row still
+        // carries the client clock this device synced with, so it is still our row
+        // and our newer work belongs on top of it.
         let local = Local(updatedAt: Self.at(30), lastSyncedUpdatedAt: Self.at(10), lastSyncedServerUpdatedAt: Self.at(20))
-        // The cloud snapshot's client clock is deliberately AHEAD of the device: the
-        // server timestamp proves the row has not moved, so the device's work wins.
-        let remote = Remote(clientUpdatedAt: Self.at(1_000), serverUpdatedAt: Self.at(20))
+        let remote = Remote(clientUpdatedAt: Self.at(10), serverUpdatedAt: Self.at(20))
         #expect(SnapshotReconciler.decide(local: local, remote: remote) == .pushLocal)
+    }
+
+    @Test func anotherDevicesWriteIsNotOverwrittenWhenTheServerTimestampNeverMoves() {
+        // store-6-1. While the trigger that maintains `updated_at` is not applied,
+        // every write leaves the column untouched, so "unchanged" is what a second
+        // device ALWAYS reads. Taking that as proof the row has not moved made this
+        // device push straight over the other device's progress. The row's own
+        // `clientUpdatedAt` is the witness that catches it: after any successful
+        // sync it equals `lastSyncedUpdatedAt`, so a different value means someone
+        // else wrote the row.
+        let server = Self.at(20)
+
+        // Clean device, another device's row: adopt it rather than clobber it.
+        let clean = Local(updatedAt: Self.at(10), lastSyncedUpdatedAt: Self.at(10), lastSyncedServerUpdatedAt: server)
+        let theirs = Remote(clientUpdatedAt: Self.at(900), serverUpdatedAt: server)
+        #expect(SnapshotReconciler.decide(local: clean, remote: theirs) == .applyRemote,
+                "a clean device must never overwrite work another device wrote")
+
+        // Both sides moved: a genuine conflict, resolved on the client clocks.
+        let dirty = Local(updatedAt: Self.at(30), lastSyncedUpdatedAt: Self.at(10), lastSyncedServerUpdatedAt: server)
+        #expect(SnapshotReconciler.decide(local: dirty, remote: theirs) == .applyRemote,
+                "their clock is newer, so their row wins the tiebreak")
+        let older = Remote(clientUpdatedAt: Self.at(12), serverUpdatedAt: server)
+        #expect(SnapshotReconciler.decide(local: dirty, remote: older) == .pushLocal,
+                "our clock is newer, so our work wins the tiebreak")
+    }
+
+    @Test func aDeviceThatHasNeverSyncedCannotUseTheClientClockWitness() {
+        // With no `lastSyncedUpdatedAt` there is nothing to compare the row's clock
+        // against, so the decision must fall through to the existing rules rather
+        // than guess. A device with no local activity still takes the cloud row.
+        let local = Local(updatedAt: nil, lastSyncedUpdatedAt: nil, lastSyncedServerUpdatedAt: Self.at(20))
+        let remote = Remote(clientUpdatedAt: Self.at(900), serverUpdatedAt: Self.at(20))
+        #expect(SnapshotReconciler.decide(local: local, remote: remote) == .alreadyInSync)
     }
 
     @Test func movedRowAndCleanDeviceAppliesRemote() {

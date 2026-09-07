@@ -79,6 +79,23 @@ nonisolated enum SnapshotReconciler {
            let lastServer = local.lastSyncedServerUpdatedAt,
            remoteServer >= lastServer {
             if remoteServer == lastServer {
+                // An unchanged server `updated_at` is NOT proof the row has not
+                // moved. It only means that while the database trigger that
+                // maintains the column is not applied, EVERY write leaves it
+                // untouched — so a second device reads "unchanged", pushes, and
+                // silently overwrites the first device's progress (store-6-1).
+                //
+                // The row carries an independent witness: the `clientUpdatedAt`
+                // of whichever device wrote it. After any successful sync this
+                // device's `lastSyncedUpdatedAt` equals that value (a push saves
+                // the snapshot's own clock; an apply adopts the row's clock and
+                // saves that). So if they now differ, another device owns the
+                // row, whatever the server timestamp claims — and the correct
+                // reading is the same as for a row that visibly moved.
+                if let lastSynced = local.lastSyncedUpdatedAt,
+                   remote.clientUpdatedAt != lastSynced {
+                    return local.isDirty ? byClientClock(local: local, remote: remote) : .applyRemote
+                }
                 return local.isDirty ? .pushLocal : .alreadyInSync
             }
             // The cloud row moved since this device last synced.

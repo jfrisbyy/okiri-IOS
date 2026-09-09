@@ -500,11 +500,21 @@ nonisolated struct LessonSession {
         let confusedWith = (logsError && q.kind == .multipleChoice)
             ? confusedGapId(for: given, excluding: q.gap.id) : nil
         let logged = Self.loggedPair(for: q, given: given)
-        outcome.evidence = [evidence(for: q.gap, role: role(for: q.gap, in: q), correct: correct,
-                                     format: q.answerFormat, firstTry: firstTry, grade: grade,
-                                     loggedAnswer: logsError ? logged.given : nil,
-                                     correctAnswer: logged.correct,
-                                     confusedWith: confusedWith)]
+        // A remedial SHOWS the correct answer before the learner picks (C6), so its
+        // outcome says nothing about recall in either direction. Answering it used to
+        // book a successful FSRS review — LENGTHENING the interval of a word missed
+        // moments earlier — plus positive concept evidence; missing it booked the same
+        // miss a second time. The lesson already recorded the miss that queued the
+        // remedial, which is the same reason a missed remedial costs no heart
+        // (`remedialCostsHeart`) and why the in-session "Mastered!" counter below
+        // excludes remedials. So a remedial sends no evidence at all (lesson-7-2).
+        outcome.evidence = q.isRemedial ? [] : [
+            evidence(for: q.gap, role: role(for: q.gap, in: q), correct: correct,
+                     format: q.answerFormat, firstTry: firstTry, grade: grade,
+                     loggedAnswer: logsError ? logged.given : nil,
+                     correctAnswer: logged.correct,
+                     confusedWith: confusedWith)
+        ]
         if isCapstone {
             if correct { held.append(q.gap) } else { slipped.append(q.gap) }
         }

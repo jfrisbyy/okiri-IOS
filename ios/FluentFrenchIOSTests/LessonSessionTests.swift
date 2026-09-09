@@ -218,6 +218,34 @@ struct LessonSessionTests {
         #expect(store.xp == Tuning.xpPerLessonComplete, "and it pays the finishing XP")
     }
 
+    /// lesson-7-2. A remedial shows the correct answer before the learner picks, so
+    /// answering it is not recall. It used to send full evidence: a correct remedial
+    /// booked a successful FSRS review, lengthening the interval of a word missed
+    /// moments earlier, and added positive concept evidence; a missed one logged the
+    /// same mistake twice. A remedial now sends none.
+    @Test func aRemedialSendsNoEvidenceBecauseItShowsTheAnswerFirst() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps))
+        let miss = try answerWrongly(&s)
+        #expect(miss.remedialQueued)
+        #expect(miss.evidence.count == 1, "the miss itself is real evidence")
+
+        var sawRemedial = false
+        while s.advance() {
+            guard let q = s.current else { break }
+            let wasRemedial = q.isRemedial
+            let outcome = try answerCorrectly(&s)
+            if wasRemedial {
+                sawRemedial = true
+                #expect(outcome.evidence.isEmpty,
+                        "a correct remedial must not book a review or concept evidence")
+            } else {
+                #expect(!outcome.evidence.isEmpty, "an ordinary answer still counts")
+            }
+        }
+        #expect(sawRemedial, "the run must actually contain a remedial")
+    }
+
     /// C-R5: the share is measured on the questions the lesson PLANNED — the
     /// remedials a miss inserts neither pad it nor make it harder to reach.
     @Test func remedialsAreOutsideThePlannedShare() throws {
@@ -782,8 +810,16 @@ struct LessonSessionTests {
             }
             let out = try answerCorrectly(&s)
             if cur.gap.id == first.gap.id {
-                #expect(!s.firstTry(for: cur) && out.evidence.first?.firstTry == false)
-                if cur.isRemedial { seenRemedial = true } else { seenRoundTwo = true }
+                #expect(!s.firstTry(for: cur), "a gap already missed is never a first try again")
+                if cur.isRemedial {
+                    seenRemedial = true
+                    // A remedial shows the answer, so it books nothing at all (lesson-7-2);
+                    // there is no evidence left to carry a firstTry flag.
+                    #expect(out.evidence.isEmpty)
+                } else {
+                    seenRoundTwo = true
+                    #expect(out.evidence.first?.firstTry == false)
+                }
             } else {
                 #expect(out.evidence.first?.firstTry == true)
             }

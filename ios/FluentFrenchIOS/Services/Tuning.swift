@@ -84,6 +84,12 @@ nonisolated enum Tuning {
     /// Well above the gap between two answers, so a lesson uploads once at the end
     /// (`AppStore.flushToCloud`) instead of re-sending the whole record per answer (store-2-2).
     static let cloudPushDebounce: TimeInterval = 20
+    /// Seconds a reconcile waits for an upload that is already in flight before it
+    /// reads the row anyway. Reading past a live upload gets the pre-upload row
+    /// while that upload's sync markers describe the post-upload one (store-7-1).
+    static let cloudPushSettleTimeout: TimeInterval = 5
+    /// Seconds between polls while one cloud operation waits for another to finish.
+    static let cloudPushSettlePoll: TimeInterval = 0.05
 
     // MARK: XP (Package A16 / C25)
     /// XP awarded per correct answer.
@@ -412,7 +418,9 @@ nonisolated extension Tuning {
     /// Questions between a miss and its stepped-down remedial (C6); never past the trailing probes.
     static let remedialSpacing: Int = 2
     /// Word cards shown in the teaching stage before practice (never-reviewed items first).
-    static let teachingWordCards: Int = 6
+    /// Never below the largest lesson: a lesson item without a card is a word the
+    /// learner first meets as a question, so the cap tracks the lesson sizes.
+    static let teachingWordCards: Int = max(Tuning.lessonSize, Tuning.scopedLessonSize)
     /// A stored concept description shorter than this is "thin": the AI summary may replace it only when the content has no teaching block (C17).
     static let thinExplanationLength: Int = 40
     /// Seconds a "Mastered!" / "moving on" flash stays on screen during practice.

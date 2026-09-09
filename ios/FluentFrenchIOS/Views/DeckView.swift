@@ -82,26 +82,30 @@ struct DeckView: View {
     }
 
     private var header: some View {
-        GradientHeader(gradient: Theme.tealGradient, title: "My Gaps", subtitle: "Practice your weak spots until mastery") {
-            EmptyView()
-        }
-        .frame(minHeight: 190)
-        .overlay(alignment: .bottomLeading) {
-            HStack(spacing: 20) {
-                HeaderStat(systemImage: "clock.badge.exclamationmark", value: "\(dueNowCount)", label: "Due now")
-                Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 28)
-                HeaderStat(systemImage: "calendar", value: "\(upcomingCount)", label: "Coming up")
-                Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 28)
-                HeaderStat(systemImage: "rosette", value: "\(store.masteredGaps.count)", label: "Mastered")
+        // The stat pill is the header's own bottom content, not an overlay on its
+        // frame: overlaid, it was drawn on top of the bottom-anchored "My Gaps"
+        // title and subtitle.
+        GradientHeader(
+            gradient: Theme.tealGradient,
+            title: "My Gaps",
+            subtitle: "Practice your weak spots until mastery",
+            trailing: { EmptyView() },
+            bottom: {
+                HStack(spacing: 20) {
+                    HeaderStat(systemImage: "clock.badge.exclamationmark", value: "\(dueNowCount)", label: HomeCopy.dueNowLabel)
+                    Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 28)
+                    HeaderStat(systemImage: "calendar", value: "\(upcomingCount)", label: HomeCopy.upcomingLabel)
+                    Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 28)
+                    HeaderStat(systemImage: "rosette", value: "\(store.masteredGaps.count)", label: "Mastered")
+                }
+                .accessibilityElement(children: .combine)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.white.opacity(0.15))
+                .clipShape(.rect(cornerRadius: 12))
             }
-            .accessibilityElement(children: .combine)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color.white.opacity(0.15))
-            .clipShape(.rect(cornerRadius: 12))
-            .padding(.leading, 24)
-            .padding(.bottom, 18)
-        }
+        )
+        .frame(minHeight: 190)
     }
 
     private var srsCard: some View {
@@ -228,7 +232,8 @@ struct DeckView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(category.label).scaledFont(15, weight: .semibold)
                                     .foregroundStyle(active ? Theme.primaryDark : (s.active == 0 ? Theme.textSecondary : Theme.text))
-                                Text("\(s.active) active · \(s.mastered) mastered").scaledFont(12).foregroundStyle(Theme.textSecondary)
+                                Text(HomeCopy.categoryCounts(toLearn: s.active, mastered: s.mastered))
+                                    .scaledFont(12).foregroundStyle(Theme.textSecondary)
                             }
                             Spacer()
                             if s.active > 0 {

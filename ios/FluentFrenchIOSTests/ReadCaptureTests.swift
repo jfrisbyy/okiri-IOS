@@ -40,6 +40,25 @@ struct ReadCaptureTests {
         #expect(SentenceExtractor.sentence(containing: "", in: text) == "")
     }
 
+    // MARK: - read-7-3 A full stop hugged by a closing quote is not scanned twice
+
+    @Test func aClosingQuoteAfterAFullStopIsNotAppendedTwice() {
+        // The scanner absorbs the run of terminators/closing quotes after a "."; it
+        // must resume AFTER that run, not one character in, or every absorbed
+        // character is emitted a second time and the saved context sentence (and the
+        // translation-cache fingerprint keyed on it) carries doubled punctuation.
+        let quoted = "Il a dit « c'est fini.», puis il est parti."
+        #expect(SentenceExtractor.sentences(in: quoted) == ["Il a dit « c'est fini.», puis il est parti."])
+        #expect(!SentenceExtractor.sentences(in: quoted).contains { $0.contains("»»") })
+        #expect(SentenceExtractor.sentence(containing: "parti", in: quoted) == quoted)
+        // Decimals and URLs still survive, and a normal quoted sentence still splits.
+        #expect(SentenceExtractor.sentences(in: "Il coûte 3.5 euros. C'est cher.") == ["Il coûte 3.5 euros.", "C'est cher."])
+        // The absorb path itself still works: a closing quote followed by a space
+        // closes the sentence and keeps the quote.
+        #expect(SentenceExtractor.sentences(in: "Il a dit « c'est fini.» Puis il est parti.")
+                == ["Il a dit « c'est fini.»", "Puis il est parti."])
+    }
+
     @Test func dialogueDashesSplitIntoTurns() {
         let s = SentenceExtractor.sentences(in: "— Allô, bonjour, je voudrais parler à Marie. — C'est de la part de qui ?")
         #expect(s.count == 2)
@@ -722,6 +741,24 @@ struct ReadCaptureTests {
         #expect(ReadingLevelEstimator.estimate("") == .B1, "no text → the honest default, labelled as an estimate by the caller")
     }
 
+    // MARK: - read-7-2 A headline is not part of the readability sample
+
+    @Test func theHeadlineNeverInflatesTheArticleLevelEstimate() {
+        // A headline carries no terminal punctuation, so joining it to the body glues
+        // its words onto the first sentence WITHOUT adding a sentence: mean sentence
+        // length — the whole basis of the band — comes out too high, and the inflated
+        // band is what the feed sorts by and what a capture from the piece inherits.
+        let title = "Le prix du pain augmente encore cette année"
+        let body = "Je vais au marché avec mon frère. Il achète du pain et du fromage. Nous rentrons à la maison en bus. Le soir, ma mère fait la cuisine."
+        let fromBody = ReadingLevelEstimator.estimate(body)
+        #expect(ReadingLevelEstimator.estimateArticle(summary: "", body: body) == fromBody)
+        #expect(ReadingShelf.rank(ReadingLevelEstimator.estimate([title, body].joined(separator: " "))) > ReadingShelf.rank(fromBody),
+                "the old title-glued sample really did read a band harder")
+        // With no body the summary is the only text there is.
+        let summary = "Il fait beau. Je vais au café."
+        #expect(ReadingLevelEstimator.estimateArticle(summary: summary, body: "  ") == ReadingLevelEstimator.estimate(summary))
+    }
+
     // MARK: - read-4-1 Key vocabulary is words the learner can look up and keep
 
     @Test func keyVocabularySplitsElisionsAndDropsNames() {
@@ -1005,6 +1042,39 @@ struct ReadCaptureTests {
         let friend = HeuristicTagger.rank(gap: captured("un ami", english: "friend", pos: "noun", level: .B1),
                                           concepts: taxonomy)
         #expect(!friend.contains { $0.conceptId == "false-friends" }, "a skill with no triggers scores nothing")
+    }
+
+    // MARK: - read-7-1 A theme skill is a list of French words, not of meanings
+
+    @Test func anEnglishGlossAloneNeverFilesAWordOnAFrenchThemeSkill() {
+        // "main" is body vocabulary as a FRENCH word (la main = hand). The English
+        // adjective "main" inside a gloss is not — but one mixed bag of triggers
+        // matched every key against headword AND meaning, so "principal" landed on
+        // The body at confidence 1.0 and every later answer on it was booked as
+        // evidence for a skill the card is not evidence of.
+        let principal = captured("principal", english: "main", pos: "adjective", level: .A2)
+        #expect(!HeuristicTagger.rank(gap: principal, concepts: taxonomy).contains { $0.conceptId == "body-vocab" })
+        let ressort = captured("le ressort", english: "spring", pos: "noun", level: .B1)
+        #expect(!HeuristicTagger.rank(gap: ressort, concepts: taxonomy).contains { $0.conceptId == "days-months-seasons" })
+        let juste = captured("juste", english: "right", pos: "adjective", level: .A2)
+        #expect(!HeuristicTagger.rank(gap: juste, concepts: taxonomy).contains { $0.conceptId == "directions-vocab" })
+        let porter = captured("porter", english: "to carry", pos: "verb", level: .A2)
+        #expect(!HeuristicTagger.rank(gap: porter, concepts: taxonomy).contains { $0.conceptId == "clothing-vocab" })
+    }
+
+    @Test func theFrenchWordStillLandsOnItsThemeWithTheGlossBehindIt() {
+        let cases = [("la main", "the hand", CEFRLevel.A1, "body-vocab"),
+                     ("le printemps", "spring", .A1, "days-months-seasons"),
+                     ("le magasin", "the shop", .A1, "places-town-vocab"),
+                     ("le fromage", "cheese", .A1, "food-drink-vocab")]
+        for (word, english, level, expected) in cases {
+            let result = HeuristicTagger.tag(gap: captured(word, english: english, pos: "noun", level: level), concepts: taxonomy)
+            guard case .existing(let id, let confidence) = result else {
+                Issue.record("“\(word)” should be \(expected), got \(result)"); continue
+            }
+            #expect(id == expected)
+            #expect(confidence >= Tuning.tagConfidenceFloor)
+        }
     }
 
     @Test func aConceptTheLearnerOrAIMadeIsStillMatchedOnItsName() {

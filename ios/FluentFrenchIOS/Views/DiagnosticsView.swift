@@ -11,6 +11,7 @@
 //
 
 #if DEBUG
+import Foundation
 import SwiftUI
 
 struct DiagnosticsView: View {

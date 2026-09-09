@@ -12,6 +12,12 @@ import Foundation
 import Testing
 @testable import FluentFrenchIOS
 
+/// Counts how many times a store rebuilt its Foundation content (store-7-3).
+nonisolated final class ContentBuildCounter: @unchecked Sendable {
+    private(set) var count = 0
+    func bump() { count += 1 }
+}
+
 /// A throwaway UserDefaults suite that is wiped when the test ends.
 nonisolated final class ScratchDefaults {
     let name: String
@@ -1208,6 +1214,33 @@ struct StoreTests {
         s.completeLesson(targetConceptId: "opened", isCapstone: false, now: now)
         #expect(s.concept("opened")?.state != .neverObserved)
         #expect(s.concept("opened")?.newlyUnlocked == false)
+    }
+
+    /// store-7-3: `isTeachable` used to rebuild the whole Foundation curriculum —
+    /// 598 items over the 181-concept taxonomy — on every call, and selection asks
+    /// it once per candidate concept and once more per selected item. About half of
+    /// lesson-start latency was spent re-decoding content that never changes.
+    @Test func teachabilityIsBuiltOnceAndRebuiltOnlyWhenTheContentChanges() {
+        let s = EngineFixtures.store(concepts: [
+            EngineFixtures.concept("taught"),
+            EngineFixtures.concept("untaught"),
+        ], gaps: [])
+        let counter = ContentBuildCounter()
+        let taughtOnly = EngineFixtures.syntheticContent(for: ["taught"])
+        s.foundationContent = { when in counter.bump(); return taughtOnly(when) }
+
+        #expect(s.isTeachable("taught"))
+        #expect(!s.isTeachable("untaught"))
+        for _ in 0..<20 { _ = s.isTeachable("taught") }
+        #expect(s.teachableConceptIds() == ["taught"])
+        #expect(counter.count == 1, "the curriculum is built once, not once per question")
+
+        // Replacing the content closure invalidates the memo, so a concept whose
+        // band is authored later becomes teachable immediately.
+        let both = EngineFixtures.syntheticContent(for: ["taught", "untaught"])
+        s.foundationContent = { when in counter.bump(); return both(when) }
+        #expect(s.isTeachable("untaught"))
+        #expect(counter.count == 2)
     }
 
     @Test func converseCorrectionCreatesADedupedGapAndRecordsALapse() throws {

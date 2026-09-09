@@ -103,6 +103,7 @@ struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// Icon tiles, rings and medallions grow with the learner's text size so the
     /// scaled glyphs inside them keep their proportions instead of overflowing.
     @ScaledMetric(relativeTo: .body) private var tileScale: CGFloat = 1
@@ -203,13 +204,6 @@ struct HomeView: View {
                         .padding(.top, 20)
 
                     Spacer(minLength: 30)
-                }
-                // Kiri sits in front of everything (including the stats card)
-                // so its full body — feet and tail — always reads cleanly.
-                .overlay(alignment: .topTrailing) {
-                    KiriView(mood: kiriMood, size: 116, festive: festiveStreak)
-                        .padding(.trailing, 12)
-                        .padding(.top, 138)
                 }
             }
             .background(Theme.background)
@@ -423,14 +417,36 @@ struct HomeView: View {
                 }
                 .padding(.bottom, 20)
 
-                Text(greeting)
-                    .scaledSerifDisplay(40, weight: .bold)
-                    .foregroundStyle(.white)
-                Text(greetingSubtitle)
-                    .font(.callout)
-                    .foregroundStyle(.white.opacity(0.88))
-                    .padding(.top, 6)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Kiri shares the greeting row instead of floating over the
+                // screen: laid out here it can never cover the stats card's
+                // retention ring or chevron, nor swallow the taps meant for
+                // them, and the greeting wraps in its own column beside it.
+                HStack(alignment: .bottom, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Kiri is incompressible (`.frame(width:)`), so the
+                        // greeting column is the header width minus Kiri. The
+                        // longest greeting ("Bon après-midi") holds an
+                        // unbreakable ~220pt word: let it scale down rather
+                        // than tail-truncate into "après-mi…".
+                        Text(greeting)
+                            .scaledSerifDisplay(40, weight: .bold)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.6)
+                            .foregroundStyle(.white)
+                        Text(greetingSubtitle)
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.88))
+                            .padding(.top, 6)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // At accessibility sizes Kiri yields width so the greeting
+                    // keeps a column it can actually wrap in.
+                    KiriView(mood: kiriMood,
+                             size: dynamicTypeSize.isAccessibilitySize ? 72 : 104,
+                             festive: festiveStreak)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.top, 60)

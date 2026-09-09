@@ -114,6 +114,11 @@ final class CloudSync {
     static let pushDebounce: Duration = .seconds(Tuning.cloudPushDebounce)
     /// Total attempts for one reconcile read before it is reported as failed.
     static let fetchAttempts = 3
+    /// How long a reconcile waits for an upload that is already in flight before
+    /// reading the row anyway (store-7-1).
+    static let pushSettleTimeout: Duration = .seconds(Tuning.cloudPushSettleTimeout)
+    /// Poll interval while one cloud operation waits for another to finish.
+    static let pushSettlePoll: Duration = .seconds(Tuning.cloudPushSettlePoll)
     /// Delay before the second read attempt; doubles on each further attempt.
     static let fetchRetryBaseDelay: Duration = .milliseconds(500)
 
@@ -145,6 +150,19 @@ final class CloudSync {
     @ObservationIgnored private var hasPendingChange = false
     @ObservationIgnored private var pushInFlight = false
     @ObservationIgnored private var pushRequestedWhileInFlight = false
+    /// Callers parked inside `pushNow` waiting for the current upload so they can
+    /// upload once more. Non-zero from the moment a caller queues until its own
+    /// upload has finished, so it spans the handoff window where `pushInFlight`
+    /// is momentarily false but a second upload is about to start — the window
+    /// `awaitPushInFlight` must not let a reconcile's read slip through
+    /// (store-7-1).
+    @ObservationIgnored private var pushWaiters = 0
+    /// Bumped every time an upload finishes, successfully or not. A reconcile
+    /// records it before its read and abandons the pass when it has moved by the
+    /// time the read returns: the row it holds is then older than the markers the
+    /// upload has already saved, and that pairing reads as `.applyRemote`
+    /// (store-7-1). See `SnapshotReconciler.readRacedAnUpload`.
+    @ObservationIgnored private var pushCompletions = 0
     @ObservationIgnored private var reconcileInFlight = false
     @ObservationIgnored private var changeDuringReconcile = false
     @ObservationIgnored private var lastReconcileAt: Date?
@@ -352,13 +370,6 @@ final class CloudSync {
 
         reconcileInFlight = true
         if initial { isReconciling = true }
-        // Restored when the pass is abandoned before it changes anything, so the
-        // profile card falls back to what it honestly knew rather than sticking
-        // on "Backing up…".
-        let stateBeforePass = syncState
-        syncState = .syncing
-        debounceTask?.cancel()
-        debounceTask = nil
         let generation = userGeneration
 
         /// False once the signed-in user changed underneath this pass: nothing
@@ -369,8 +380,47 @@ final class CloudSync {
             return false
         }
 
+        // store-7-1: an upload that started before this pass — a finished lesson
+        // calls `AppStore.flushToCloud` — suspends inside `encodeForUpload` BEFORE
+        // its UPSERT is issued. Reading now would put this pass's SELECT on the
+        // wire ahead of that UPSERT, so it would come back with the PRE-lesson row
+        // while the upload's markers (saved before the read returns) already
+        // describe the row it wrote. That pairing looks like a clean device
+        // holding someone else's row, decides `.applyRemote`, and rolls the
+        // lesson the learner just finished off the device. Let the upload land
+        // first; the row then agrees with the markers. The debounce is cancelled
+        // before the wait so a queued upload cannot slip in behind it.
+        debounceTask?.cancel()
+        debounceTask = nil
+        await awaitPushInFlight()
+        guard stillCurrent() else { return }
+
+        // Restored when the pass is abandoned before it changes anything, so the
+        // profile card falls back to what it honestly knew rather than sticking
+        // on "Backing up…".
+        let stateBeforePass = syncState
+        syncState = .syncing
+        let uploadsBeforeRead = pushCompletions
+
         let fetch = await fetchRemoteWithRetry(userId: uid)
         guard stillCurrent() else { return }
+        // store-7-1, second half: an upload can still START during the read (a
+        // background flush, or a debounced push already past its sleep). If one
+        // finished while the read was in flight, the row and the markers describe
+        // different moments and nothing this pass could conclude from them is
+        // trustworthy. Abandon it WITHOUT recording `lastReconcileAt` so the next
+        // trigger runs it again against a row and markers that agree. Sign-in and
+        // recovery passes (`initial`) are exempt: uploads are not enabled until
+        // they finish, so nothing can push underneath them, and returning here
+        // would strand the app on its loading screen.
+        if !initial,
+           SnapshotReconciler.readRacedAnUpload(uploadsBeforeRead: uploadsBeforeRead,
+                                                uploadsAfterRead: pushCompletions) {
+            // The upload that raced this pass reported its own outcome; only put
+            // the card back if it is still showing this pass's "syncing".
+            if case .syncing = syncState { syncState = stateBeforePass }
+            return
+        }
         // store-3-1: callers check `isLessonInProgress` BEFORE this pass starts,
         // but the read above is a full network round trip (up to `fetchAttempts`
         // with backoff) and the learner can tap into a lesson while it is in
@@ -565,14 +615,27 @@ final class CloudSync {
         }
         if pushInFlight {
             pushRequestedWhileInFlight = true
+            // Held across the wait AND the upload this caller goes on to make,
+            // so `awaitPushInFlight` keeps waiting through the handoff instead
+            // of reading between the two uploads. The `defer` releases it on
+            // every exit, cancellation included, so a give-up cannot strand a
+            // reconcile on the timeout.
+            pushWaiters += 1
+            defer { pushWaiters -= 1 }
             while pushInFlight {
                 if Task.isCancelled { return false }
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.sleep(for: Self.pushSettlePoll)
             }
             return await pushNow(store: store, userId: uid)
         }
         pushInFlight = true
-        defer { pushInFlight = false }
+        defer {
+            pushInFlight = false
+            // Counted even when the upload failed: a write can still have reached
+            // the row before the response was lost, so a reconcile that read past
+            // it must not trust the pairing either (store-7-1).
+            pushCompletions &+= 1
+        }
 
         let snapshot = store.makeSnapshot()
         let previous = syncState
@@ -631,6 +694,24 @@ final class CloudSync {
             let data = try encoder.encode(snapshot)
             return try JSONDecoder().decode(AnyJSON.self, from: data)
         }.value
+    }
+
+    /// Wait for an upload that is already in flight, so a reconcile never reads
+    /// the row while the answers it is about to compare against are still being
+    /// encoded (store-7-1). Bounded by `pushSettleTimeout`: if the upload is stuck
+    /// on a slow network the read goes ahead and the post-read guard catches it.
+    /// `pushWaiters` is part of the condition: a queued caller re-enters
+    /// `pushNow` the moment the current upload's `defer` clears `pushInFlight`,
+    /// so waiting on `pushInFlight` alone would let this pass leave the wait in
+    /// that gap and put its SELECT on the wire while upload #2 runs — exactly
+    /// the pairing this wait exists to avoid.
+    private func awaitPushInFlight() async {
+        guard pushInFlight || pushWaiters > 0 else { return }
+        let deadline = ContinuousClock.now.advanced(by: Self.pushSettleTimeout)
+        while pushInFlight || pushWaiters > 0, ContinuousClock.now < deadline {
+            if Task.isCancelled { return }
+            try? await Task.sleep(for: Self.pushSettlePoll)
+        }
     }
 
     // MARK: - Reads

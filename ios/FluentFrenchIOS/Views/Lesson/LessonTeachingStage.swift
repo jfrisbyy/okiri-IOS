@@ -7,6 +7,7 @@
 //  The AI question prefetch starts as soon as this stage appears (C9).
 //
 
+import Foundation
 import SwiftUI
 
 struct LessonTeachingStage: View {

@@ -11,17 +11,29 @@ import UIKit
 
 // MARK: - Gradient header
 
-struct GradientHeader<Trailing: View>: View {
+struct GradientHeader<Trailing: View, Bottom: View>: View {
     let gradient: LinearGradient
     let title: String
     let subtitle: String
     var trailing: Trailing
+    /// Optional content laid out UNDER the title block, inside the header's own
+    /// stack. Anything a screen wants at the foot of the header (a stat pill row,
+    /// say) belongs here: an `.overlay(alignment: .bottomLeading)` on the header
+    /// frame would be drawn on top of the bottom-anchored title and subtitle.
+    var bottom: Bottom
 
-    init(gradient: LinearGradient, title: String, subtitle: String, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
+    init(
+        gradient: LinearGradient,
+        title: String,
+        subtitle: String,
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() },
+        @ViewBuilder bottom: () -> Bottom = { EmptyView() }
+    ) {
         self.gradient = gradient
         self.title = title
         self.subtitle = subtitle
         self.trailing = trailing()
+        self.bottom = bottom()
     }
 
     var body: some View {
@@ -32,7 +44,7 @@ struct GradientHeader<Trailing: View>: View {
                 .frame(width: 120, height: 120)
                 .offset(x: -36, y: 40)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(title)
@@ -46,6 +58,7 @@ struct GradientHeader<Trailing: View>: View {
                     Spacer()
                     trailing
                 }
+                bottom
             }
             .padding(.horizontal, 24)
             .padding(.top, 8)

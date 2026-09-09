@@ -220,6 +220,57 @@ nonisolated enum TranscriptCopy {
     static let retryTranslation = "Try again"
 }
 
+// MARK: - Capturing a word from a transcript
+
+/// How a word tapped in a Watch transcript becomes a deck card.
+///
+/// Only the video's own French captions are French someone actually said, so
+/// only they may be quoted on the card as the sentence the word was met in. A
+/// machine-translated line — the platform's auto-translation, or the app's own
+/// English → French pass — is French the app produced seconds earlier: filing
+/// it as "seen in the wild", or (when the lookup fails) promoting it to the
+/// card's own example sentence, would teach a generated sentence as real
+/// French (talkmedia-7-1). Those captures keep the word and name its source in
+/// a note instead of quoting the line.
+nonisolated enum TranscriptCapture {
+    /// The surface stamped on the capture (`OriginalContext.sourceTab`).
+    static let sourceTab = "watch"
+
+    /// The sentence the card may quote: the video's own French, nothing else.
+    static func quotedContext(_ sentence: String, origin: TranscriptOrigin) -> String {
+        origin.isNativeFrench ? sentence : ""
+    }
+
+    /// The note a card carries when its word was met in generated French. nil
+    /// for the video's own captions — there is nothing to qualify.
+    static func note(for origin: TranscriptOrigin) -> String? {
+        switch origin {
+        case .nativeFrench:
+            return nil
+        case .providerTranslated:
+            return "Met in this video's auto-translated French subtitles, not in the French spoken in it."
+        case .translatedFromEnglish:
+            return "Met in a French line translated from this video's English captions."
+        }
+    }
+
+    /// A card for a transcript word the lookup could explain.
+    static func draft(gloss: WordGloss, context: String, origin: TranscriptOrigin) -> CaptureDraft {
+        CaptureDraft(gloss: gloss, sourceType: .listening, sourceTab: sourceTab,
+                     contextSentence: quotedContext(context, origin: origin),
+                     note: note(for: origin) ?? "")
+    }
+
+    /// A card for a transcript word the lookup could not explain (offline, no
+    /// key, service down): the word waits for a meaning, but its provenance is
+    /// recorded now.
+    static func draft(word: String, context: String, origin: TranscriptOrigin) -> CaptureDraft {
+        CaptureDraft(untranslated: word, sourceType: .listening, sourceTab: sourceTab,
+                     contextSentence: quotedContext(context, origin: origin),
+                     note: note(for: origin) ?? "")
+    }
+}
+
 // MARK: - Results
 
 /// The language a transcript line is in. English lines come from the last

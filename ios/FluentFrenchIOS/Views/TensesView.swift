@@ -7,6 +7,7 @@
 //  save-this-form button on every row.
 //
 
+import Foundation
 import SwiftUI
 
 struct TensesView: View {

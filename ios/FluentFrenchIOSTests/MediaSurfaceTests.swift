@@ -674,6 +674,52 @@ struct MediaSurfaceTests {
                 "the provenance note survives a finished translation pass")
     }
 
+    /// talkmedia-7-1: the provenance has to survive the tap, not just sit in the
+    /// header. A word saved from generated French keeps the word and names its
+    /// source; the generated sentence is never quoted on the card, and never
+    /// becomes the card's own example when the lookup fails.
+    @Test func aWordSavedFromGeneratedFrenchIsNeverFiledAsSeenInTheWild() {
+        let line = "Je voudrais un café, s'il vous plaît."
+        let gloss = WordGloss(term: "café", translation: "coffee", explanation: "A drink.",
+                              example: "Un café noir.", exampleTranslation: "A black coffee.")
+
+        let native = TranscriptCapture.draft(gloss: gloss, context: line, origin: .nativeFrench)
+        #expect(native.contextSentence == line, "the video's own French is real French met in the wild")
+        #expect(native.note.isEmpty)
+        #expect(native.sourceTab == TranscriptCapture.sourceTab)
+
+        for origin in [TranscriptOrigin.providerTranslated, .translatedFromEnglish] {
+            let draft = TranscriptCapture.draft(gloss: gloss, context: line, origin: origin)
+            #expect(draft.contextSentence.isEmpty, "generated French is not quoted on the card")
+            #expect(!draft.note.isEmpty, "the card says where the word was met instead")
+            #expect(draft.frenchWord == "café")
+
+            // The lookup failing is the worse case: the context would otherwise
+            // become the card's example sentence, which the lesson then blanks.
+            let unglossed = TranscriptCapture.draft(word: "café", context: line, origin: origin)
+            #expect(unglossed.contextSentence.isEmpty)
+            #expect(unglossed.exampleSentence.isEmpty)
+            #expect(!unglossed.note.isEmpty)
+        }
+        #expect(TranscriptCapture.note(for: .nativeFrench) == nil)
+        #expect(TranscriptCapture.note(for: .providerTranslated) != TranscriptCapture.note(for: .translatedFromEnglish))
+        #expect(TranscriptCapture.quotedContext(line, origin: .nativeFrench) == line)
+        #expect(TranscriptCapture.quotedContext(line, origin: .translatedFromEnglish).isEmpty)
+
+        // End to end: the card the store builds has no "seen in the wild"
+        // sentence at all — GapCardView only renders that box for a context —
+        // and the machine line is not its example either.
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        guard case .saved(let card) = store.capture(TranscriptCapture.draft(word: "café", context: line,
+                                                                           origin: .translatedFromEnglish)) else {
+            Issue.record("the word itself is still a card")
+            return
+        }
+        #expect(card.originalContext == nil, "no sentence is quoted as French met in the wild")
+        #expect(card.exampleSentence.isEmpty, "the generated line never becomes the card's example")
+        #expect(card.explanation.contains("English captions"), "the card says where the word came from")
+    }
+
     @Test func aReplyOnlyTouchesItsOwnBatch() {
         var lines = englishLines(6)
         let batches = TranscriptTranslation.batches(of: lines, size: 4)

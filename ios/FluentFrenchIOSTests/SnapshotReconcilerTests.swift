@@ -161,6 +161,49 @@ struct SnapshotReconcilerTests {
                 "a device with no local activity owes nothing")
     }
 
+    // MARK: Row precision (store-7-2)
+
+    @Test func aDeviceReadingBackItsOwnRowIsNotTreatedAsAnotherDevice() {
+        // The row encodes `clientUpdatedAt` as ISO-8601 with no fractional seconds,
+        // while the sync marker keeps the full-precision `Date` the snapshot
+        // carried. Compared raw, the store-6-1 witness fired on the device's OWN
+        // row after every single upload, and a clean device applied that row back
+        // over itself — clearing the cached daily plan and re-rolling the day at
+        // the end of every lesson (store-7-2). These are the exact values the
+        // encoder/decoder round trip produces.
+        let server = Self.at(20)
+        let marker = Date(timeIntervalSince1970: 1_788_969_918.700_553_7)
+        let row = Date(timeIntervalSince1970: 1_788_969_918)
+        #expect(SnapshotReconciler.isSameClientClock(marker, row))
+
+        let clean = Local(updatedAt: marker, lastSyncedUpdatedAt: marker, lastSyncedServerUpdatedAt: server)
+        #expect(SnapshotReconciler.decide(local: clean, remote: Remote(clientUpdatedAt: row, serverUpdatedAt: server)) == .alreadyInSync,
+                "our own row read back is not another device's write")
+
+        let dirty = Local(updatedAt: marker.addingTimeInterval(30), lastSyncedUpdatedAt: marker,
+                          lastSyncedServerUpdatedAt: server)
+        #expect(SnapshotReconciler.decide(local: dirty, remote: Remote(clientUpdatedAt: row, serverUpdatedAt: server)) == .pushLocal,
+                "new answers on top of our own row are uploaded, not thrown away")
+
+        // A whole second apart is still someone else's write: the witness must
+        // keep catching store-6-1.
+        let theirs = Remote(clientUpdatedAt: marker.addingTimeInterval(1.5), serverUpdatedAt: server)
+        #expect(!SnapshotReconciler.isSameClientClock(marker, theirs.clientUpdatedAt))
+        #expect(SnapshotReconciler.decide(local: clean, remote: theirs) == .applyRemote)
+    }
+
+    // MARK: Read racing an upload (store-7-1)
+
+    @Test func aReadThatRacedAnUploadIsAbandoned() {
+        // The reconcile's SELECT went out while a lesson-end upload was still
+        // encoding, so it holds the pre-lesson row while that upload's markers
+        // already describe the row it wrote. Deciding on that pairing rolls the
+        // finished lesson off the device, so the pass is abandoned instead.
+        #expect(SnapshotReconciler.readRacedAnUpload(uploadsBeforeRead: 3, uploadsAfterRead: 4))
+        #expect(!SnapshotReconciler.readRacedAnUpload(uploadsBeforeRead: 3, uploadsAfterRead: 3),
+                "a quiet read decides normally")
+    }
+
     // MARK: Deferred restore (store-4-1)
 
     /// "Continue on this device" hands the ordinary reconcile rule a record it

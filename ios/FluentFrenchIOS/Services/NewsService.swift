@@ -287,7 +287,7 @@ nonisolated struct NewsAPIArticle: Decodable {
             publishedAt: date,
             body: text,
             url: url,
-            level: ReadingLevelEstimator.estimate([title, summary, text].joined(separator: " ")),
+            level: ReadingLevelEstimator.estimateArticle(summary: summary, body: text),
             isLevelEstimated: true,
             isExcerpt: true
         )

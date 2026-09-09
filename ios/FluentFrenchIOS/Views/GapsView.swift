@@ -180,7 +180,8 @@ struct GapsView: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(stat.category.label).scaledFont(16, weight: .semibold).foregroundStyle(Theme.text)
-                        Text("\(stat.active) active · \(stat.mastered) mastered").scaledFont(12).foregroundStyle(Theme.textSecondary)
+                        Text(HomeCopy.categoryCounts(toLearn: stat.active, mastered: stat.mastered))
+                            .scaledFont(12).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
                     Pill(text: healthLabel, color: healthColor)
@@ -227,7 +228,7 @@ struct GapsView: View {
         }
         .buttonStyle(.plain)
         .pressable()
-        .accessibilityLabel("\(stat.category.label): \(stat.active) active, \(stat.mastered) mastered, \(healthLabel)")
+        .accessibilityLabel("\(stat.category.label): \(HomeCopy.categoryCounts(toLearn: stat.active, mastered: stat.mastered, separator: ", ")), \(healthLabel)")
         .accessibilityValue(stat.due > 0
                             ? "\(stat.due) due now"
                             : (stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention) percent retention"))

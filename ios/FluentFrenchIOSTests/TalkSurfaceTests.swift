@@ -271,6 +271,8 @@ struct TalkSurfaceTests {
         let corrections = ConverseRecap.corrections(in: transcript)
         let saved = store.recordConverseCorrections(corrections, now: now)
         #expect(saved.count == 2)
+        #expect(saved.values.allSatisfy { if case .saved = $0 { return true } else { return false } },
+                "both corrections put a new card in the deck")
         #expect(Set(store.gaps.map(\.frenchWord)) == ["fixed-1", "fixed-2"])
         let first = try #require(store.gaps.first { $0.frenchWord == "fixed-1" })
         #expect(first.englishTranslation == "en-1")
@@ -280,7 +282,54 @@ struct TalkSurfaceTests {
         let second = try #require(store.gaps.first { $0.frenchWord == "fixed-2" })
         #expect(second.needsTranslation, "no English from the tutor → translation pending, no placeholder")
         #expect(second.englishTranslation.isEmpty)
-        #expect(saved[transcript[1].id]?.id == first.id)
+        #expect(saved[transcript[1].id] == .saved(first))
+    }
+
+    /// talkmedia-7-2: the recap may not decide what was added by asking the deck
+    /// about the FULL corrected line — the store shortens a long correction to
+    /// the part that changed and dedupes on that shortened headword, so the full
+    /// line is never a card. The outcome has to come from the store.
+    @Test func aCorrectionAlreadyInTheDeckReportsAsADuplicateNotASave() throws {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let transcript = [
+            learner("Hier je vais au marché avec mes amis pour acheter du pain."),
+            tutor("t-1", correction: "passé composé",
+                  corrected: "Hier je suis allé au marché avec mes amis pour acheter du pain."),
+        ]
+        let corrections = ConverseRecap.corrections(in: transcript)
+        #expect(corrections.count == 1)
+
+        let firstCall = store.recordConverseCorrections(corrections, now: now)
+        let card = try #require(store.gaps.first)
+        #expect(firstCall[corrections[0].id] == .saved(card))
+        #expect(!store.hasGap(forWord: corrections[0].correctedFrench),
+                "the full corrected line is not the headword the deck keyed the card by")
+
+        let secondCall = store.recordConverseCorrections(corrections, now: now)
+        #expect(store.gaps.count == 1, "nothing new was added the second time")
+        guard case .duplicate(let again)? = secondCall[corrections[0].id] else {
+            Issue.record("a correction whose card is already in the deck must report as a duplicate")
+            return
+        }
+        #expect(again.id == card.id)
+        #expect(again.reviewCount == 2, "the repeated slip still counts against the card")
+    }
+
+    /// talkmedia-7-3: "saved" counts what the learner banked, so mastering a
+    /// phrase must not shrink it.
+    @Test func theSpeakSavedTotalDoesNotShrinkWhenAPhraseIsMastered() throws {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        #expect(store.captureConversePhrase(french: "s-one", english: "one", scenarioTitle: "Café", now: now))
+        #expect(store.captureConversePhrase(french: "s-two", english: "two", scenarioTitle: "Café", now: now))
+        #expect(store.speechGaps.count == 2)
+
+        let mastered = try #require(store.gaps.first { $0.frenchWord == "s-one" })
+        for _ in 0..<Tuning.gapMasteryStreak {
+            store.recordAnswer(gapId: mastered.id, correct: true, format: .translation, firstTry: true, now: now)
+        }
+        #expect(store.gaps.first { $0.frenchWord == "s-one" }?.isMastered == true)
+        #expect(store.activeGaps.filter { $0.sourceType == .speech }.count == 1, "one is off the review list")
+        #expect(store.speechGaps.count == 2, "but both are still saved")
     }
 
     @Test func tutorPhraseCaptureDedupesAndFlagsMissingEnglish() throws {

@@ -9,6 +9,7 @@
 //  selector's headline instead of a dead tap (C23).
 //
 
+import Foundation
 import SwiftUI
 
 struct RetentionView: View {

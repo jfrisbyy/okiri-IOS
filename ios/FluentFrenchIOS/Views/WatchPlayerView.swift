@@ -67,6 +67,10 @@ struct WatchPlayerView: View {
         let id = UUID()
         let word: String
         let context: String
+        /// Where the line the word was tapped in came from. The capture sheet
+        /// needs it: a card may only quote the video's OWN French as the
+        /// sentence the word was met in (talkmedia-7-1).
+        let origin: TranscriptOrigin
     }
 
     /// The transcript panel's explicit states.
@@ -123,6 +127,7 @@ struct WatchPlayerView: View {
                 controller: controller,
                 title: video.title,
                 activeSegment: activeSegment,
+                origin: transcript.origin,
                 savedWords: savedWords,
                 speedIndex: $speedIndex,
                 speeds: speeds,
@@ -135,6 +140,7 @@ struct WatchPlayerView: View {
             WordCaptureSheet(
                 word: sel.word,
                 context: sel.context,
+                origin: sel.origin,
                 accent: Theme.primary,
                 onSaved: { outcome in noteSaved(outcome) }
             )
@@ -581,7 +587,7 @@ struct WatchPlayerView: View {
         guard clean.count >= 2 else { return }
         if controller.isPlaying { controller.pause() }
         Haptics.select()
-        selectedWord = SelectedWord(word: clean, context: context)
+        selectedWord = SelectedWord(word: clean, context: context, origin: transcript.origin)
     }
 
     /// The store did the saving (factory + dedupe); the view only remembers the
@@ -638,6 +644,9 @@ private struct FullscreenPlayerView: View {
     let controller: YouTubePlayerController
     let title: String
     let activeSegmentValue: TranscriptSegment?
+    /// Provenance of the transcript on screen, carried into every capture made
+    /// from the floating subtitle (talkmedia-7-1).
+    let origin: TranscriptOrigin
     let savedWords: Set<String>
     @Binding var speedIndex: Int
     let speeds: [Double]
@@ -654,6 +663,7 @@ private struct FullscreenPlayerView: View {
         controller: YouTubePlayerController,
         title: String,
         activeSegment: TranscriptSegment?,
+        origin: TranscriptOrigin,
         savedWords: Set<String>,
         speedIndex: Binding<Int>,
         speeds: [Double],
@@ -663,6 +673,7 @@ private struct FullscreenPlayerView: View {
         self.controller = controller
         self.title = title
         self.activeSegmentValue = activeSegment
+        self.origin = origin
         self.savedWords = savedWords
         self._speedIndex = speedIndex
         self.speeds = speeds
@@ -736,6 +747,7 @@ private struct FullscreenPlayerView: View {
             WordCaptureSheet(
                 word: sel.word,
                 context: sel.context,
+                origin: sel.origin,
                 accent: Theme.primary,
                 onSaved: onSaved
             )
@@ -750,7 +762,7 @@ private struct FullscreenPlayerView: View {
         guard clean.count >= 2 else { return }
         if controller.isPlaying { controller.pause() }
         Haptics.select()
-        selectedWord = WatchPlayerView.SelectedWord(word: clean, context: context)
+        selectedWord = WatchPlayerView.SelectedWord(word: clean, context: context, origin: origin)
     }
 
     private var controlsOverlay: some View {
@@ -1030,6 +1042,9 @@ private struct FlowWords: View {
 private struct WordCaptureSheet: View {
     let word: String
     let context: String
+    /// Where the transcript line came from — only the video's own French may be
+    /// quoted on the card as the sentence the word was met in (talkmedia-7-1).
+    let origin: TranscriptOrigin
     let accent: Color
     let onSaved: (CaptureOutcome) -> Void
 
@@ -1045,9 +1060,9 @@ private struct WordCaptureSheet: View {
         case .loading:
             return nil
         case .loaded(let g):
-            return CaptureDraft(gloss: g, sourceType: .listening, sourceTab: "watch", contextSentence: context)
+            return TranscriptCapture.draft(gloss: g, context: context, origin: origin)
         case .failed:
-            return CaptureDraft(untranslated: word, sourceType: .listening, sourceTab: "watch", contextSentence: context)
+            return TranscriptCapture.draft(word: word, context: context, origin: origin)
         }
     }
 
@@ -1095,9 +1110,17 @@ private struct WordCaptureSheet: View {
                 }
 
                 if !context.isEmpty {
-                    Text(context).font(.footnote).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityLabel("In the transcript: \(context)")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(context).font(.footnote).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel("In the transcript: \(context)")
+                        // The line is machine-translated French: say so here too,
+                        // because the card will not quote it (talkmedia-7-1).
+                        if let provenance = TranscriptCopy.originFootnote(origin) {
+                            Text(provenance).font(.caption2).foregroundStyle(Theme.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
 
                 switch lookup {

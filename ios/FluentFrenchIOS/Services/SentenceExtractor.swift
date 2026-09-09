@@ -39,7 +39,11 @@ nonisolated enum SentenceExtractor {
                     let atEnd = j >= chars.count
                     let followedBySpace = !atEnd && chars[j].isWhitespace
                     if ch == "." && !atEnd && !followedBySpace {
-                        i += 1; continue           // "3.5", "www.example.fr"
+                        // "3.5", "www.example.fr". Resume AFTER the run the absorb
+                        // loop already appended (i = j, not i + 1): stepping back
+                        // into it would append «/"/… a second time and the saved
+                        // context sentence would carry doubled punctuation.
+                        i = j; continue
                     }
                     if ch == "." && isAbbreviation(before: current) {
                         i = j; continue

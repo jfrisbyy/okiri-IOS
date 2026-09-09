@@ -200,6 +200,40 @@ struct AnswerGraderTests {
         #expect(AnswerGrader.grade(typed: "svp", against: please, expected: "s'il vous plaît", kind: .translation) == .correct)
     }
 
+    /// lesson-7-3: an alternative that is the expected answer with a separator missing
+    /// — an apostrophe, a hyphen, the space around them, a trailing comma — exists so a
+    /// phone keyboard is forgiven. It is accepted when typed and never printed back
+    /// under "Also accepted", where it would show a beginner "c est" as a second way to
+    /// write "c'est".
+    @Test func separatorOnlyAlternativesAreAcceptedButNeverAdvertised() {
+        let itIs = gap("c'est", en: "it is", alts: ["c est"], category: .phrasing)
+        #expect(AnswerGrader.grade(typed: "c est", against: itIs, expected: "c'est", kind: .translation) == .correct)
+        #expect(AnswerGrader.displayAlternatives(for: itIs, expected: "c'est", kind: .translation).isEmpty)
+
+        let today = gap("aujourd'hui", en: "today", alts: ["aujourd hui"])
+        #expect(AnswerGrader.grade(typed: "aujourd hui", against: today, expected: "aujourd'hui", kind: .translation) == .correct)
+        #expect(AnswerGrader.displayAlternatives(for: today, expected: "aujourd'hui", kind: .translation).isEmpty)
+
+        // A hyphen dropped (with or without the accent) is the same spelling typed loosely.
+        let overThere = gap("là-bas", en: "over there", alts: ["là bas", "la bas"])
+        #expect(AnswerGrader.grade(typed: "là bas", against: overThere, expected: "là-bas", kind: .translation) == .correct)
+        #expect(AnswerGrader.displayAlternatives(for: overThere, expected: "là-bas", kind: .translation).isEmpty)
+
+        // A trailing comma in a filler's alt is punctuation, not a spelling.
+        let soAnyway = gap("du coup", en: "so", alts: ["du coup,"], category: .phrasing)
+        #expect(AnswerGrader.displayAlternatives(for: soAnyway, expected: "du coup", kind: .translation).isEmpty)
+
+        // A genuinely different way to write it still shows, and only typed formats
+        // have anything to advertise at all.
+        let please = gap("s'il vous plaît", en: "please", alts: ["svp", "s'il vous plait"], category: .phrasing)
+        #expect(AnswerGrader.displayAlternatives(for: please, expected: "s'il vous plaît", kind: .translation) == ["svp"])
+        #expect(AnswerGrader.displayAlternatives(for: please, expected: "s'il vous plaît", kind: .multipleChoice).isEmpty)
+
+        // The article form of a vocabulary headword is a real second answer, not a slip.
+        let bread = gap("le pain", en: "bread")
+        #expect(AnswerGrader.displayAlternatives(for: bread, expected: "pain", kind: .translation) == ["le pain"])
+    }
+
     /// `alts` are authored for the translation format ("parle" for "je parle"):
     /// dropping or adding a word the sentence around the blank already supplies
     /// makes the filled sentence ungrammatical, so it is neither accepted in a

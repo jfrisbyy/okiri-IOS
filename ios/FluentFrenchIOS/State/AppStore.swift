@@ -171,7 +171,18 @@ final class AppStore {
     // MARK: - Package D-flow stored state (edit only inside this block)
     /// Where the Foundation curriculum comes from (D3): the bundled content by
     /// default; tests inject a file loaded from an explicit URL. Not observable state.
-    @ObservationIgnored var foundationContent: (Date) -> [GapItem] = { FoundationContentLoader.gaps(now: $0) }
+    @ObservationIgnored var foundationContent: (Date) -> [GapItem] = { FoundationContentLoader.gaps(now: $0) } {
+        didSet { teachableConceptIdCache = nil }
+    }
+    /// Memoised `teachableConceptIds` (store-7-3). Every call to `foundationContent`
+    /// rebuilds the whole curriculum — 598 `GapItem`s over the 181-concept taxonomy —
+    /// and one `select(.smart)` asks whether a concept is teachable once per
+    /// candidate and once more per selected item, which put about half of
+    /// lesson-start latency into re-decoding content that never changes. WHICH
+    /// concepts have items does not depend on `now` (only the FSRS dates on the
+    /// items do), so the answer is cached until the content closure itself is
+    /// replaced.
+    @ObservationIgnored private var teachableConceptIdCache: Set<String>?
 
     // MARK: - Package E-read stored state (edit only inside this block)
     /// The tail of the tagging queue (E3): every `tagConcept(for:)` request awaits
@@ -275,6 +286,12 @@ final class AppStore {
     /// Alias of `activeGaps` kept for call sites written against the earlier name.
     var visibleGaps: [GapItem] { activeGaps }
 
+    /// Every card Speak and Converse banked, mastered ones included (probes are
+    /// not cards). A "saved" total counts what the learner has KEPT, so it must
+    /// not go down as they master the phrases they saved (talkmedia-7-3);
+    /// counts of what is still to review read `activeGaps` instead.
+    var speechGaps: [GapItem] { gaps.filter { $0.sourceType == .speech && !$0.isProbe } }
+
     /// Active gaps the learner has actually been asked at least once. Day one seeds
     /// the whole Foundation slice, so `activeGaps` is hundreds of items the learner
     /// has never met — counts that claim to describe the LEARNER (weak spots,
@@ -357,12 +374,17 @@ final class AppStore {
     /// Read from the same injected content the seeder uses, so there is one
     /// definition of teachable and tests can move it.
     func teachableConceptIds(now: Date = Date()) -> Set<String> {
-        Set(foundationContent(now).compactMap { $0.conceptId })
+        if let teachableConceptIdCache { return teachableConceptIdCache }
+        let ids = Set(foundationContent(now).compactMap { $0.conceptId })
+        teachableConceptIdCache = ids
+        return ids
     }
 
     /// True when the content file can supply at least one item for this concept.
+    /// Reads the memoised set rather than rebuilding the curriculum per call: this
+    /// runs once per candidate concept inside selection (store-7-3).
     func isTeachable(_ conceptId: String, now: Date = Date()) -> Bool {
-        foundationContent(now).contains { $0.conceptId == conceptId }
+        teachableConceptIds(now: now).contains(conceptId)
     }
 
     /// True when the app has something it can actually put in front of the learner
@@ -1360,9 +1382,26 @@ final class AppStore {
     func recordConverseCorrection(originalFrench: String, correctedFrench: String, explanation: String,
                                   conceptId: String?, englishTranslation: String? = nil,
                                   now: Date = Date()) -> GapItem? {
+        switch applyConverseCorrection(originalFrench: originalFrench, correctedFrench: correctedFrench,
+                                       explanation: explanation, conceptId: conceptId,
+                                       englishTranslation: englishTranslation, now: now) {
+        case .saved(let gap), .duplicate(let gap): return gap
+        case .rejected: return nil
+        }
+    }
+
+    /// The same correction, reported as a capture outcome: `.saved` when the
+    /// corrected phrase became a NEW card, `.duplicate` when it landed on one the
+    /// deck already held, `.rejected` when nothing card-sized survived. The recap
+    /// cannot work this out for itself — it only sees the full corrected line,
+    /// while the store shortens a long correction to the part that changed and
+    /// dedupes on THAT — so it asks here instead of guessing (talkmedia-7-2).
+    private func applyConverseCorrection(originalFrench: String, correctedFrench: String, explanation: String,
+                                         conceptId: String?, englishTranslation: String?,
+                                         now: Date) -> CaptureOutcome {
         let corrected = correctedFrench.trimmingCharacters(in: .whitespacesAndNewlines)
         let original = originalFrench.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !corrected.isEmpty, Self.captureKey(corrected) != Self.captureKey(original) else { return nil }
+        guard !corrected.isEmpty, Self.captureKey(corrected) != Self.captureKey(original) else { return .rejected }
         // A card holds a word or a short phrase, so a rewritten paragraph is cut
         // down to the part the tutor changed. A shortened card cannot keep the
         // tutor's English — that described the whole line — so it waits for a lookup.
@@ -1374,14 +1413,17 @@ final class AppStore {
                                     weight: Tuning.formatEvidenceWeight(.converse), now: now)
                 save()
             }
-            return nil
+            return .rejected
         }
         let english = card.shortened ? nil : englishTranslation
 
         let gapId: String
+        let wasAlreadyInTheDeck: Bool
         if let existing = existingGap(forWord: headword) {
             gapId = existing.id
+            wasAlreadyInTheDeck = true
         } else {
+            wasAlreadyInTheDeck = false
             let linked = concept(conceptId)
             var gap = makeCapturedGap(
                 frenchWord: headword,
@@ -1399,11 +1441,12 @@ final class AppStore {
                 now: now
             )
             gap.needsTranslation = english == nil
-            guard captureGap(gap) else { return nil }
+            guard captureGap(gap) else { return .rejected }
             gapId = gap.id
         }
         recordAnswer(gapId: gapId, correct: false, format: .converse, firstTry: true, now: now)
-        return gaps.first { $0.id == gapId }
+        guard let landed = gaps.first(where: { $0.id == gapId }) else { return .rejected }
+        return wasAlreadyInTheDeck ? .duplicate(landed) : .saved(landed)
     }
 
     /// Record a confusion miss between two gaps (places pressure on the concept).
@@ -3093,13 +3136,16 @@ extension AppStore {
     }
 
     /// Every tutor correction from a Converse call, saved as the CORRECTED line
-    /// with the slip recorded against it (E10). Returns the gap each correction
-    /// landed on, keyed by the correction id, so the recap can show what was kept.
+    /// with the slip recorded against it (E10). Returns, per correction id, what
+    /// the deck did with it — `.saved` for a new card, `.duplicate` for one it
+    /// already held — so the recap says "Saved to your deck" only when something
+    /// was actually added (talkmedia-7-2). A correction nothing card-sized
+    /// survived is absent from the result.
     @discardableResult
-    func recordConverseCorrections(_ corrections: [ConverseCorrection], now: Date = Date()) -> [UUID: GapItem] {
-        var result: [UUID: GapItem] = [:]
+    func recordConverseCorrections(_ corrections: [ConverseCorrection], now: Date = Date()) -> [UUID: CaptureOutcome] {
+        var result: [UUID: CaptureOutcome] = [:]
         for correction in corrections {
-            let gap = recordConverseCorrection(
+            let outcome = applyConverseCorrection(
                 originalFrench: correction.originalFrench,
                 correctedFrench: correction.correctedFrench,
                 explanation: correction.explanation,
@@ -3107,7 +3153,7 @@ extension AppStore {
                 englishTranslation: correction.englishTranslation,
                 now: now
             )
-            if let gap { result[correction.id] = gap }
+            if outcome != .rejected { result[correction.id] = outcome }
         }
         if !result.isEmpty { save() }
         return result

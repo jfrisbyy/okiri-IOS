@@ -1116,7 +1116,88 @@ struct LessonSessionTests {
 
         #expect(seedVehicle.isNew, "the vehicle is never-reviewed — the old filter let it through")
         #expect(s.teachableGaps.map(\.id) == ["new"])
+        #expect(s.teachingGaps.map(\.id) == ["new"])
         #expect(s.mayTeach(fresh))
         #expect(!s.mayTeach(seedVehicle) && !s.mayTeach(interleaved) && !s.mayTeach(probe))
+    }
+
+    // MARK: lesson-7-5 — no lesson asks about a word it never taught
+
+    /// Day one: every item is new, so every item is teachable — and every one of them
+    /// gets a word card. The card cap used to sit below the lesson size, so the last
+    /// new word of a full lesson was first met as "What does X mean?": a wrong guess
+    /// there cost a heart and booked a lapse on a word nothing had introduced.
+    @Test func everyTeachableItemOfAFullSizeLessonGetsAWordCard() throws {
+        #expect(Tuning.teachingWordCards >= max(Tuning.lessonSize, Tuning.scopedLessonSize),
+                "the cap must never drop a card for an item the lesson will ask about")
+        for size in [Tuning.lessonSize, Tuning.scopedLessonSize] {
+            let gaps = (1...size).map { gap("g\($0)") }
+            let s = session(for: lesson(gaps))
+            #expect(s.teachableGaps.count == size)
+            #expect(s.teachingGaps.map(\.id) == s.teachableGaps.map(\.id),
+                    "a \(size)-item lesson teaches all \(size)")
+        }
+    }
+
+    /// The cap itself still works — it is a ceiling on the teaching stage, not a
+    /// silent drop that only bites at full lesson size.
+    @Test func theWordCardCapTrimsTheTailWhenItIsSetBelowTheLesson() throws {
+        var cfg = config()
+        cfg.teachingWordCards = 2
+        let gaps = (1...4).map { gap("g\($0)") }
+        let s = session(for: lesson(gaps), config: cfg)
+        #expect(s.teachableGaps.count == 4)
+        #expect(s.teachingGaps.map(\.id) == ["g1", "g2"])
+    }
+
+    // MARK: lesson-7-4 — the X and the finish button book the same lesson
+
+    /// Closing a lesson whose last question is already answered is finishing it, not
+    /// abandoning it: the learner is on the same screen the "Finish" button leads
+    /// from, and booking it as a quit would cost them the day's lesson count and the
+    /// finishing XP.
+    @Test func quittingAfterTheLastAnswerFinishesTheLesson() throws {
+        let gaps = (1...3).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps))
+        while true {
+            _ = try answerCorrectly(&s)
+            if s.isLast { break }
+            #expect(s.endIfEndedNow == .quit, "mid-lesson, ending now is still a quit")
+            _ = s.advance()
+        }
+        #expect(s.endIfEndedNow == .finished)
+        s.quit()
+        let summary = s.summary
+        #expect(s.end == .finished && summary.end == .finished && summary.isCompleted)
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
+        #expect(store.xp == Tuning.xpPerLessonComplete)
+    }
+
+    /// A hearts-out lesson worked past `heartsOutCompletionFraction` counts toward the
+    /// day whichever control ends it: `quit()` leaves the hearts-out reason alone, so
+    /// the X on the recap books exactly what "See recap" books.
+    @Test func quittingAHeartsOutRecapBooksItAsTheRecapWould() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps), config: config(hearts: 1))
+        while s.end == nil {
+            if s.isLast {
+                _ = try answerWrongly(&s)
+            } else {
+                _ = try answerCorrectly(&s)
+                _ = s.advance()
+            }
+        }
+        #expect(s.end == .outOfHearts && s.summary.isCompleted)
+        s.quit()
+        let summary = s.summary
+        #expect(summary.end == .outOfHearts, "quitting an ended lesson never rewrites its reason")
+        #expect(summary.isCompleted, "…so the X does not turn a counted lesson into an abandoned one")
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
     }
 }

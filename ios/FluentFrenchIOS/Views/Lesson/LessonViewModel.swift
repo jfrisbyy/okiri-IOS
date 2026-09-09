@@ -93,9 +93,7 @@ final class LessonViewModel {
     /// check-in banks a pass the learner has not earned, and the review answer becomes
     /// FSRS interval growth. A check-in is excluded by its ROLE, not by its evidence:
     /// a provisional placement seed is verified on a never-reviewed gap.
-    var teachingGaps: [GapItem] {
-        Array(session.teachableGaps.prefix(Tuning.teachingWordCards))
-    }
+    var teachingGaps: [GapItem] { session.teachingGaps }
 
     /// Whether a screen before the questions may print this item's meaning (the
     /// intro preview asks this per row). Same rule as `teachingGaps`, uncapped.
@@ -379,39 +377,55 @@ final class LessonViewModel {
     // MARK: Lesson end
 
     /// Completion bookkeeping (C13 / C14 / C25): minutes, `completeLesson`, the best
-    /// for this lesson kind. A lesson cut short by hearts records its evidence and
-    /// minutes but is booked as abandoned (C5): no day count, no finishing XP.
+    /// for this lesson kind. A lesson cut short early records its evidence and minutes
+    /// but is booked as abandoned (C5): no day count, no finishing XP.
     func finish(store: AppStore) {
         guard stage != .complete else { return }
         let now = Date()
         timer.pause(at: now)
         cancelPending()
         let result = session.summary
-        if result.answered > 0 {
-            store.recordLessonMinutes(timer.creditedMinutes(at: now), now: now)
-            unlockedConcepts = store.completeLesson(targetConceptId: session.targetConceptId, isCapstone: isCapstone,
-                                                    abandoned: !result.isCompleted, answered: result.answered, now: now)
-            if result.end == .finished {
-                isNewBest = store.recordLessonBest(kind: bestKind, accuracy: result.accuracy,
-                                                   streak: result.bestCombo, now: now)
-            }
-        }
+        unlockedConcepts = book(result, store: store, now: now)
         summary = result
         withAnimation(motion(.spring(response: 0.45, dampingFraction: 0.85))) { stage = .complete }
     }
 
-    /// The learner confirmed a quit (C13): abandoned bookkeeping when anything was answered.
+    /// The learner confirmed a quit (C13). Same bookkeeping as `finish`: which
+    /// control ended the lesson does not decide whether it counts — `session.quit()`
+    /// settles the end reason and `LessonSummary.isCompleted` the completion rule, so
+    /// a hearts-out recap closed with the X counts exactly as "See recap" would.
     func confirmQuit(store: AppStore) {
         let now = Date()
         timer.pause(at: now)
         cancelPending()
         session.quit()
-        let answered = session.answered
-        if answered > 0 {
-            store.recordLessonMinutes(timer.creditedMinutes(at: now), now: now)
-            _ = store.completeLesson(targetConceptId: session.targetConceptId, isCapstone: isCapstone,
-                                     abandoned: true, answered: answered, now: now)
+        book(session.summary, store: store, now: now)
+    }
+
+    /// Hand one finished lesson to the store: minutes, the lesson itself (abandoned
+    /// decided in one place), and the personal best for a lesson played to the end.
+    /// Nothing answered means nothing to book. Returns the concepts it unlocked.
+    @discardableResult
+    private func book(_ result: LessonSummary, store: AppStore, now: Date) -> [String] {
+        guard result.answered > 0 else { return [] }
+        store.recordLessonMinutes(timer.creditedMinutes(at: now), now: now)
+        let unlocked = store.completeLesson(targetConceptId: session.targetConceptId, isCapstone: isCapstone,
+                                            abandoned: !result.isCompleted, answered: result.answered, now: now)
+        if result.end == .finished {
+            isNewBest = store.recordLessonBest(kind: bestKind, accuracy: result.accuracy,
+                                               streak: result.bestCombo, now: now)
         }
+        return unlocked
+    }
+
+    /// What the quit confirmation promises about today's count. The lesson is booked
+    /// by `LessonSummary.isCompleted`, so the dialog reads the same rule instead of
+    /// telling a learner who is 80 % through a hearts-out lesson that it will not count.
+    var quitMessage: String {
+        guard answeredCount > 0 else { return "Nothing has been answered yet." }
+        return session.summary.isCompleted
+            ? "What you've answered is kept, and you've done enough of this lesson for it to count toward today."
+            : "What you've answered so far is kept; the lesson won't count as finished."
     }
 
     /// Drop every in-flight task (the cover is going away or the lesson is over).

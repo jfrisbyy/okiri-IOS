@@ -34,6 +34,17 @@ nonisolated enum ReadingLevelEstimator {
         return band
     }
 
+    /// The band of a live article. The HEADLINE is deliberately left out: a
+    /// headline carries no terminal punctuation, so joining it to the body adds
+    /// its words to the first sentence without adding a sentence and inflates
+    /// mean sentence length by roughly (title words) / (sentence count) — enough
+    /// to push a typical feed item a band up (read-7-2). The body is what the
+    /// reader shows; the summary is only used when there is no body.
+    static func estimateArticle(summary: String, body: String) -> CEFRLevel {
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return estimate(text.isEmpty ? summary : text)
+    }
+
     private static func next(after level: CEFRLevel) -> CEFRLevel? {
         let all = CEFRLevel.allCases
         guard let i = all.firstIndex(of: level), i + 1 < all.count else { return nil }

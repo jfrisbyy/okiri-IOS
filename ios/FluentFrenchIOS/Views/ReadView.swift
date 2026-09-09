@@ -11,6 +11,7 @@
 //  failure looks like "no results" (E20, E22, E26).
 //
 
+import Foundation
 import SwiftUI
 import Observation
 

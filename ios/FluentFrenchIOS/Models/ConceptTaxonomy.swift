@@ -17,8 +17,16 @@ import Foundation
 
 nonisolated enum ConceptTaxonomy {
     /// Seed concepts. Ids are stable slugs referenced by `prerequisites` and by
-    /// gaps' `conceptId`, so do not rename existing ids.
-    static func seed() -> [Concept] {
+    /// gaps' `conceptId`, so do not rename existing ids. Built ONCE (`all`) and
+    /// handed back by value: the store loads it, the seeder sorts by it and the
+    /// content loader indexes CEFR levels from it, so constructing 181 structs per
+    /// call showed up in lesson-start latency (store-7-3). Callers get their own
+    /// copy of the array and its value-type elements, so mutating the result is
+    /// still safe.
+    static func seed() -> [Concept] { all }
+
+    /// The one built copy of the taxonomy behind `seed()`.
+    private static let all: [Concept] = {
         func c(_ id: String, _ name: String, _ cat: GapCategory, _ lvl: CEFRLevel,
                _ prereqs: [String], _ desc: String) -> Concept {
             Concept(id: id, name: name, category: cat, cefrLevel: lvl, prerequisites: prereqs, description: desc)
@@ -446,10 +454,10 @@ nonisolated enum ConceptTaxonomy {
             c("literary-and-journalistic-register", "Literary & journalistic style", .register, .C1, ["literary-tenses"],
               "The conventions of a novel, an editorial and a news report."),
         ]
-    }
+    }()
 
     /// Quick lookup helper used by the offline heuristic tagger fallback.
-    static var ids: Set<String> { Set(seed().map { $0.id }) }
+    static let ids: Set<String> = Set(all.map { $0.id })
 
     /// The A1 base concepts that define "the basics" — used as the coverage proxy
     /// for the readiness gate and as the Foundation track's spine. Only vocabulary,

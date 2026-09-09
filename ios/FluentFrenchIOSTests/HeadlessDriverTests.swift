@@ -397,11 +397,25 @@ struct HeadlessDriverTests {
                 #expect(report.lessonSize > 0, "\(label) day \(report.day): nothing to teach with unmastered concepts left")
             }
         }
-        // Foundation pacing held: `foundationLessonsPerDay` lessons on a day that
-        // started with reading locked, the unlocked count otherwise (B10).
+        // Foundation pacing held (B10). `report.plannedLessons` is what the APP's
+        // day plan asked for that morning — `DailyPlanEngine.makePlan` — and on a
+        // locked day the run obeys it, so this checks the engine's pacing over 60
+        // real days rather than restating a number the harness chose (engine-7-4).
         for report in run.reports {
-            let expected = report.readingUnlockedAtStart ? lessonsAfterUnlock : Tuning.foundationLessonsPerDay
-            #expect(report.lessons == expected, "\(label) day \(report.day): \(report.lessons) lessons")
+            if report.readingUnlockedAtStart {
+                #expect(report.lessons == lessonsAfterUnlock,
+                        "\(label) day \(report.day): \(report.lessons) lessons")
+                // Post-unlock the plan sizes itself to what is waiting, always
+                // within the tuned band.
+                #expect(report.plannedLessons >= Tuning.unlockedLessonsPerDayMin
+                        && report.plannedLessons <= Tuning.foundationLessonsPerDay,
+                        "\(label) day \(report.day): planned \(report.plannedLessons) lessons after unlock")
+            } else {
+                #expect(report.plannedLessons == Tuning.foundationLessonsPerDay,
+                        "\(label) day \(report.day): the plan asked for \(report.plannedLessons) lessons with reading locked")
+                #expect(report.lessons == report.plannedLessons,
+                        "\(label) day \(report.day): ran \(report.lessons) of \(report.plannedLessons) planned lessons")
+            }
         }
         #expect(store.selectionLog.count == run.reports.reduce(0) { $0 + $1.lessons })
     }

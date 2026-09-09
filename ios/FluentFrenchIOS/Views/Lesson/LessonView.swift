@@ -58,9 +58,7 @@ struct LessonView: View {
             }
             Button("Keep going", role: .cancel) {}
         } message: {
-            Text(model.answeredCount > 0
-                 ? "What you've answered so far is kept; the lesson won't count as finished."
-                 : "Nothing has been answered yet.")
+            Text(model.quitMessage)
         }
         .onChange(of: scenePhase) { _, phase in
             model.scenePhaseChanged(phase)

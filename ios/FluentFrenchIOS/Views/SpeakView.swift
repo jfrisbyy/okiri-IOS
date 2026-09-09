@@ -137,7 +137,7 @@ struct SpeakView: View {
                     Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 20)
                     statChip("clock", "\(store.minutesThisWeek(.speaking))", "this week")
                     Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 20)
-                    statChip("text.book.closed", "\(store.visibleGaps.filter { $0.sourceType == .speech }.count)", "saved")
+                    statChip("text.book.closed", "\(store.speechGaps.count)", "saved")
                 }
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 .background(Color.white.opacity(0.15)).clipShape(.rect(cornerRadius: 12))

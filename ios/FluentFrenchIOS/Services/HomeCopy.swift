@@ -26,6 +26,16 @@ nonisolated enum HomeCopy {
     /// not weak spots the app diagnosed, and "Active gaps" claimed the latter.
     static let toLearnLabel = "To learn"
 
+    /// A category row's two counts, for the Gap Map cards and the deck's category
+    /// list. The unmastered half is the SAME quantity the overviews label with
+    /// `toLearnLabel`, so it carries the same name: "active" named it twice over
+    /// ("343 To learn" above "180 active") and claimed a diagnosis the app has not
+    /// made on day one. `separator` is " · " on screen and ", " for VoiceOver,
+    /// which does not speak the middle dot.
+    static func categoryCounts(toLearn: Int, mastered: Int, separator: String = " · ") -> String {
+        "\(toLearn) \(toLearnLabel.lowercased())\(separator)\(mastered) mastered"
+    }
+
     /// The Learn card's stat line — what is queued, and how much of it the learner
     /// has actually met. Before the first answer there is nothing to claim.
     static func learnCardStat(toLearn: Int, practised: Int) -> String {

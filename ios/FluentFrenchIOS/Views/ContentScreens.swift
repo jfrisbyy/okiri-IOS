@@ -8,6 +8,7 @@
 //  both curated library pieces and live news articles.
 //
 
+import Foundation
 import SwiftUI
 
 // MARK: - Library reader

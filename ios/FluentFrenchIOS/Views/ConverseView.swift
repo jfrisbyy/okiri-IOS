@@ -910,10 +910,20 @@ private struct ConverseCallView: View {
         recapRecorded = true
         let corrections = ConverseRecap.corrections(in: transcript)
         if !corrections.isEmpty {
-            let alreadyThere = Set(corrections.filter { store.hasGap(forWord: $0.correctedFrench) }.map(\.id))
-            let saved = store.recordConverseCorrections(corrections)
-            savedCorrectionIds = Set(saved.keys).subtracting(alreadyThere)
-            duplicateCorrectionIds = alreadyThere
+            // The store decides what was added: it shortens a long correction to
+            // the part that changed and dedupes on THAT, so the recap cannot
+            // pre-guess with the full corrected line (talkmedia-7-2).
+            var added: Set<UUID> = []
+            var already: Set<UUID> = []
+            for (id, outcome) in store.recordConverseCorrections(corrections) {
+                switch outcome {
+                case .saved: added.insert(id)
+                case .duplicate: already.insert(id)
+                case .rejected: break
+                }
+            }
+            savedCorrectionIds = added
+            duplicateCorrectionIds = already
         }
         // Corrections and tutor phrases saved without English wait for a meaning;
         // the call proved the service reachable, so fill them in now. The store

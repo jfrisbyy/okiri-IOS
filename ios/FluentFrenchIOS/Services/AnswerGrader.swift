@@ -115,6 +115,33 @@ nonisolated enum AnswerGrader {
         return out
     }
 
+    /// The accepted forms worth SHOWING after a typed answer ("Also accepted: …").
+    ///
+    /// Not every form the grader tolerates is a second way to write the answer.
+    /// Content alternatives exist so a learner typing on a phone keyboard is not
+    /// failed for a separator — "c est" for "c'est", "aujourd hui" for "aujourd'hui",
+    /// "là bas" for "là-bas", "du coup," for "du coup" — and printing those back as
+    /// "Also accepted" teaches a beginner a spelling that is not French. A form that
+    /// is the expected answer once apostrophes, hyphens, spacing, punctuation and
+    /// accents are ignored is typing tolerance: still accepted, never advertised —
+    /// the same treatment an accent-stripped alternative gets in `acceptedForms`.
+    static func displayAlternatives(for gap: GapItem, expected: String, kind: QuestionKind) -> [String] {
+        guard kind.isTyped else { return [] }
+        let expectedNorm = normalize(expected)
+        let expectedKey = spellingKey(expectedNorm)
+        return acceptedForms(for: gap, expected: expected, kind: kind)
+            .filter { $0.normalized != expectedNorm && spellingKey($0.normalized) != expectedKey }
+            .map { $0.display }
+    }
+
+    /// A form's letters and digits alone, accents folded: what is left of a spelling
+    /// once every separator a typing learner may miss (apostrophe, hyphen, space,
+    /// comma) is gone. Two forms with the same key are the same spelling typed
+    /// differently, not two spellings.
+    static func spellingKey(_ s: String) -> String {
+        fold(s).filter { $0.isLetter || $0.isNumber }
+    }
+
     /// Ellipsis in a headword ("ne... pas", "n'... pas", "..., quoi") is dictionary
     /// notation for a frame that wraps around a word, not a spelling: the dots are
     /// never shown as required anywhere, and a learner asked to translate "not" types

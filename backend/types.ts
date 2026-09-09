@@ -367,6 +367,10 @@ export type Database = {
       //   3. `client_updated_at` (device clock, mirrors snapshot.clientUpdatedAt)
       //      is only the fallback when a server timestamp is missing on either
       //      side or both sides changed; newest wins, the row wins ties.
+      //      It is also the witness that catches another device's write while the
+      //      `updated_at` trigger is unapplied, and it is written WITHOUT
+      //      fractional seconds, so the device compares it with its marker at
+      //      whole-second granularity (store-7-2).
       // Fetch errors are never treated as "no row".
       // The device-side markers rule 2 depends on (last synced `updated_at` +
       // local clock) are only cleared on a sign-out the learner asked for; a

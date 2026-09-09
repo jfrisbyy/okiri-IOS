@@ -7,6 +7,7 @@
 //  hear phrases aloud, translate & add custom phrases, and save guides.
 //
 
+import Foundation
 import SwiftUI
 
 struct ScenariosView: View {

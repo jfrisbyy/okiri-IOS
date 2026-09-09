@@ -210,8 +210,13 @@ final class EngineDriver {
 struct SimulatedRun {
     struct DayReport {
         let day: Int
-        /// Lessons that ran this day (Foundation pacing: `Tuning.foundationLessonsPerDay` while reading is locked).
+        /// Lessons that actually ran this day.
         let lessons: Int
+        /// What the app's own day plan asked for at the start of the day: the
+        /// `.lessons` spine of `DailyPlanEngine.makePlan`. While reading is locked
+        /// this is the number the run obeys (Foundation pacing); after unlock the
+        /// scenarios fix throughput themselves, so it is recorded, not obeyed.
+        let plannedLessons: Int
         let targetConceptId: String?
         let lessonSize: Int
         /// Mean |engine mastery − true mastery| over observed concepts.
@@ -314,12 +319,16 @@ struct SimulatedRun {
                                      inferredConceptIds: result.inferredConceptIds)
     }
 
-    /// `days` days of lessons. With `foundationPacing` the day holds
-    /// `Tuning.foundationLessonsPerDay` lessons while reading is locked and
-    /// `lessonsPerDay` once it unlocks. The learner is taught the target
-    /// (concept-card exposure), answers every item from its true mastery, and
-    /// forgets overnight. Evidence flows through the real `recordReview`, with the
-    /// selected role passed through as the lesson passes it.
+    /// `days` days of lessons. With `foundationPacing` the day runs as many lessons
+    /// as the APP's own day plan asks for while reading is locked — the sim reads
+    /// `DailyPlanEngine.makePlan(now:)` and takes its lessons spine, exactly as Home
+    /// does — and `lessonsPerDay` once reading unlocks, because the capacity
+    /// scenarios deliberately vary post-unlock throughput. Driving the locked day
+    /// from the engine is what makes the pacing assertion a test of B10 rather than
+    /// a restatement of a number the harness picked itself (engine-7-4).
+    /// The learner is taught the target (concept-card exposure), answers every item
+    /// from its true mastery, and forgets overnight. Evidence flows through the real
+    /// `recordReview`, with the selected role passed through as the lesson passes it.
     mutating func run(days: Int, lessonsPerDay: Int = 1, foundationPacing: Bool = false) {
         guard days > 0 else { return }
         let store = driver.store
@@ -330,7 +339,11 @@ struct SimulatedRun {
             var violations: [String] = []
             var checkIns = 0, checkInMisses = 0
             let unlockedAtStart = store.readiness(for: .reading) == .unlocked
-            let count = (foundationPacing && !unlockedAtStart) ? Tuning.foundationLessonsPerDay : lessonsPerDay
+            // The lessons spine the app would show on this day's card. `makePlan`
+            // previews the selection, so asking for it neither logs a selection nor
+            // moves any scheduling state.
+            let planned = DailyPlanEngine(store: store).makePlan(now: driver.now).lessonItem?.target ?? 0
+            let count = (foundationPacing && !unlockedAtStart) ? planned : lessonsPerDay
             for _ in 0..<count {
                 let selector = driver.pipeline.selector
                 let output = driver.select(.smart)
@@ -365,14 +378,15 @@ struct SimulatedRun {
             if unlocked && unlockDay == nil { unlockDay = day }
             if firstVerifiedDay == nil, store.foundationMastered > 0 { firstVerifiedDay = day }
             if store.isGovernorActive { governorDays += 1 }
-            reports.append(report(day: day, lessons: count, target: lastTarget, size: lastSize,
+            reports.append(report(day: day, lessons: count, planned: planned, target: lastTarget, size: lastSize,
                                   checkIns: checkIns, checkInMisses: checkInMisses,
                                   unlockedAtStart: unlockedAtStart, unlocked: unlocked, violations: violations))
             driver.advance(days: 1)
         }
     }
 
-    private func report(day: Int, lessons: Int, target: String?, size: Int, checkIns: Int, checkInMisses: Int,
+    private func report(day: Int, lessons: Int, planned: Int, target: String?, size: Int,
+                        checkIns: Int, checkInMisses: Int,
                         unlockedAtStart: Bool, unlocked: Bool, violations: [String]) -> DayReport {
         let store = driver.store
         let observed = store.concepts.filter { $0.state != .neverObserved }
@@ -384,7 +398,7 @@ struct SimulatedRun {
         let ghostIds = store.concepts
             .filter { $0.state == .mastered && learner.truth($0.id) < 0.6 }
             .map { "\($0.id)(\(String(format: "%.2f", learner.truth($0.id))))" }
-        return DayReport(day: day, lessons: lessons, targetConceptId: target, lessonSize: size,
+        return DayReport(day: day, lessons: lessons, plannedLessons: planned, targetConceptId: target, lessonSize: size,
                          calibrationError: calibration, trueMastered: trueMastered,
                          estimatedMastered: estMastered, verifiedMastered: verified, ghosts: ghostIds.count,
                          checkIns: checkIns, checkInMisses: checkInMisses,

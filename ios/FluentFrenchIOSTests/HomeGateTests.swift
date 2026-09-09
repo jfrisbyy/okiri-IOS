@@ -315,6 +315,21 @@ struct HomeGateTests {
         #expect(HomeCopy.levelBadge(placed: fresh.hasCompletedAssessment, level: fresh.learnerLevel) == "Not placed")
     }
 
+    /// The category rows on the Gap Map and in the deck count the same
+    /// unmastered gaps the overviews label `toLearnLabel`, so they must not
+    /// invent a second name for it ("180 active" under "343 To learn").
+    @Test func categoryCountsUseTheOneToLearnLabel() {
+        let line = HomeCopy.categoryCounts(toLearn: 180, mastered: 12)
+        #expect(line == "180 \(HomeCopy.toLearnLabel.lowercased()) · 12 mastered")
+        #expect(line == "180 to learn · 12 mastered")
+        #expect(!line.contains("active"))
+
+        // VoiceOver does not speak the middle dot, so the spoken form separates
+        // the two counts with a comma instead — same wording either way.
+        let spoken = HomeCopy.categoryCounts(toLearn: 0, mastered: 0, separator: ", ")
+        #expect(spoken == "0 to learn, 0 mastered")
+    }
+
     @Test func subtitleNeverCelebratesAZeroStreak() {
         let target = Tuning.foundationLessonsPerDay
         let zero = HomeCopy.subtitle(streak: 0, dueNow: 0, lessonsToday: 0, lessonTarget: target, placed: true)

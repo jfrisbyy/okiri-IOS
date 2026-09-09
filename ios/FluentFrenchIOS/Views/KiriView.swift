@@ -15,6 +15,7 @@
 //  turns the ambient animation off; the pose and the tap reaction stay.
 //
 
+import Foundation
 import SwiftUI
 
 private extension KiriMood {
@@ -53,6 +54,11 @@ struct KiriView: View {
     @State private var tapMood: KiriMood? = nil
     @State private var bubble: String? = nil
     @State private var didStart = false
+    /// Generation token for the idle-hop chain. `stopIdle()` bumps it when the
+    /// mascot leaves the screen, so the tick already in flight (and any chain a
+    /// quick disappear/reappear left behind) retires instead of animating state
+    /// nothing renders, every few seconds, for the life of the process.
+    @State private var hopGeneration = 0
     /// Mirror of `reduceMotion` the escaping hop loop can read. An `@Environment`
     /// value captured in a closure keeps the value it had when the closure was
     /// made; `@State` reads through live storage, so this stays current.
@@ -78,6 +84,7 @@ struct KiriView: View {
         }
         .frame(width: size, height: size)
         .onAppear(perform: startIdle)
+        .onDisappear(perform: stopIdle)
         .onChange(of: reduceMotion) { _, newValue in motionReduced = newValue }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Kiri, your fox mascot, \(activeMood.accessibilityDescription)")
@@ -159,16 +166,26 @@ struct KiriView: View {
         guard !reduceMotion else { return }
         withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { breathe = true }
         withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) { sway = true }
-        scheduleHop()
+        scheduleHop(generation: hopGeneration)
     }
 
-    private func scheduleHop() {
+    /// Ends the idle loop when the mascot leaves the screen (sign-out, an
+    /// unrecoverable load error, any teardown of the host view). `onAppear`
+    /// starts a fresh chain on the next generation if it comes back.
+    private func stopIdle() {
+        didStart = false
+        hopGeneration &+= 1
+    }
+
+    private func scheduleHop(generation: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 3.5...7.5)) {
+            // The view went away, or a newer chain took over: retire this one.
+            guard didStart, generation == hopGeneration else { return }
             // Re-checked every tick: the learner can switch Reduce Motion on
             // while the app is running, long after startIdle() ran.
-            guard !motionReduced else { scheduleHop(); return }
+            guard !motionReduced else { scheduleHop(generation: generation); return }
             if tapMood == nil { spontaneousHop() }
-            scheduleHop()
+            scheduleHop(generation: generation)
         }
     }
 

@@ -91,9 +91,10 @@ nonisolated enum SnapshotReconciler {
                 // the snapshot's own clock; an apply adopts the row's clock and
                 // saves that). So if they now differ, another device owns the
                 // row, whatever the server timestamp claims — and the correct
-                // reading is the same as for a row that visibly moved.
+                // reading is the same as for a row that visibly moved. "Differ"
+                // is measured at the row's own precision (`isSameClientClock`).
                 if let lastSynced = local.lastSyncedUpdatedAt,
-                   remote.clientUpdatedAt != lastSynced {
+                   !isSameClientClock(remote.clientUpdatedAt, lastSynced) {
                     return local.isDirty ? byClientClock(local: local, remote: remote) : .applyRemote
                 }
                 return local.isDirty ? .pushLocal : .alreadyInSync
@@ -104,6 +105,31 @@ nonisolated enum SnapshotReconciler {
         }
 
         return byClientClock(local: local, remote: remote)
+    }
+
+    /// True when two client clocks are the same clock as far as the cloud row can
+    /// tell. The row carries `clientUpdatedAt` as ISO-8601 with NO fractional
+    /// seconds (`CloudSync.encodeForUpload` uses `.iso8601`), while the sync marker
+    /// keeps the in-memory `Date` at full precision. Comparing them raw therefore
+    /// reported a difference after every single upload — the witness above read
+    /// that as "another device owns this row", and a clean device applied its own
+    /// row back over itself after every lesson, wiping the cached daily plan and
+    /// re-rolling the day (store-7-2). Whole seconds is the precision the two
+    /// values can actually agree on.
+    static func isSameClientClock(_ a: Date, _ b: Date) -> Bool {
+        a.timeIntervalSince1970.rounded(.down) == b.timeIntervalSince1970.rounded(.down)
+    }
+
+    /// True when an upload finished while a reconcile's read of the row was still
+    /// in flight, counted with `CloudSync`'s upload counter (before the read vs
+    /// after it). The pass must then be abandoned rather than decided: its SELECT
+    /// went out before that upload's UPSERT, so it holds the PRE-upload row, while
+    /// the upload's sync markers — saved before the read returned — describe the
+    /// POST-upload one. Together they read as "clean device, row owned by someone
+    /// else", i.e. `.applyRemote`, which rolls the just-finished lesson off the
+    /// device (store-7-1).
+    static func readRacedAnUpload(uploadsBeforeRead: Int, uploadsAfterRead: Int) -> Bool {
+        uploadsBeforeRead != uploadsAfterRead
     }
 
     /// True when this device's record is already the one in the cloud row: no

@@ -626,6 +626,32 @@ struct ConceptSelectorTests {
         #expect(after.items.contains { $0.reason == "This unlocks Concept child-open." })
     }
 
+    /// engine-7-3: that same "This unlocks X" check asks the store whether the
+    /// dependent is teachable once per SELECTED ITEM, and `isTeachable` used to
+    /// rebuild the whole Foundation curriculum on every call — nine rebuilds and
+    /// most of the cost of starting a lesson. The store memoises the answer now, so
+    /// a whole selection reads the content file at most once.
+    @Test func aWholeSelectionReadsTheFoundationContentAtMostOnce() {
+        let now = EngineFixtures.now
+        let store = EngineFixtures.store(concepts: [
+            EngineFixtures.learning("focus", mastery: 0.4),
+            EngineFixtures.concept("child-open", level: .A2, prerequisites: ["focus"]),
+        ], gaps: [])
+        store.gaps = (0..<6).map { i in
+            store.makeCapturedGap(frenchWord: "focus-w\(i)", englishTranslation: "focus-w\(i)-en",
+                                  sourceType: .foundation, conceptId: "focus", now: now)
+        }
+        store.sessionIndex = 1   // not a probe session
+        let counter = ContentBuildCounter()
+        let content = EngineFixtures.syntheticContent(for: ["focus", "child-open"])
+        store.foundationContent = { when in counter.bump(); return content(when) }
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        let unlockItems = output.items.filter { $0.reason == "This unlocks Concept child-open." }
+        #expect(unlockItems.count >= 2, "several items must ask the teachability question for this to bite")
+        #expect(counter.count <= 1, "one selection rebuilt the curriculum \(counter.count)×")
+    }
+
     @Test func smartHeadlineCountsLapsesNotReviews() {
         let now = EngineFixtures.now
         let concept = EngineFixtures.learning("focus", mastery: 0.4)

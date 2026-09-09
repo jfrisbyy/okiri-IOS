@@ -50,6 +50,8 @@ nonisolated struct LessonSessionConfig {
     var remedialSpacing: Int = Tuning.remedialSpacing
     /// Correct answers a gap needs in one lesson to flash "mastered" (a session badge only).
     var masteryTarget: Int = Tuning.masteryTarget
+    /// Word cards the teaching stage may show before practice (never below a lesson's item count).
+    var teachingWordCards: Int = Tuning.teachingWordCards
     /// Concept weight every capstone answer carries.
     var capstoneWeight: Double = Tuning.capstoneWeight
     /// Builds remedials and applies the in-session release.
@@ -177,6 +179,11 @@ nonisolated struct LessonSummary: Equatable {
     /// goal read, and a lesson answered almost to the end is not "nothing done today".
     /// One abandoned early — and every quit — stays `abandoned`; the evidence, the
     /// per-answer XP and the minutes are recorded either way.
+    ///
+    /// This rule is the ONLY place a lesson's completion is decided (lesson-7-4):
+    /// whether the learner ended it with "Finish", "See recap" or the X does not
+    /// change what the store books — `LessonSession.quit()` settles the end reason
+    /// and both paths ask this.
     var isCompleted: Bool {
         switch end {
         case .finished: return true
@@ -334,15 +341,37 @@ nonisolated struct LessonSession {
     /// The lesson's items the learner may be shown the meaning of, in lesson order.
     var teachableGaps: [GapItem] { lesson.gaps.filter(mayTeach) }
 
+    /// The items the teaching stage shows a word card for.
+    ///
+    /// Every teachable item is an item this lesson will ASK about, so a card the cap
+    /// drops means the learner meets that word for the first time as a question — a
+    /// wrong guess there costs a heart and books a lapse on a word nothing taught.
+    /// `teachingWordCards` is therefore never below a lesson's item count
+    /// (`Tuning.teachingWordCards`); the cap only bites on a lesson bigger than any
+    /// the app builds.
+    var teachingGaps: [GapItem] { Array(teachableGaps.prefix(max(0, config.teachingWordCards))) }
+
     /// The questions the lesson planned: the live schedule without the remedials a
     /// miss inserted (never below what has already been answered).
     var plannedCount: Int {
         max(schedule.filter { !$0.isRemedial }.count, plannedAnswered)
     }
 
+    /// How the lesson would be booked if it ended right now — the reason it already
+    /// has, or the one a quit would give it (`quit()`).
+    ///
+    /// Reading it before the end is what lets the quit confirmation tell the truth
+    /// about whether the lesson still counts toward today.
+    var endIfEndedNow: LessonEndReason {
+        if let end { return end }
+        // The last question has been answered: the learner is on the same screen the
+        // "Finish" button leads from, so closing it is finishing, not abandoning.
+        return (isStarted && isLast && currentAnswered) ? .finished : .quit
+    }
+
     var summary: LessonSummary {
         let accuracy = scored > 0 ? Double(scoredCorrect) / Double(scored) : 0
-        return LessonSummary(end: end ?? .quit, answered: answered, scored: scored, scoredCorrect: scoredCorrect,
+        return LessonSummary(end: endIfEndedNow, answered: answered, scored: scored, scoredCorrect: scoredCorrect,
                              planned: plannedCount, plannedAnswered: plannedAnswered,
                              accuracy: accuracy, accuracyPercent: Int((accuracy * 100).rounded()),
                              xp: xp, bestCombo: bestCombo, masteredCount: masteredGapIds.count,
@@ -455,8 +484,11 @@ nonisolated struct LessonSession {
         return false
     }
 
+    /// The learner ended the lesson themselves. A lesson already ended (hearts out,
+    /// finished) keeps its reason; one whose last question is already answered is
+    /// `.finished`, not a quit (`endIfEndedNow`).
     mutating func quit() {
-        if end == nil { end = .quit }
+        end = endIfEndedNow
     }
 
     // MARK: Grading
@@ -721,13 +753,9 @@ nonisolated struct LessonSession {
     static func feedback(for q: LessonQuestion, correct: Bool, verdict: AnswerVerdict?,
                          revealed: Bool, combo: Int) -> LessonFeedback {
         let answer = q.correctAnswer
-        var alternatives: [String] = []
-        if q.kind.isTyped {
-            let expected = AnswerGrader.normalize(answer)
-            alternatives = AnswerGrader.acceptedForms(for: q.gap, expected: answer, kind: q.kind)
-                .filter { $0.normalized != expected }
-                .map { $0.display }
-        }
+        // Only the forms that are genuinely another way to write the answer: a
+        // separator-only variant is accepted when typed but never advertised.
+        let alternatives = AnswerGrader.displayAlternatives(for: q.gap, expected: answer, kind: q.kind)
         let speech = LessonSpeech.spokenAnswer(for: q)
         if revealed {
             return LessonFeedback(tone: .revealed, title: "The answer is “\(answer)”", detail: q.explanation,

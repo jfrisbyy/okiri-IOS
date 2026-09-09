@@ -6,6 +6,7 @@
 //  insights — mirroring the Expo app's profile additions.
 //
 
+import Foundation
 import SwiftUI
 
 struct ProfileView: View {

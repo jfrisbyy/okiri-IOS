@@ -16,6 +16,7 @@
 //  `ReadinessCopy`, decided from real data (D12/D19).
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 import Combine

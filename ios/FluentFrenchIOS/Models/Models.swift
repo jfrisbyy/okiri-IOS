@@ -5,6 +5,7 @@
 //  Core domain models mirroring the Expo app's type system.
 //
 
+import Foundation
 import SwiftUI
 
 // MARK: - Enums

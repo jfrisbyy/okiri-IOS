@@ -5,6 +5,7 @@
 //  Central design tokens mirroring the Expo app's warm cream/orange palette.
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 

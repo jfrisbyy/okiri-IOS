@@ -9,6 +9,7 @@
 //  intents; they never decide what an answer is worth.
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 import Observation

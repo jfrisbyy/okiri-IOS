@@ -6,6 +6,7 @@
 //  category chips, and the audio "speak" button.
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 

@@ -12,6 +12,7 @@
 //  without reloading — playback position and speed carry over seamlessly.
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 import WebKit

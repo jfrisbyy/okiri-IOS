@@ -6,6 +6,7 @@
 //  built-in collection of stories, dialogues and articles used in Library view.
 //
 
+import Foundation
 import SwiftUI
 
 nonisolated enum ReadDifficulty: String, CaseIterable, Identifiable {

@@ -6,6 +6,7 @@
 //  and the computed analytics the UI reads (schedule, retention, streak).
 //
 
+import Foundation
 import SwiftUI
 import Observation
 

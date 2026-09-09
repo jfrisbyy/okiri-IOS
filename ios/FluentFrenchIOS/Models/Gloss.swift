@@ -182,6 +182,13 @@ nonisolated struct CaptureDraft: Hashable, Identifiable {
     /// disable the save button when this is false instead of letting it no-op.
     var isCapturable: Bool { CaptureBuilder.isAcceptableHeadword(frenchWord) }
 
+    /// True when the meaning is the headword itself ("restaurant" → "restaurant").
+    /// The store refuses such a draft, so capture surfaces say why instead of
+    /// offering a save that cannot land (read-8-2).
+    var isSelfGlossed: Bool {
+        CaptureBuilder.isSelfGlossed(headword: frenchWord, meaning: englishTranslation)
+    }
+
     /// A draft built from a real gloss: every dictionary field carried across, the
     /// sentence the word was met in as context, and the source's level.
     init(gloss: WordGloss, sourceType: SourceType, sourceTab: String,

@@ -293,6 +293,21 @@ struct AssessmentView: View {
                 Text(q.explanation).scaledFont(14).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // The item's own example, in French and English (firstrun-8-1). Almost
+            // every placement item is a content probe, and those carry no authored
+            // `explanation` — without this the reveal is a bare "Answer: la" and a
+            // missed item teaches nothing.
+            if !q.exampleSentence.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(q.exampleSentence).scaledFont(14, weight: .medium).foregroundStyle(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !q.exampleTranslation.isEmpty {
+                        Text(q.exampleTranslation).scaledFont(13).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Space.lg)

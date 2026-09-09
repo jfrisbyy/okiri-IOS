@@ -148,6 +148,42 @@ nonisolated enum CaptureBuilder {
         return isTypeableHeadword(trimmed) && !spansSentences(trimmed)
     }
 
+    // MARK: Meaning shape
+
+    /// Leading English articles a meaning may carry ("the restaurant").
+    private static let englishArticles: [String] = ["the ", "a ", "an "]
+
+    /// True when the meaning a headword would be saved with IS the headword: a
+    /// French word spelled the same in English, glossed with itself ("restaurant"
+    /// → "restaurant", "Paris" → "Paris", "important" → "important"). Every format
+    /// a lesson can build for such a card hands the answer over — "What does
+    /// “restaurant” mean?" answered by "restaurant", "“restaurant” means
+    /// “restaurant”.", "Translate to French: restaurant" — so the card would book
+    /// FSRS progress and concept evidence while testing nothing (read-8-2).
+    /// An EMPTY meaning is not self-glossed: a word saved offline to be translated
+    /// later is a legitimate card.
+    static func isSelfGlossed(headword: String, meaning: String) -> Bool {
+        let word = comparisonForm(headword, droppingEnglishArticle: false)
+        let gloss = comparisonForm(meaning, droppingEnglishArticle: true)
+        guard !word.isEmpty, !gloss.isEmpty else { return false }
+        return word == gloss
+    }
+
+    /// Case-, accent- and tag-insensitive comparison form, so "Paris"/"paris" and
+    /// "important"/"important (adj.)" read as the same word. The English article on
+    /// the MEANING is dropped ("restaurant" → "the restaurant" gives itself away
+    /// just the same); the French article on the headword is NOT — "le restaurant"
+    /// → "the restaurant" teaches the gender, which is a card worth having.
+    private static func comparisonForm(_ value: String, droppingEnglishArticle: Bool) -> String {
+        let normalized = AnswerGrader.fold(AnswerGrader.normalize(value))
+        guard droppingEnglishArticle else { return normalized }
+        for article in englishArticles where normalized.hasPrefix(article) {
+            let rest = String(normalized.dropFirst(article.count)).trimmingCharacters(in: .whitespaces)
+            if !rest.isEmpty { return rest }
+        }
+        return normalized
+    }
+
     static func rank(_ level: CEFRLevel) -> Int {
         CEFRLevel.allCases.firstIndex(of: level) ?? 0
     }

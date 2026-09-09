@@ -80,8 +80,14 @@ struct SpeakView: View {
         .onChange(of: recorder.interruptedSeconds) { _, seconds in
             handleInterruption(seconds)
         }
+        // Only a real backgrounding stops capture. `.inactive` also arrives for a
+        // Control Centre pull-down, the app switcher preview, and losing focus on
+        // iPad — none of which stop the recorder — so treating it as an
+        // interruption would truncate a five-minute answer seconds in and grade
+        // the fragment (talkmedia-8-2). Calls and Siri are covered by
+        // `AVAudioSession.interruptionNotification`, which the recorder observes.
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { recorder.noteInterrupted() }
+            if phase == .background { recorder.noteInterrupted() }
         }
         .onChange(of: mode) { _, _ in
             if recorder.isRecording { recorder.cancel() }

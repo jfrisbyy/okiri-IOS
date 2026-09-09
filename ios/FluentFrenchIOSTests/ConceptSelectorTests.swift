@@ -39,6 +39,45 @@ struct ConceptSelectorTests {
         #expect(fi != nil && pi != nil && fi! < pi!)
     }
 
+    /// engine-8-1: frontier fit is the axis that is supposed to order material by
+    /// level, and it used to be one-sided — a flat 1.0 for EVERY never-observed
+    /// concept, and a discount only for material BELOW the learner. An A1 and a C1
+    /// frontier skill were indistinguishable on it, so a declared beginner was taught
+    /// B1 grammar in week two while a third of the core A1 skills were never a lesson
+    /// target in sixty days. A concept at the learner's own band must win.
+    @Test func frontierFitPrefersTheLearnersOwnBandOverMaterialAboveIt() {
+        // Four never-observed concepts, no prerequisites, two fresh cards each due at
+        // exactly `now` and no dependents: urgency, leverage, confusion and the repeat
+        // damper are all zero for every one of them, so the score IS the frontier term
+        // and the only thing separating them is the CEFR band.
+        let bands: [(String, CEFRLevel)] = [("at-a1", .A1), ("at-a2", .A2), ("at-b1", .B1), ("at-b2", .B2)]
+        let concepts = bands.map { EngineFixtures.concept($0.0, level: $0.1) }
+        let gaps = EngineFixtures.foundationGaps(for: concepts, perConcept: 2)
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps, theta: -1.0)   // reads A1
+        let selector = ConceptSelector(store: store)
+        func score(_ id: String) -> Double { selector.score(store.concept(id)!, now: EngineFixtures.now) }
+        #expect(selector.learnerLevel() == .A1)
+        #expect(concepts.allSatisfy { selector.isFrontier($0) }, "all four are frontier concepts")
+
+        #expect(selector.rankedEligible(now: EngineFixtures.now).first?.concept.id == "at-a1",
+                "the beginner's own band leads")
+        #expect(score("at-a1") > score("at-b1"), "an at-level skill outranks one two bands above it")
+        #expect(score("at-a1") > score("at-a2"), "and one a single band above it")
+        #expect(score("at-a2") == score("at-b1") && score("at-b1") == score("at-b2"),
+                "above the learner the term is spent: B1 and C-level material are equally out of reach")
+
+        // The term follows the learner: the same taxonomy re-ranks when ability moves,
+        // and material the learner has passed is discounted gently rather than
+        // preferred (it used to score a flat 1.0 whenever it was still unobserved).
+        store.abilityTheta = 1.0                                   // reads B1
+        #expect(selector.learnerLevel() == .B1)
+        let later = selector.rankedEligible(now: EngineFixtures.now).map { $0.concept.id }
+        #expect(later == ["at-b1", "at-a2", "at-a1", "at-b2"], "ranked: \(later)")
+        #expect(score("at-b1") > score("at-b2"), "a band above the learner still earns nothing")
+        #expect(score("at-a2") > score("at-a1"), "the taper below is ordered, not flat")
+        #expect(score("at-a1") > 0, "and it does not write off everything the learner has passed")
+    }
+
     @Test func learnerLevelFollowsAbility() {
         let store = EngineFixtures.store()
         let selector = ConceptSelector(store: store)
@@ -47,7 +86,17 @@ struct ConceptSelectorTests {
             store.abilityTheta = theta
             #expect(selector.learnerLevel() == level, "theta \(theta) → \(level)")
             #expect(store.learnerLevel == level, "the store facade reports the same band")
+            // store-8-4: the mapping reads θ and nothing else, so the store facade
+            // does not have to build (and index) a selector to answer.
+            #expect(ConceptSelector.level(forTheta: theta) == level,
+                    "the band comes from θ alone, with no selector to build")
         }
+
+        // The band must not move when the taxonomy does — only θ decides it.
+        store.abilityTheta = 1.0
+        let before = store.learnerLevel
+        store.concepts.removeAll()
+        #expect(store.learnerLevel == before, "concept evidence is not an input to the level")
     }
 
     // MARK: Smart mode

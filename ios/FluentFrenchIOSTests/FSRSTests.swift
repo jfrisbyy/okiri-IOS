@@ -67,14 +67,48 @@ struct FSRSTests {
                 }
             }
         }
-        // Harder cards lose more; a lapse at low recall (the expected outcome) keeps more.
-        let easyCard = FSRS.lapseStability(difficulty: 2, stability: 10, retrievability: 0.9)
-        let hardCard = FSRS.lapseStability(difficulty: 9, stability: 10, retrievability: 0.9)
+        // Harder cards lose more; a lapse at low recall (the expected outcome) keeps
+        // more. Read below `Tuning.fsrsPostLapseMaxDays`, where the shaping is what
+        // decides the interval rather than the absolute ceiling.
+        let short = Tuning.fsrsPostLapseMaxDays / 2
+        let easyCard = FSRS.lapseStability(difficulty: 2, stability: short, retrievability: 0.9)
+        let hardCard = FSRS.lapseStability(difficulty: 9, stability: short, retrievability: 0.9)
         #expect(hardCard < easyCard)
-        let expected = FSRS.lapseStability(difficulty: 5, stability: 10, retrievability: 0.3)
-        let surprising = FSRS.lapseStability(difficulty: 5, stability: 10, retrievability: 0.99)
+        let expected = FSRS.lapseStability(difficulty: 5, stability: short, retrievability: 0.3)
+        let surprising = FSRS.lapseStability(difficulty: 5, stability: short, retrievability: 0.99)
         #expect(surprising < expected)
         #expect(Tuning.fsrsLapseMaxRatio < 1 && Tuning.fsrsLapseFactorBase < Tuning.fsrsLapseMaxRatio)
+    }
+
+    /// engine-8-2: the lapse is a FRACTION of the old stability, so without an
+    /// absolute bound a card drilled past ~10 reviews came back months later — and
+    /// nothing else recovers it: it is not due, `ConceptSelector.isReviewCandidate`
+    /// wants `nextReviewAt` inside the due window, and `weakestFirst` ranks it last
+    /// because its recall probability is still ~0.99 for weeks.
+    @Test func aForgottenCardCanNeverHideBeyondThePostLapseCeiling() {
+        // Drill the card the way a real learner would: answer it correctly every
+        // time it falls due until its interval is measured in months.
+        var state = FSRS.makeInitialState(grade: .good, now: now)
+        var clock = now
+        for _ in 0..<10 {
+            clock = state.dueAt
+            state = FSRS.review(state: state, grade: .good, now: clock)
+        }
+        #expect(intervalDays(state) > 60, "the card is over-learned (interval \(intervalDays(state)) d)")
+
+        clock = state.dueAt
+        let lapsed = FSRS.review(state: state, grade: .again, now: clock)
+        #expect(lapsed.stability <= Tuning.fsrsPostLapseMaxDays + 1e-9,
+                "post-lapse stability \(lapsed.stability) d escaped the ceiling")
+        #expect(intervalDays(lapsed) <= Tuning.fsrsPostLapseMaxDays + 1e-9,
+                "a forgotten card must come back inside \(Tuning.fsrsPostLapseMaxDays) days, not \(intervalDays(lapsed))")
+        // The ceiling only ever shortens: the lapse is still strictly sooner than
+        // the success it replaced, at every stability.
+        for stability in [0.5, 2.0, 7.0, 30.0, 120.0, 400.0] {
+            let s = FSRS.lapseStability(difficulty: 5, stability: stability, retrievability: 0.9)
+            #expect(s < stability)
+            #expect(s <= Tuning.fsrsPostLapseMaxDays + 1e-9)
+        }
     }
 
     @Test func aMatureCardMissedAtItsDueDateIsRescheduledWellInsideItsOldInterval() {

@@ -13,6 +13,7 @@ import SwiftUI
 
 struct GapCardView: View {
     let gap: GapItem
+    @Environment(AppStore.self) private var store
     @State private var expanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -33,7 +34,17 @@ struct GapCardView: View {
         gap.consecutiveCorrect >= 3 ? Theme.success : (gap.consecutiveCorrect >= 1 ? Theme.warning : Theme.border)
     }
 
+    /// The card's due chip, under the SAME rule as every count and every lesson
+    /// (firstrun-8-2). A Foundation item whose concept is still waiting on its
+    /// prerequisites is excluded from `store.dueNow` and rejected by
+    /// `ConceptSelector.isPracticable`, so no button can offer it — stamping it
+    /// "7d overdue" in red would point the learner at work the app will not give
+    /// them. It says what is actually true instead: it is waiting on earlier
+    /// skills.
     private var urgency: (text: String, color: Color)? {
+        if store.isPrerequisiteBlocked(gap) {
+            return ("Waiting on earlier skills", Theme.textMuted)
+        }
         let now = Date()
         if gap.nextReviewAt < now.addingTimeInterval(-86_400) {
             let days = Int(now.timeIntervalSince(gap.nextReviewAt) / 86_400)
@@ -129,6 +140,13 @@ struct GapCardView: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
+                    // The memory panel below reads "overdue" from the raw schedule;
+                    // for a blocked item that date is not a promise the app keeps,
+                    // so the card says why before it shows the numbers (firstrun-8-2).
+                    if store.isPrerequisiteBlocked(gap) {
+                        infoBox(label: "Waiting on earlier skills",
+                                text: "This belongs to a skill that builds on ones you're still learning. Your lessons bring it back once those are solid.")
+                    }
                     if !gap.exampleTranslation.isEmpty {
                         infoBox(label: "Translation", text: gap.exampleTranslation)
                     }

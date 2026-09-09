@@ -460,9 +460,21 @@ final class LessonViewModel {
 
     /// "Practice these now": a scoped lesson over the missed items replaces this one
     /// in place; an empty outcome shows the pipeline's own headline.
+    ///
+    /// The missed items lead, and `followUpGapIds` tops the scope up with their own
+    /// concepts' other cards (lesson-8-4): a one-item follow-up has no French to
+    /// build a reversed round from and no meanings to draw distractors from, so it
+    /// would ask the same question twice against "hello" and "thank you".
     func practiceMissed(store: AppStore) {
         guard let summary, !summary.missed.isEmpty else { return }
-        switch LessonPipeline(store: store).outcome(for: .gapIds(summary.missedGapIds, name: "Missed items")) {
+        // Cards this lesson already drilled correctly must not come back as fill-ins:
+        // re-grading them seconds later feeds FSRS a near-zero interval and wastes the
+        // follow-up on material the learner just proved. The misses themselves stay in
+        // the pool — they lead the scope and carry the concepts the top-up draws from.
+        let alreadyReviewed = Set(lesson.gaps.map(\.id)).subtracting(summary.missedGapIds)
+        let ids = LessonScheduler.followUpGapIds(missed: summary.missedGapIds,
+                                                 from: store.gaps.filter { !alreadyReviewed.contains($0.id) })
+        switch LessonPipeline(store: store).outcome(for: .gapIds(ids, name: "Missed items")) {
         case .lesson(let next):
             restart(with: next)
         case .empty(let headline):

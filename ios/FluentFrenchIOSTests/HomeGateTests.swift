@@ -286,6 +286,49 @@ struct HomeGateTests {
         #expect(s.lockedChosenModalities.isEmpty)
     }
 
+    /// Round 8 (firstrun-8-4): crossing the demonstrated-minutes bar opens the gate
+    /// at the moment it is crossed even when the day's plan carries no `.unlock`
+    /// row — the common shape once Reading is itself one of the chosen activities
+    /// (a lessons spine + a Reading minutes row, with Listening only a locked row).
+    @Test func crossingTheMinutesBarOpensTheGateWithNoUnlockItemInThePlan() {
+        let s = store(coverage: config.readingUnlock)
+        s.preferences = UserPreferences(modalities: [.reading, .listening], timeBudget: .standard,
+                                        daysPerWeekGoal: nil)
+        s.refreshUnlocks(now: now)   // reading recorded open, as a lesson end does
+        #expect(s.unlockedModalities == [LearningModality.reading.rawValue])
+
+        let plan = s.todaysPlan(now: now)
+        #expect(plan.unlockItem == nil, "reading is chosen and open, so the day is a minutes row, not an unlock row")
+        #expect(plan.minuteItems.contains { $0.modality == .reading })
+        #expect(s.lockedChosenModalities == [.listening], "the promise is a locked row, not a plan item")
+
+        let bar = config.higherDemonstratedMinutes
+        s.recordActivityMinutes(.reading, minutes: bar - 1, now: now)
+        #expect(!s.unlockedModalities.contains(LearningModality.listening.rawValue))
+
+        // The session that crosses the bar records the unlock and re-plans the day,
+        // so Listening becomes an activity of today's plan right away.
+        #expect(s.creditActivity(.reading, activeSeconds: 60, now: now) == 1)
+        #expect(s.totalMinutes(.reading) == bar)
+        #expect(s.unlockedModalities.contains(LearningModality.listening.rawValue))
+        #expect(s.lockedChosenModalities.isEmpty)
+        #expect(s.dailyPlanOfRecord?.minuteItems.contains { $0.modality == .listening } == true)
+    }
+
+    /// …and an ordinary session that opens nothing leaves the plan of record alone.
+    @Test func anActivitySessionThatOpensNothingDoesNotRePlanTheDay() {
+        let s = store(coverage: config.readingUnlock)
+        s.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        s.refreshUnlocks(now: now)
+        let before = s.todaysPlan(now: now)
+        let openBefore = s.unlockedModalities
+
+        #expect(s.creditActivity(.reading, activeSeconds: 120, now: now) == 2)
+        #expect(s.unlockedModalities == openBefore, "two minutes opens nothing")
+        #expect(s.dailyPlanOfRecord?.rationale == before.rationale)
+        #expect(s.dailyPlanOfRecord?.minuteItems.map { $0.target } == before.minuteItems.map { $0.target })
+    }
+
     // MARK: D19 — retention is never celebrated before any review
 
     @Test func retentionEvidenceNeedsAtLeastOneReviewedVisibleGap() {
@@ -387,6 +430,35 @@ struct HomeGateTests {
         #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: 1, lessonTarget: 0, placed: true)
                 == "Day 1 done — see you tomorrow.")
         #expect(HomeCopy.lessonsLeft(0) == "1 more lesson" && HomeCopy.lessonsLeft(2) == "2 more lessons")
+    }
+
+    /// Round 8 (firstrun-8-3): the day's lessons being done is not the queue being
+    /// empty. The staggered Foundation seed and every rescheduled miss leave cards
+    /// due on the same screen, so "see you tomorrow" may not sit above a "N due
+    /// now" chip.
+    @Test func subtitleNamesWhatIsStillDueWhenTheDayIsDone() {
+        let target = Tuning.foundationLessonsPerDay
+
+        // Day one: three lessons of `Tuning.lessonSize` cannot clear a ~24-item seed.
+        let dayOne = HomeCopy.subtitle(streak: 1, dueNow: 5, lessonsToday: target,
+                                       lessonTarget: target, placed: true)
+        #expect(dayOne == "Day 1 done — 5 still due if you want more.")
+        #expect(!dayOne.contains("see you tomorrow"), "not while cards are due on the same screen")
+
+        // Streak-less learner who finished the day's lessons: same rule, and the
+        // "tomorrow makes it a streak" nudge survives when nothing is left.
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: 3, lessonsToday: target,
+                                  lessonTarget: target, placed: true)
+                == "Today's lessons are done — 3 still due if you want more.")
+        #expect(HomeCopy.subtitle(streak: 0, dueNow: 0, lessonsToday: target,
+                                  lessonTarget: target, placed: true)
+                == "Today's lessons are done — tomorrow makes it a streak.")
+
+        // An empty queue is the only case that really is "see you tomorrow".
+        #expect(HomeCopy.subtitle(streak: 1, dueNow: 0, lessonsToday: target,
+                                  lessonTarget: target, placed: true)
+                == "Day 1 done — see you tomorrow.")
+        #expect(HomeCopy.stillDue(0) == " — see you tomorrow." && HomeCopy.stillDue(1) == " — 1 still due if you want more.")
     }
 
     @Test func kiriMoodComesFromRealData() {

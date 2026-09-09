@@ -146,6 +146,37 @@ struct PlacementFlowTests {
         #expect(!a1Result.masteredConceptIds.isEmpty && !a1Result.inferredConceptIds.isEmpty)
     }
 
+    /// Round 8 (firstrun-8-1): a missed placement item has to teach something. Content
+    /// probes carry no authored `explanation` — their teaching value is the example —
+    /// so every item the learner can be asked has to reach the reveal panel with at
+    /// least one of the two, and a probe's example has to survive `questions(fromProbes:)`.
+    @Test func everyPlacementItemCanExplainItselfOnReveal() throws {
+        // The example travels from the content probe onto the question (both halves).
+        let s = EngineFixtures.store()
+        let synthetic = AssessmentService.contentBank(concepts: s.concepts, probes: EngineFixtures.syntheticProbes)
+        #expect(!synthetic.isEmpty)
+        for q in synthetic {
+            let cid = try #require(q.conceptId)
+            #expect(q.exampleSentence.hasPrefix("\(cid)-probe-") && q.exampleSentence.hasSuffix("-ex"),
+                    "\(cid): the probe's example is dropped")
+            #expect(q.exampleTranslation.hasSuffix("-exEn"), "\(cid): the example translation is dropped")
+        }
+
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the shipped reveal check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let bank = AssessmentService.placementBank(concepts: s.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+        for q in bank {
+            #expect(!q.explanation.isEmpty || !q.exampleSentence.isEmpty,
+                    "\(q.conceptId ?? q.french): nothing to show under \"Answer: \(q.correctAnswer)\"")
+            if !q.exampleSentence.isEmpty {
+                #expect(!q.exampleTranslation.isEmpty, "\(q.french): a French example with no translation")
+            }
+        }
+    }
+
     /// Round 3: a learner who answers everything correctly has to be able to reach
     /// the top band. Band 4 has no taxonomy concept, so the bank holds only a couple
     /// of hand items there — fewer than `placementProbesPerConcept` — and without the

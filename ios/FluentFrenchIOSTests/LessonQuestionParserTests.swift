@@ -336,4 +336,66 @@ struct LessonQuestionParserTests {
         #expect(LessonQuestionParser.isContentForm("pain", of: pain, kind: .fillBlank))
         #expect(!LessonQuestionParser.isContentForm("pains", of: pain, kind: .fillBlank))
     }
+
+    /// lesson-8-1: the blank form runs the other way too. "mains" fills the hole in
+    /// "Lave-toi les _____.", but it is not an answer to "Translate to French: hand",
+    /// and an item built on it would state the plural and explain it as "mains — hand".
+    @Test func aiTranslationAnswersMustBeTheHeadwordNotTheBlankForm() throws {
+        var hand = gap("h")
+        hand.frenchWord = "la main"
+        hand.englishTranslation = "hand"
+        hand.exampleSentence = "Lave-toi les mains."
+        hand.blankForm = "mains"
+        hand.acceptedAnswers = ["mains"]
+
+        #expect(!LessonQuestionParser.isContentForm("mains", of: hand, kind: .translation),
+                "the sentence's plural is not the translation of the headword")
+        #expect(LessonQuestionParser.isContentForm("la main", of: hand, kind: .translation))
+        #expect(LessonQuestionParser.isContentForm("mains", of: hand, kind: .fillBlank),
+                "it is still the answer to its own blank")
+
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"translation","statement":"hand","answer":"mains"},
+          {"wordIndex":0,"kind":"translation","statement":"hand","answer":"la main"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [hand], optionCount: 4, seed: 5)
+        #expect(batch.rejected == 1)
+        let q = try #require(batch.questions.first)
+        #expect(q.correctAnswer == "la main" && q.explanation == "la main — hand")
+
+        // The blank form that IS the headword modulo its article is untouched.
+        var bread = gap("b")
+        bread.frenchWord = "le pain"
+        bread.englishTranslation = "bread"
+        bread.exampleSentence = "J'aime le pain."
+        #expect(LessonQuestionParser.isContentForm("pain", of: bread, kind: .translation))
+    }
+
+    /// lesson-8-3: the typed screen offers ONE text field and the explanation fills
+    /// every hole with the one answer, so a model sentence with two blanks is not a
+    /// question — the gap keeps the content's own blanked prompt instead.
+    @Test func aiFillBlankPromptsMustShowExactlyOneBlank() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"_____ parle et _____ écoute.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je ___ ici.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je ______ ici.","answer":"x-fr"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [gap("x")], optionCount: 4, seed: 6)
+        #expect(batch.questions.allSatisfy { $0.prompt == "_____ example" },
+                "each falls back to the content's own single-blank prompt")
+        #expect(batch.questions.allSatisfy { AnswerGrader.hasSingleBlank($0.prompt) })
+        #expect(batch.questions.allSatisfy { !AnswerGrader.isCloze(LessonSpeech.spokenAnswer(for: $0) ?? "") },
+                "nothing read back with a hole still in it")
+
+        // One blank, spelled the app's way, is still accepted as the model wrote it.
+        let ok = LessonQuestionParser.parse("""
+        {"questions":[{"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"x-fr"}]}
+        """, gaps: [gap("x")], optionCount: 4, seed: 6)
+        let q = try #require(ok.questions.first)
+        #expect(q.prompt == "Je _____ ici." && q.explanation == "Je x-fr ici.")
+    }
 }

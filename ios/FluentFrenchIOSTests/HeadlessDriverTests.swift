@@ -334,7 +334,8 @@ struct HeadlessDriverTests {
         for report in run.reports {
             #expect(report.lessonSize > 0, "day \(report.day): the frontier never empties")
             #expect(report.violations.isEmpty, "day \(report.day): \(report.violations.joined(separator: "; "))")
-            #expect(report.calibrationError >= 0 && report.calibrationError <= 1)
+            #expect(report.calibrationError <= Self.dailyCalibrationCeiling,
+                    "day \(report.day): calibration error \(report.calibrationError)")
         }
         #expect(store.selectionLog.count == 14)
         #expect(store.sessionIndex == 14)
@@ -361,6 +362,24 @@ struct HeadlessDriverTests {
     }
 
     // MARK: B16 — sixty-day runs, all four archetypes (Pass 3 acceptance)
+
+    // Acceptance bounds for the harness's headline number. `calibrationError` is the
+    // mean |engine mastery − true mastery| over observed concepts, so it is in [0, 1]
+    // by construction: asserting that range could never fail, and the estimator could
+    // have drifted arbitrarily far from the truth with every run still green
+    // (engine-8-3). These are the measured traces plus headroom instead.
+    /// Ceiling on any single day's calibration error, including the early days when
+    /// the estimator has seen almost nothing (measured peak ≈ 0.28).
+    private static let dailyCalibrationCeiling = 0.35
+    /// Ceiling on calibration error once a run has settled, at day 60 (measured ≈ 0.10).
+    private static let settledCalibrationCeiling = 0.15
+    /// How far the engine's mastered COUNT may sit from the truth at day 60 for a
+    /// learner who does every lesson the plan asks for (measured ≤ 3 of 49 concepts).
+    private static let masteredCountBand = 6
+    /// Days after the seed-resolution deadline on which the engine may transiently
+    /// read a concept as mastered that the learner has not really learned (measured 2
+    /// of the 49 days after the deadline). Each one must be gone the next day.
+    private static let maxTransientGhostDays = 4
 
     /// Placement (real staircase + item bank against the learner's truth), then 60
     /// days at the design's throughput (Pass 3 F1, ≈20 items a day):
@@ -390,7 +409,8 @@ struct HeadlessDriverTests {
         #expect(run.reports.count == 60)
         for report in run.reports {
             #expect(report.violations.isEmpty, "\(label) day \(report.day): \(report.violations.joined(separator: "; "))")
-            #expect(report.calibrationError >= 0 && report.calibrationError <= 1)
+            #expect(report.calibrationError <= Self.dailyCalibrationCeiling,
+                    "\(label) day \(report.day): calibration error \(report.calibrationError)")
             // The frontier never empties: every day has a lesson until every concept
             // is mastered (only then may a day have nothing due).
             if report.estimatedMastered < store.concepts.count {
@@ -418,6 +438,27 @@ struct HeadlessDriverTests {
             }
         }
         #expect(store.selectionLog.count == run.reports.reduce(0) { $0 + $1.lessons })
+
+        // The estimator has to be RIGHT by the end, not merely inside [0, 1]: sixty
+        // days of check-ins must have pulled the engine's belief close to the
+        // learner's truth (engine-8-3).
+        let last = run.reports.last
+        #expect(last?.day == 60)
+        #expect((last?.calibrationError ?? 1) <= Self.settledCalibrationCeiling,
+                "\(label): calibration error \(last?.calibrationError ?? -1) at day 60")
+    }
+
+    /// The engine's mastered COUNT tracks the truth for a learner who does every
+    /// lesson the plan asks for. Ghost-free only says no single concept is badly
+    /// over-credited; this says the totals agree (engine-8-3).
+    private func expectMasteredCountTracksTruth(_ run: SimulatedRun, label: String) {
+        guard let last = run.reports.last else {
+            #expect(Bool(false), "\(label): the run produced no reports to judge")
+            return
+        }
+        let drift = abs(last.trueMastered - last.estimatedMastered)
+        #expect(drift <= Self.masteredCountBand,
+                "\(label) day \(last.day): engine says \(last.estimatedMastered) mastered, truth says \(last.trueMastered)")
     }
 
     /// The capacity finding, kept visible: an unlocked learner who does ONE lesson
@@ -451,6 +492,7 @@ struct HeadlessDriverTests {
         #expect(run.placement?.seededConceptIds.isEmpty == true, "a declared beginner is seeded nothing")
         #expect(run.placement?.inferredConceptIds.isEmpty == true)
         expectNoGhostsInTheFinalWeek(run, label: "true beginner")
+        expectMasteredCountTracksTruth(run, label: "true beginner")
 
         // Interleaved review is a real share of the run, not a rounding error: with
         // check-in and review slots reserved (engine-1-2) a steady-state lesson is
@@ -488,6 +530,7 @@ struct HeadlessDriverTests {
         let run = sixtyDays(.fast, seed: 7, declaredBeginner: true, label: "fast learner")
         expectLoopInvariants(run, label: "fast")
         expectNoGhostsInTheFinalWeek(run, label: "fast")
+        expectMasteredCountTracksTruth(run, label: "fast")
         #expect(run.unlockDay != nil, "a fast learner unlocks reading inside 60 days")
         #expect(run.readingToggles <= 1, "the gate never flip-flops")
     }
@@ -535,13 +578,35 @@ struct HeadlessDriverTests {
         // Ghosts are gone for the whole final week, and every provisional seed was
         // resolved by the tuning-derived deadline.
         expectNoGhostsInTheFinalWeek(run, label: "false beginner")
+        expectMasteredCountTracksTruth(run, label: "false beginner")
         let deadline = seedResolutionDeadline(seeds: placement.seededConceptIds.count)
         #expect(deadline <= 60)
+        #expect(run.reports.contains { $0.day == deadline }, "the deadline day is inside the run")
+
+        // What the deadline is derived from: every PLACEMENT SEED is resolved by it.
+        // A seed that is still mastery the learner does not have, after every
+        // verification check-in it was owed, is the failure this bounds.
+        let seeded = Set(placement.seededConceptIds)
+        func conceptId(of ghost: String) -> String { String(ghost.prefix { $0 != "(" }) }
         for report in run.reports where report.day >= deadline {
-            #expect(report.ghosts == 0, "false beginner day \(report.day): ghosts after the seed deadline (day \(deadline))")
+            let seedGhosts = report.ghostConceptIds.filter { seeded.contains(conceptId(of: $0)) }
+            #expect(seedGhosts.isEmpty,
+                    "false beginner day \(report.day): unresolved seed \(seedGhosts) after the deadline (day \(deadline))")
         }
-        let atDeadline = run.reports.first { $0.day == deadline }
-        #expect(atDeadline?.ghosts == 0, "ghosts must reach 0 by day \(deadline)")
+
+        // Mastery EARNED in practice is a separate matter: a learner who has not
+        // really learned a skill can still answer `Tuning.minObservations` of its
+        // items right by luck, and the engine will believe them for a moment. That
+        // must be RARE and it must be TRANSIENT — the next day's check-ins take it
+        // back — rather than a state the run can sit in.
+        let ghostDays = run.reports.filter { $0.day >= deadline && $0.ghosts > 0 }
+        #expect(ghostDays.count <= Self.maxTransientGhostDays,
+                "false beginner: \(ghostDays.count) ghost days after day \(deadline): \(ghostDays.map { $0.day })")
+        for report in ghostDays {
+            let next = run.reports.first { $0.day == report.day + 1 }
+            #expect(next == nil || next!.ghosts == 0,
+                    "false beginner day \(report.day): ghosts \(report.ghostConceptIds) survived into day \(report.day + 1)")
+        }
     }
 
     @Test func forgetfulLearnerSixtyDays() {

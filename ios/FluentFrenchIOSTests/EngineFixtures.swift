@@ -185,6 +185,13 @@ enum EngineFixtures {
             for i in 0..<perConcept {
                 var g = gap("\(concept.id)-item-\(i)", concept: concept.id, category: concept.category,
                             level: concept.cefrLevel, due: when)
+                // A card carries the IRT difficulty of its band, as the shipped
+                // Foundation loader gives it. With every card at b = 0 the ability
+                // model read A1 drilling as evidence of B1 ability (the evidence
+                // ceiling is `item.irtDifficulty + Tuning.thetaEvidenceCeiling`), so
+                // a declared beginner registered as B1 inside a week and the
+                // simulation could not see level-fit go wrong at all (engine-8-1).
+                g.irtDifficulty = Tuning.irtDifficulty(for: concept.cefrLevel)
                 g.fsrs = freshFsrs(at: when)
                 result.append(g)
             }

@@ -460,9 +460,12 @@ final class AppStore {
     // MARK: - Selection (one request in, one output out)
 
     /// The learner's level as the ONE ranker sees it (IRT ability → CEFR band).
-    /// Surfaces that gate by level read this; none derive their own.
+    /// Surfaces that gate by level read this; none derive their own. It calls the
+    /// ranker's mapping directly rather than building a selector: the mapping reads
+    /// only θ, so a view that shows the level badge no longer indexes the taxonomy
+    /// per read nor re-renders on every concept mutation (store-8-4).
     var learnerLevel: CEFRLevel {
-        ConceptSelector(store: self).learnerLevel()
+        ConceptSelector.level(forTheta: abilityTheta)
     }
 
     /// Resolve a declared intent into the candidate gap ids of a scoped request.
@@ -2576,16 +2579,19 @@ extension AppStore {
         let minutes = ActivityCredit.minutes(activeSeconds: activeSeconds, capMinutes: cap)
         guard minutes > 0 else { return 0 }
         recordActivityMinutes(modality, minutes: minutes, now: now)
-        // The unlock item keeps its promise the moment it is met (D2): the gate reads
-        // the new minutes live, so record the opened modalities and re-plan the day
-        // now rather than leaving "Start with Reading" as the primary action until
-        // the next lesson end. `refreshUnlocks` is what makes Home's
-        // onChange(unlockedModalities) fire as well.
-        if let unlock = dailyPlanOfRecord?.unlockItem, unlock.modality == modality,
-           totalMinutes(modality) >= unlock.target {
-            refreshUnlocks(now: now)
-            recomputePlan(now: now)
-        }
+        // Crossing the demonstrated-minutes bar keeps its promise the moment it is
+        // met (D2), whether or not the day's plan happened to carry an `.unlock`
+        // row: with Reading already open the plan is a lessons spine plus a Reading
+        // minutes row, and the Listening promise is only a locked row — so gating
+        // this on `unlockItem` left the learner who did exactly what they were told
+        // with no acknowledgement until the next lesson end (firstrun-8-4).
+        // `refreshUnlocks` is the bookkeeping point that records what the live gate
+        // now reads, and it is what makes Home's onChange(unlockedModalities) fire;
+        // the day is re-planned only when the set actually changed, so an ordinary
+        // session never churns the plan of record.
+        let openBefore = unlockedModalities
+        refreshUnlocks(now: now)
+        if unlockedModalities != openBefore { recomputePlan(now: now) }
         return minutes
     }
 
@@ -2810,6 +2816,11 @@ extension AppStore {
         // up by a long drag in the reader is not a card either — a lesson could
         // only ever ask "What does <paragraph> mean?" and never grade it.
         guard CaptureBuilder.isAcceptableHeadword(word) else { return .rejected }
+        // A card also has to have something to ask. A French–English cognate saved
+        // with itself as its meaning ("restaurant" → "restaurant") gives the answer
+        // away in every format the scheduler can build for it, while still booking
+        // FSRS progress and concept evidence — so it is never a card (read-8-2).
+        guard !CaptureBuilder.isSelfGlossed(headword: word, meaning: draft.englishTranslation) else { return .rejected }
         if let existing = existingGap(forWord: word) {
             // A form that two tenses spell the same way is ONE card in a deck
             // keyed by headword, so the conjugation tables ask for the second

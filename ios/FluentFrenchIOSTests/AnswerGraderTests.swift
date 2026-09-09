@@ -275,6 +275,60 @@ struct AnswerGraderTests {
         #expect(AnswerGrader.wordCount("d'habitude,") == 2 && AnswerGrader.wordCount("") == 0)
     }
 
+    /// lesson-8-1: an `alts` entry that is exactly the item's own BLANK form was
+    /// authored to fill a hole, not to translate the headword. Accepting "mains" for
+    /// "Translate to French: hand" — and printing "Also accepted: mains" under it —
+    /// teaches the plural as the translation of the singular.
+    @Test func blankFormAlternativesAreOnlyAcceptedInsideTheBlank() {
+        let hand = gap("la main", en: "hand", ex: "Lave-toi les mains.", blank: "mains", alts: ["mains"])
+        #expect(AnswerGrader.grade(typed: "mains", against: hand, expected: "mains", kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "mains", against: hand, expected: "la main", kind: .translation) == .incorrect,
+                "the plural in the sentence is not the translation of “hand”")
+        #expect(AnswerGrader.displayAlternatives(for: hand, expected: "la main", kind: .translation).isEmpty,
+                "“Also accepted: mains” under “hand” advertised the wrong form")
+        #expect(AnswerGrader.displayAlternatives(for: hand, expected: "main", kind: .translation) == ["la main"],
+                "the article form is still a second answer")
+        #expect(AnswerGrader.grade(typed: "la main", against: hand, expected: "la main", kind: .translation) == .correct)
+        #expect(AnswerGrader.isBlankOnlyForm("mains", gap: hand))
+
+        // The agreement an item exists to teach is not a second translation either.
+        let green = gap("vert", en: "green", ex: "La pomme est verte.", blank: "verte", alts: ["verte"])
+        #expect(AnswerGrader.grade(typed: "verte", against: green, expected: "vert", kind: .translation) == .incorrect)
+        #expect(AnswerGrader.grade(typed: "verte", against: green, expected: "verte", kind: .fillBlank) == .correct)
+
+        // …nor is the conjugated frame under a dictionary headword.
+        let not = gap("ne... pas", en: "not", ex: "Je ne parle pas anglais.", blank: "ne parle pas",
+                      alts: ["ne parle pas"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "ne parle pas", against: not, expected: "ne... pas", kind: .translation) == .incorrect)
+        #expect(AnswerGrader.displayAlternatives(for: not, expected: "ne... pas", kind: .translation).isEmpty)
+        #expect(AnswerGrader.isBlankOnlyForm("ne parle pas", gap: not))
+        #expect(AnswerGrader.grade(typed: "ne parle pas", against: not, expected: "ne parle pas", kind: .fillBlank) == .correct)
+
+        // A blank form that IS the headword (modulo its article) is the same word,
+        // so article leniency and its "Also accepted" line survive untouched.
+        let bread = gap("le pain", en: "bread", ex: "J'aime le pain.", blank: "pain", alts: ["pain"])
+        #expect(!AnswerGrader.isBlankOnlyForm("pain", gap: bread))
+        #expect(AnswerGrader.grade(typed: "pain", against: bread, expected: "le pain", kind: .translation) == .correct)
+        #expect(AnswerGrader.displayAlternatives(for: bread, expected: "pain", kind: .translation) == ["le pain"])
+
+        // An alternative that is not the blank form is untouched in either format.
+        let went = gap("je suis allé", en: "I went", ex: "Hier, je suis allé au marché.",
+                       blank: "suis allé", alts: ["suis allée", "je suis allée"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "je suis allée", against: went, expected: "je suis allé", kind: .translation) == .correct)
+    }
+
+    /// lesson-8-3: a fill-blank prompt shows exactly one hole, spelled the way the
+    /// app spells it — the screen has one text field.
+    @Test func blankRunsCountTheHolesInAPrompt() {
+        #expect(AnswerGrader.hasSingleBlank("Je _____ anglais."))
+        #expect(!AnswerGrader.hasSingleBlank("Je _____ anglais _____ ici."))
+        #expect(!AnswerGrader.hasSingleBlank("Je parle anglais."))
+        #expect(!AnswerGrader.hasSingleBlank("Je ___ anglais."), "a short run is not the app's blank")
+        #expect(!AnswerGrader.hasSingleBlank("Je ______ anglais."), "nor is a long one")
+        #expect(AnswerGrader.blankRuns(in: "a __ b _____ c_") == ["__", "_____"])
+        #expect(AnswerGrader.blankRuns(in: "").isEmpty)
+    }
+
     /// Options are compared with their parenthetical tag: the tag is the whole
     /// point of "the (masculine singular)" vs "the (feminine singular)".
     @Test func optionMatchingKeepsParentheticalTags() {
@@ -396,5 +450,32 @@ struct AnswerGraderTests {
             let expected = AnswerGrader.blankForm(for: gap)
             #expect(AnswerGrader.grade(typed: expected, against: gap, expected: expected, kind: .fillBlank) == .correct, "\(gap.id)")
         }
+    }
+
+    /// lesson-8-1 over the shipped content: many items carry an `alts` entry that is
+    /// exactly their own blank ("mains" under "la main", "verte" under "vert"). It
+    /// fills that item's hole and nothing else — asked for the headword, it is a
+    /// miss, it is never advertised as "Also accepted", and the AI writer may not
+    /// build a translation on it.
+    @Test func shippedBlankFormsAreNeverTranslationsOfTheirHeadword() throws {
+        let data = try #require(bundledContentData(), "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        let gaps = FoundationContentLoader.gaps(from: file, now: EngineFixtures.now)
+        var checked = 0
+        for gap in gaps where gap.isTestable && !gap.frenchWord.contains("/") {
+            let blank = AnswerGrader.blankForm(for: gap)
+            guard AnswerGrader.isBlankOnlyForm(blank, gap: gap) else { continue }
+            checked += 1
+            #expect(AnswerGrader.grade(typed: blank, against: gap, expected: gap.frenchWord, kind: .translation) == .incorrect,
+                    "\(gap.id): “\(blank)” graded as the translation of “\(gap.frenchWord)”")
+            #expect(!AnswerGrader.displayAlternatives(for: gap, expected: gap.frenchWord, kind: .translation)
+                .contains { AnswerGrader.normalize($0) == AnswerGrader.normalize(blank) },
+                    "\(gap.id): “Also accepted: \(blank)” under “\(gap.frenchWord)”")
+            #expect(!LessonQuestionParser.isContentForm(blank, of: gap, kind: .translation),
+                    "\(gap.id): an AI translation could state “\(blank)”")
+            // …and it still answers its own blank.
+            #expect(AnswerGrader.grade(typed: blank, against: gap, expected: blank, kind: .fillBlank) == .correct, "\(gap.id)")
+        }
+        #expect(checked > 50, "the content carries items whose blank is a different form (\(checked))")
     }
 }

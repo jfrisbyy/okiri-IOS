@@ -71,13 +71,14 @@ nonisolated enum HomeCopy {
             return "\(streak) days in a row — nice momentum."
         }
         if streak >= 1 {
-            if dayComplete { return "Day \(streak) done — see you tomorrow." }
+            if dayComplete { return "Day \(streak) done\(stillDue(dueNow))" }
             if lessonsToday > 0 { return "Day \(streak) — \(lessonsLeft(target - lessonsToday)) to go today." }
             return "Day \(streak) — a lesson today keeps it going."
         }
         if lessonsToday > 0 {
-            return dayComplete ? "Today's lessons are done — tomorrow makes it a streak."
-                               : "Good start today — tomorrow makes it a streak."
+            return dayComplete
+                ? "Today's lessons are done\(stillDue(dueNow, otherwise: "tomorrow makes it a streak."))"
+                : "Good start today — tomorrow makes it a streak."
         }
         if dueNow > 0 {
             // One lesson is `Tuning.lessonSize` items, so it only clears a queue
@@ -89,6 +90,15 @@ nonisolated enum HomeCopy {
                 : "\(dueNow) due now — today's lessons work through them."
         }
         return "No streak yet — one lesson starts it."
+    }
+
+    /// The tail of a "day done" line. The day's lessons being finished is not the
+    /// same as the queue being empty: the staggered Foundation seed and every
+    /// rescheduled miss leave cards due on the same screen that shows this
+    /// greeting, so "see you tomorrow" contradicted the "N due now" chip right
+    /// under it (firstrun-8-3). With nothing due the day really is done.
+    static func stillDue(_ dueNow: Int, otherwise: String = "see you tomorrow.") -> String {
+        dueNow > 0 ? " — \(dueNow) still due if you want more." : " — \(otherwise)"
     }
 
     /// "1 more lesson" / "2 more lessons" — the remainder of the day's plan.

@@ -204,9 +204,21 @@ nonisolated struct LessonScheduler {
                 continue
             }
             let ks = kinds(for: gap)
+            var asked = Set<String>()
             for round in 0..<roundCount {
                 if let q = question(for: gap, kind: ks[round % ks.count], variant: round, role: role,
                                     pool: pool, optionCount: optionCount, rng: &rng) {
+                    // A recognition round asks the gap in the REVERSE direction
+                    // (English prompt, French options). A one- or two-gap lesson has
+                    // no French to borrow, so that round cannot be built and falls
+                    // back to the forward question — identical to the round before,
+                    // with the same options reshuffled (lesson-8-4). One asking beats
+                    // two of the same. (A rule-label item is exempt: multiple choice
+                    // is the only format it has, and its second round is the design,
+                    // not a degraded reversal.)
+                    let identity = Self.identity(of: q)
+                    if gap.isTestable, q.kind == .multipleChoice, !q.isReversed, asked.contains(identity) { continue }
+                    asked.insert(identity)
                     rounds[round].append(q)
                 }
             }
@@ -256,6 +268,58 @@ nonisolated struct LessonScheduler {
             }
         }
         return local
+    }
+
+    /// What makes two questions the same question TO A LEARNER: the format, the
+    /// direction, and the words on screen. Option order is deliberately not part of
+    /// it — the same four options reshuffled is the same question asked again.
+    static func identity(of q: LessonQuestion) -> String {
+        [q.kind.rawValue, q.isReversed ? "rev" : "fwd", q.prompt, q.statement, q.correctAnswer]
+            .joined(separator: "\u{1F}")
+    }
+
+    // MARK: Follow-up scope (C26 / lesson-8-4)
+
+    /// The candidate gap ids for a "Practice these now" follow-up: the missed items
+    /// first, then their concepts' other cards, up to `size`.
+    ///
+    /// A follow-up over one or two missed items is not a lesson: with no other gaps
+    /// to borrow from, the reversed recognition round cannot be built and every
+    /// multiple choice falls back to `fallbackDistractors` — "hello" and "thank you"
+    /// against any word at all. Widening with siblings from the concepts the learner
+    /// just missed keeps the practice on topic AND gives the distractor pool real
+    /// French and real meanings to draw on. The missed items always lead and are
+    /// never crowded out: siblings only fill the slots left under `size`.
+    static func followUpGapIds(missed: [String], from pool: [GapItem],
+                               size: Int = Tuning.scopedLessonSize) -> [String] {
+        var ids: [String] = []
+        var taken = Set<String>()
+        for id in missed where taken.insert(id).inserted { ids.append(id) }
+        guard ids.count < size else { return ids }
+
+        // The concepts the missed items belong to, in the order they were missed.
+        let byId = Dictionary(pool.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var conceptIds: [String] = []
+        var seenConcepts = Set<String>()
+        for id in ids {
+            guard let conceptId = byId[id]?.conceptId, seenConcepts.insert(conceptId).inserted else { continue }
+            conceptIds.append(conceptId)
+        }
+        guard !conceptIds.isEmpty else { return ids }
+
+        // Round-robin across those concepts so every missed concept contributes.
+        let siblings: [[GapItem]] = conceptIds.map { conceptId in
+            pool.filter { $0.conceptId == conceptId && !taken.contains($0.id) && !$0.isProbe && !$0.isMastered }
+        }
+        var round = 0
+        while ids.count < size, siblings.contains(where: { round < $0.count }) {
+            for column in siblings.indices where ids.count < size && round < siblings[column].count {
+                let gap = siblings[column][round]
+                if taken.insert(gap.id).inserted { ids.append(gap.id) }
+            }
+            round += 1
+        }
+        return ids
     }
 
     /// Sorted gap ids + the level each is asked at + the option count: the same

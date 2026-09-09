@@ -26,7 +26,7 @@ final class VoiceRecorder {
     /// transcribes what was recorded. Cleared by the next start / cancel.
     private(set) var stoppedAtCap = false
     /// Seconds captured before something else took the microphone (a call, Siri,
-    /// the app leaving the foreground). nil while nothing has interrupted the
+    /// the app being backgrounded). nil while nothing has interrupted the
     /// current recording. The surfaces watch this so a dead microphone never goes
     /// on counting down, and feedback on the fragment is announced as such
     /// (talkmedia-4-3). Cleared by the next start / cancel.
@@ -144,9 +144,12 @@ final class VoiceRecorder {
         interruptionObserver = nil
     }
 
-    /// Something else took the microphone (an interruption, or the app leaving the
-    /// foreground — the target has no background audio mode, so capture stops
-    /// either way). Stop for real and publish how much was actually captured.
+    /// Something else took the microphone (an interruption, or the app being sent
+    /// to the background — the target has no background audio mode, so capture
+    /// stops either way). Callers must not treat a merely `.inactive` scene — a
+    /// Control Centre pull-down, the app switcher, losing focus on iPad — as an
+    /// interruption: capture continues through those (talkmedia-8-2). Stop for
+    /// real and publish how much was actually captured.
     func noteInterrupted() {
         guard isRecording else { return }
         let captured = max(0, capSeconds - secondsLeft)

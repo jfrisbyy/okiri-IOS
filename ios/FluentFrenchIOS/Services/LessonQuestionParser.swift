@@ -123,13 +123,23 @@ nonisolated enum LessonQuestionParser {
     /// The headword's ARTICLE is no exception: the sentence around a blank already
     /// supplies the determiner, so "le pain" is not an answer to a blank whose form
     /// is "pain" ("J'aime le _____." → "J'aime le le pain.").
+    ///
+    /// The reverse holds outside a fill-blank (lesson-8-1): a blank form that is a
+    /// DIFFERENT form from the headword — "mains" for "la main", "verte" for "vert" —
+    /// is not an answer to "Translate to French: hand", and an item built on it would
+    /// state the wrong form and explain it as "mains — hand".
     static func isContentForm(_ answer: String, of gap: GapItem, kind: QuestionKind) -> Bool {
         let target = AnswerGrader.normalize(answer)
         guard !target.isEmpty else { return false }
-        let blankForms = AnswerGrader.acceptedForms(for: gap, expected: AnswerGrader.blankForm(for: gap), kind: kind)
-        let forms = kind == .fillBlank
-            ? blankForms
-            : AnswerGrader.acceptedForms(for: gap, expected: gap.frenchWord, kind: kind) + blankForms
+        let blank = AnswerGrader.blankForm(for: gap)
+        let blankForms = AnswerGrader.acceptedForms(for: gap, expected: blank, kind: kind)
+        let forms: [(display: String, normalized: String)]
+        if kind == .fillBlank {
+            forms = blankForms
+        } else {
+            let headwordForms = AnswerGrader.acceptedForms(for: gap, expected: gap.frenchWord, kind: kind)
+            forms = AnswerGrader.isBlankOnlyForm(blank, gap: gap) ? headwordForms : headwordForms + blankForms
+        }
         return forms.contains { $0.normalized == target }
     }
 
@@ -237,7 +247,12 @@ nonisolated enum LessonQuestionParser {
         case "fillblank", "fill_blank", "fill-blank":
             guard LessonScheduler.isProducible(gap) else { return nil }
             let blank = AnswerGrader.blankToken
-            if prompt.contains(blank) {
+            // Exactly ONE hole, spelled the way the app spells it (lesson-8-3): the
+            // screen offers a single text field, and `completed` (below) substitutes
+            // the one answer into every hole, so a two-blank sentence is both
+            // unanswerable and read back wrong. Such a reply falls through to the
+            // content's own blanked prompt.
+            if AnswerGrader.hasSingleBlank(prompt) {
                 let expected = answer.isEmpty ? AnswerGrader.blankForm(for: gap) : answer
                 guard isContentForm(expected, of: gap, kind: .fillBlank) else { return nil }
                 let completed = prompt.replacingOccurrences(of: blank, with: expected)

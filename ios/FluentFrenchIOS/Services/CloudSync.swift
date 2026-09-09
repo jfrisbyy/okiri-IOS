@@ -186,12 +186,6 @@ final class CloudSync {
     private let markerLocalKey = "ff.cloud.lastSyncedLocalUpdatedAt.v1"
     private let markerServerKey = "ff.cloud.lastSyncedServerUpdatedAt.v1"
 
-    private static let isoDecoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
-        return d
-    }()
-
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.deferredRestore = DeferredRestoreMarker(defaults: defaults)
@@ -746,15 +740,12 @@ final class CloudSync {
                 .execute()
                 .value
             guard let row = rows.first else { return .none }
-            let data = try JSONEncoder().encode(row.snapshot)
-
-            let probe = try? JSONDecoder().decode(SchemaProbe.self, from: data)
-            let version = probe?.schemaVersion ?? 1
+            let version = Self.schemaVersion(of: row.snapshot)
             if version > ProgressSnapshot.currentSchemaVersion {
                 return .failed(SchemaTooNew(remoteVersion: version, supportedVersion: ProgressSnapshot.currentSchemaVersion))
             }
             do {
-                let snapshot = try Self.isoDecoder.decode(ProgressSnapshot.self, from: data)
+                let snapshot = try await Self.decodeDownloaded(row.snapshot)
                 return .snapshot(snapshot, serverUpdatedAt: PostgresTimestamp.parse(row.updated_at))
             } catch {
                 return .failed(SnapshotUndecodable(underlying: String(describing: error)))
@@ -762,6 +753,31 @@ final class CloudSync {
         } catch {
             return .failed(error)
         }
+    }
+
+    /// The row's `schemaVersion`, read straight off the JSON value. Parsing the
+    /// whole payload again just to reach one Int cost a second full decode of a
+    /// few hundred KB on the main actor (store-8-2). A row written before the
+    /// field existed reads as version 1.
+    private nonisolated static func schemaVersion(of snapshot: AnyJSON) -> Int {
+        guard let value = snapshot.objectValue?["schemaVersion"] else { return 1 }
+        if let int = value.intValue { return int }
+        if let double = value.doubleValue { return Int(double) }
+        return 1
+    }
+
+    /// Re-encode the row's JSON and decode the snapshot off the main actor. The
+    /// record is a few hundred KB carrying thousands of ISO-8601 dates, so doing
+    /// this inline stalled Home on every launch and foreground reconcile
+    /// (store-8-2). Mirrors `encodeForUpload`: the coders are built inside the
+    /// task, since JSONDecoder is not Sendable.
+    private nonisolated static func decodeDownloaded(_ snapshot: AnyJSON) async throws -> ProgressSnapshot {
+        try await Task.detached(priority: .utility) {
+            let data = try JSONEncoder().encode(snapshot)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(ProgressSnapshot.self, from: data)
+        }.value
     }
 
     // MARK: - Sync markers
@@ -839,8 +855,4 @@ private nonisolated struct RemoteRow: Decodable, Sendable {
 
 private nonisolated struct UpdatedAtRow: Decodable, Sendable {
     let updated_at: String?
-}
-
-private nonisolated struct SchemaProbe: Decodable, Sendable {
-    let schemaVersion: Int?
 }

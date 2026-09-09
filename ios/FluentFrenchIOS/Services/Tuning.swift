@@ -41,6 +41,18 @@ nonisolated enum Tuning {
     /// (same sizing rule, so trending concepts always come first).
     static let capstoneTrendingWeight: Double = 5.5
 
+    // MARK: Concept ranking (Pass 2 — frontier fit)
+    /// CEFR bands BELOW the learner's own level at which frontier fit falls to zero.
+    /// Material below the learner is merely easy, so the taper down is gentle.
+    static let frontierLevelSpanBelow: Double = 3.0
+    /// CEFR bands ABOVE the learner's own level at which frontier fit falls to zero.
+    /// Material above the learner is material they cannot yet answer, so the taper up
+    /// is steep: at 1.0 a concept one whole band above the learner earns no frontier
+    /// credit at all (engine-8-1 — the term used to be one-sided, so a declared
+    /// beginner was taught B1 grammar in week two while a third of the core A1 skills
+    /// were never a lesson target in sixty days).
+    static let frontierLevelSpanAbove: Double = 1.0
+
     // MARK: Lesson shape (Pass 2 — request-level sizes)
     /// Items in a smart (Home "Learn") lesson.
     static let lessonSize: Int = 7
@@ -90,6 +102,11 @@ nonisolated enum Tuning {
     static let cloudPushSettleTimeout: TimeInterval = 5
     /// Seconds between polls while one cloud operation waits for another to finish.
     static let cloudPushSettlePoll: TimeInterval = 0.05
+    /// How far apart two sync-marker timestamps may sit and still count as the same
+    /// instant. A marker round-trips through `timeIntervalSince1970` on its way to
+    /// `UserDefaults`, which loses ~1e-7 s; a millisecond absorbs that while staying
+    /// far below the gap between two real learner actions (store-8-1).
+    static let markerInstantTolerance: TimeInterval = 0.001
 
     // MARK: XP (Package A16 / C25)
     /// XP awarded per correct answer.
@@ -170,6 +187,11 @@ nonisolated enum Tuning {
     static let fsrsLapseRetrievabilityShape: Double = 0.3
     /// Hard cap on the lapse multiplier so post-lapse stability is always strictly below the previous value.
     static let fsrsLapseMaxRatio: Double = 0.7
+    /// Absolute ceiling (days) on post-lapse stability. The multiplicative lapse is a
+    /// fraction of the OLD stability, so a card drilled past ~10 reviews came back
+    /// months later even though the learner had just proved they had forgotten it
+    /// (engine-8-2). A miss puts an item back inside a few days, whatever it was worth.
+    static let fsrsPostLapseMaxDays: Double = 3
     /// Floor on stability (days) so the curve never collapses to zero.
     static let fsrsMinStability: Double = 0.1
 

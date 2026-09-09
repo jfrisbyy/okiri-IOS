@@ -294,7 +294,7 @@ struct ConceptSelector {
 
         let urgency = urgencyScore(conceptGaps, now: now)
         let leverage = leverageScore(concept)
-        let frontierFit = frontierScore(concept)
+        let frontierFit = frontierScore(concept, abilityLevel: learnerLevel())
         let confusion = confusionScore(conceptGaps)
         let recent = recentlyTaughtPenalty(concept)
 
@@ -336,14 +336,24 @@ struct ConceptSelector {
         return Double(dependentCounts[concept.id] ?? 0) / Double(maxDependents)
     }
 
-    /// 1.0 for frontier concepts; for learning concepts, tapers toward 0 the
-    /// further the concept sits below the learner's current ability.
-    private func frontierScore(_ concept: Concept) -> Double {
-        if isFrontier(concept) { return 1.0 }
-        let abilityLevel = learnerLevel().order
-        let conceptLevel = concept.cefrLevel.order
-        let below = Double(max(0, abilityLevel - conceptLevel))
-        return max(0, 1 - below / 3.0)
+    /// Fit to the EDGE of current ability: 1.0 at the learner's own CEFR band,
+    /// tapering to 0 over `Tuning.frontierLevelSpanBelow` bands downward and the
+    /// steeper `Tuning.frontierLevelSpanAbove` bands upward.
+    ///
+    /// The taper used to be one-sided: a flat 1.0 for EVERY frontier concept and a
+    /// discount only for material below the learner. That made an A1 and a C1
+    /// frontier skill indistinguishable on the one axis that is supposed to order
+    /// them, and it actively preferred the highest-level eligible concept as ability
+    /// rose — a declared beginner was taught B1 grammar in week two while a third of
+    /// the core A1 skills were never a lesson target in sixty days (engine-8-1).
+    /// Penalising distance in BOTH directions, and harder upward (above-level
+    /// material is material the learner cannot answer yet, not merely easy material
+    /// they have outgrown), makes an at-level skill outrank one a band above it
+    /// whether or not either has been observed.
+    private func frontierScore(_ concept: Concept, abilityLevel: CEFRLevel) -> Double {
+        let delta = concept.cefrLevel.order - abilityLevel.order
+        let span = delta > 0 ? Tuning.frontierLevelSpanAbove : Tuning.frontierLevelSpanBelow
+        return max(0, 1 - Double(abs(delta)) / span)
     }
 
     private func confusionScore(_ gaps: [GapItem]) -> Double {
@@ -363,7 +373,16 @@ struct ConceptSelector {
     /// one notion of "level" the engine has: frontier fit uses it, and surfaces
     /// that gate by level (e.g. conversation scenarios) read it from here.
     func learnerLevel() -> CEFRLevel {
-        switch store.abilityTheta {
+        Self.level(forTheta: store.abilityTheta)
+    }
+
+    /// The band an ability maps to, with no selector to build. The mapping reads
+    /// nothing but θ, while constructing a selector indexes the whole taxonomy —
+    /// work that `AppStore.learnerLevel` was paying on every read, including once
+    /// per row in list bodies, and which made every level badge re-render on any
+    /// concept mutation (store-8-4).
+    nonisolated static func level(forTheta theta: Double) -> CEFRLevel {
+        switch theta {
         case ..<(-0.4): return .A1
         case ..<0.4: return .A2
         case ..<1.2: return .B1

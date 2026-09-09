@@ -632,6 +632,67 @@ struct ReadCaptureTests {
         #expect(gap.category == .phrasing)
     }
 
+    // MARK: - A card whose question contains its answer is never saved (read-8-2)
+
+    @Test func aCognateGlossedWithItselfIsNeverSavedAsACard() {
+        let s = quietStore()
+        func draft(_ word: String, _ meaning: String) -> CaptureDraft {
+            CaptureDraft(frenchWord: word, englishTranslation: meaning, sourceType: .reading, sourceTab: "read")
+        }
+        for (word, meaning) in [("restaurant", "restaurant"), ("Paris", "paris"),
+                                ("important", "important (adj.)"), ("message", "the message")] {
+            let d = draft(word, meaning)
+            #expect(d.isSelfGlossed, "the save button says why instead of offering a card")
+            #expect(s.capture(d, now: now) == .rejected,
+                    "“\(word)” means “\(meaning)” would hand the answer over in every format")
+        }
+        #expect(s.gaps.isEmpty)
+        // A real meaning is still a card, and so is a word saved before its meaning.
+        guard case .saved = s.capture(draft("pain", "bread"), now: now) else {
+            Issue.record("expected a save"); return
+        }
+        guard case .saved = s.capture(CaptureDraft(untranslated: "chevet", sourceType: .reading, sourceTab: "read"), now: now) else {
+            Issue.record("an offline capture has no meaning yet — that is not a self-gloss"); return
+        }
+        #expect(s.gaps.count == 2)
+    }
+
+    @Test func selfGlossIsAccentCaseTagAndArticleInsensitive() {
+        #expect(CaptureBuilder.isSelfGlossed(headword: "Restaurant", meaning: "restaurant"))
+        #expect(CaptureBuilder.isSelfGlossed(headword: "hôtel", meaning: "hotel"), "accents are not a meaning")
+        #expect(CaptureBuilder.isSelfGlossed(headword: "train", meaning: "the train"))
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "le train", meaning: "the train"),
+                "the article is the lesson — that card is worth having")
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "l'orange", meaning: "the orange"))
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "pain", meaning: "bread"))
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "coin", meaning: "corner"), "a false friend is the best kind of card")
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "restaurant", meaning: ""))
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "", meaning: "restaurant"))
+        #expect(!CaptureBuilder.isSelfGlossed(headword: "un", meaning: "one/a"))
+    }
+
+    @Test func theAccentPagesSameInEnglishWordsAreNotOfferedAsCards() {
+        let s = quietStore()
+        let words = PronunciationData.categories.flatMap(\.words)
+        let sameInEnglish = words.filter { CaptureBuilder.isSelfGlossed(headword: $0.word, meaning: $0.translation) }
+        #expect(Set(sameInEnglish.map(\.word)) == ["important", "Paris", "restaurant"],
+                "these three are the practice words the page must not offer to save")
+        for w in sameInEnglish {
+            let d = CaptureDraft(frenchWord: w.word, englishTranslation: w.translation,
+                                 sourceType: .reading, sourceTab: "accent",
+                                 sourceLevel: .A1, category: .pronunciation)
+            #expect(d.isSelfGlossed)
+            #expect(s.capture(d, now: now) == .rejected)
+        }
+        #expect(s.gaps.isEmpty)
+        // Every other practice word still becomes a pronunciation card.
+        let bon = CaptureDraft(frenchWord: "bon", englishTranslation: "good",
+                               sourceType: .reading, sourceTab: "accent",
+                               sourceLevel: .A1, category: .pronunciation)
+        guard case .saved(let gap) = s.capture(bon, now: now) else { Issue.record("expected a save"); return }
+        #expect(gap.category == .pronunciation)
+    }
+
     // MARK: - Words waiting for a meaning are not counted as due (read-3-3)
 
     @Test func offlineCapturesAreNotCountedAsDueUntilTheyHaveAMeaning() async {

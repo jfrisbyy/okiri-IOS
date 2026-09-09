@@ -645,11 +645,20 @@ struct SaveToDeckButton: View {
         return !draft.isCapturable
     }
 
+    /// A draft whose meaning IS its headword ("restaurant" → "restaurant"): the
+    /// store refuses it, so the button says why rather than offering a save that
+    /// would only ever ask the learner to translate a word into itself (read-8-2).
+    private var isSelfGlossed: Bool {
+        guard let draft, !isDone, !isTooLong else { return false }
+        return draft.isSelfGlossed
+    }
+
     private var title: String {
         if case .duplicate? = outcome { return "Already in your deck" }
         if isDone { return "Saved to deck" }
         if isBusy || draft == nil { return "Save to my deck" }
         if isTooLong { return "Too long to save as a card" }
+        if isSelfGlossed { return "Same word in English" }
         if draft?.needsTranslation == true { return "Save now, translate later" }
         return "Save to my deck"
     }
@@ -657,11 +666,12 @@ struct SaveToDeckButton: View {
     private var symbol: String {
         if isDone { return "checkmark.circle.fill" }
         if isTooLong { return "exclamationmark.circle.fill" }
+        if isSelfGlossed { return "equal.circle.fill" }
         if draft?.needsTranslation == true { return "clock.badge.checkmark" }
         return "plus.circle.fill"
     }
 
-    private var isDisabled: Bool { isDone || isBusy || draft == nil || isTooLong }
+    private var isDisabled: Bool { isDone || isBusy || draft == nil || isTooLong || isSelfGlossed }
 
     /// Says what the button will do — or why it cannot yet be used.
     private var hint: String {
@@ -669,6 +679,9 @@ struct SaveToDeckButton: View {
         if isBusy || draft == nil { return "Available once the lookup finishes" }
         if isTooLong {
             return "A card holds up to \(Tuning.maxCardWords) words, and never stops in the middle of a sentence"
+        }
+        if isSelfGlossed {
+            return "This word is spelled the same in English, so a card could only ask you to translate it into itself"
         }
         if draft?.needsTranslation == true {
             return "Saves the word without a meaning; it is translated once translation is available"

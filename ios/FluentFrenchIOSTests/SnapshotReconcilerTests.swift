@@ -96,6 +96,11 @@ struct SnapshotReconcilerTests {
         let local = Local(updatedAt: Self.at(30), lastSyncedUpdatedAt: Self.at(30), lastSyncedServerUpdatedAt: Self.at(50))
         let remote = Remote(clientUpdatedAt: Self.at(31), serverUpdatedAt: Self.at(40))
         #expect(SnapshotReconciler.decide(local: local, remote: remote) == .applyRemote)
+        // Still a fallback, not a free pass: an older row whose client clock is
+        // behind ours is the one that gets overwritten. The rounding tolerance
+        // (store-8-1) must not swallow a row that genuinely moved backwards.
+        let olderWork = Remote(clientUpdatedAt: Self.at(29), serverUpdatedAt: Self.at(40))
+        #expect(SnapshotReconciler.decide(local: local, remote: olderWork) == .pushLocal)
     }
 
     // MARK: Client-clock fallback
@@ -190,6 +195,43 @@ struct SnapshotReconcilerTests {
         let theirs = Remote(clientUpdatedAt: marker.addingTimeInterval(1.5), serverUpdatedAt: server)
         #expect(!SnapshotReconciler.isSameClientClock(marker, theirs.clientUpdatedAt))
         #expect(SnapshotReconciler.decide(local: clean, remote: theirs) == .applyRemote)
+    }
+
+    // MARK: Marker precision (store-8-1)
+
+    @Test func aMarkerThatCameBackFromDefaultsIsStillTheSameInstant() {
+        // `CloudSync` writes a sync marker as `date.timeIntervalSince1970` and
+        // reads it back with `Date(timeIntervalSince1970:)`. `Date` counts from
+        // 2001, so that round trip is `(x + 978307200) - 978307200`, which is not
+        // lossless: about half of today's timestamps come back ~1.2e-7 s away.
+        // Compared with `==`, a device that had changed nothing read as dirty
+        // (needless full re-uploads, and the "couldn't back up your progress"
+        // warning on sign-out) and its own untouched row read as moved, which
+        // re-rolls the day's plan (store-8-1).
+        let live = Date(timeIntervalSinceReferenceDate: 787_654_321.123)
+        let stored = Date(timeIntervalSince1970: live.timeIntervalSince1970)
+        #expect(stored != live, "this is the value the UserDefaults round trip actually moves")
+        #expect(SnapshotReconciler.isSameInstant(live, stored))
+        #expect(!SnapshotReconciler.isSameInstant(live, live.addingTimeInterval(1)),
+                "a real second of learner activity is never the same instant")
+
+        // (a) A device that has changed nothing since it pushed is not dirty, so
+        // sign-out does not warn about progress that is already in the account.
+        let clean = Local(updatedAt: live, lastSyncedUpdatedAt: stored, lastSyncedServerUpdatedAt: stored)
+        #expect(!clean.isDirty)
+        #expect(SnapshotReconciler.isFullyBackedUp(hasPendingChange: false, local: clean))
+
+        // (b) The server marker round-trips the same way; an untouched row must
+        // still read as untouched, whichever way the rounding went.
+        let remote = Remote(clientUpdatedAt: stored, serverUpdatedAt: live)
+        #expect(SnapshotReconciler.decide(local: clean, remote: remote) == .alreadyInSync,
+                "a clean device must not apply its own row back over itself")
+
+        // (c) Real work on top of that same row still uploads.
+        let dirty = Local(updatedAt: live.addingTimeInterval(45), lastSyncedUpdatedAt: stored,
+                          lastSyncedServerUpdatedAt: stored)
+        #expect(dirty.isDirty)
+        #expect(SnapshotReconciler.decide(local: dirty, remote: remote) == .pushLocal)
     }
 
     // MARK: Read racing an upload (store-7-1)

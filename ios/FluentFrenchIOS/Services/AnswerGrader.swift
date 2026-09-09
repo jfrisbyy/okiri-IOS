@@ -73,15 +73,18 @@ nonisolated enum AnswerGrader {
     /// but only when the headword IS the expected answer (see `acceptsHeadword`).
     /// Display forms keep their original spelling (minus tags) for feedback.
     ///
-    /// Two alternatives are never accepted, because accepting them would teach the
+    /// Three alternatives are never accepted, because accepting them would teach the
     /// wrong thing and the "Also accepted" line would advertise it:
     ///   • one that differs from the expected answer only in diacritics ("ou" for
     ///     "où") — that is an accent slip, and `.closeAccents` says so;
-    ///   • in a fill-blank, one that cannot stand in the blank (see `fitsBlank`).
+    ///   • in a fill-blank, one that cannot stand in the blank (see `fitsBlank`);
+    ///   • outside a fill-blank, the item's own BLANK form (see `isBlankOnlyForm`) —
+    ///     it was authored to fill a hole, not to translate the headword.
     static func acceptedForms(for gap: GapItem, expected: String, kind: QuestionKind) -> [(display: String, normalized: String)] {
         var raw: [String] = [expected]
         raw.append(contentsOf: (gap.acceptedAnswers ?? []).filter {
-            kind != .fillBlank || fitsBlank($0, gap: gap, expected: expected)
+            kind == .fillBlank ? fitsBlank($0, gap: gap, expected: expected)
+                               : !isBlankOnlyForm($0, gap: gap)
         })
         // The headword is an article-leniency alternative ("le pain" for "pain"), so
         // like every other alternative it has to fit the blank: in a fill-blank the
@@ -187,6 +190,47 @@ nonisolated enum AnswerGrader {
         return true
     }
 
+    /// Whether a form is the item's BLANK surface form and nothing else: the spelling
+    /// the content authored to fill the hole in its example sentence, DIFFERENT from
+    /// the dictionary headword every other format asks for.
+    ///
+    /// Over a hundred shipped items carry an `alts` entry that is exactly their `blank` —
+    /// "mains" under the headword "la main", "verte" under "vert", "vais manger"
+    /// under the near-future frame. Those exist so the fill-blank grades its hole;
+    /// accepting one for "Translate to French: hand" marks the plural as the
+    /// translation of the singular, and `displayAlternatives` then prints
+    /// "Also accepted: mains" — teaching the wrong form twice (lesson-8-1).
+    ///
+    /// False when the blank form is only another SPELLING of the headword — the
+    /// headword itself, without its article ("pain" for "le pain"), one side of an
+    /// "a / b" gloss, or the dictionary ellipsis collapsed ("quoi" for "..., quoi").
+    /// That is the same word, not another form of it.
+    static func isBlankOnlyForm(_ form: String, gap: GapItem) -> Bool {
+        let blank = normalize(blankForm(for: gap))
+        guard !blank.isEmpty, !isHeadwordSpelling(blank, of: gap) else { return false }
+        let candidate = normalize(form)
+        guard !candidate.isEmpty else { return false }
+        return fold(candidate) == fold(blank)
+    }
+
+    /// Whether a form is one of the dictionary headword's own spellings: the headword
+    /// with or without its article, either side of an "a / b" gloss, or the headword
+    /// with the dictionary's ellipsis collapsed ("..., quoi" → "quoi", "ne... pas" →
+    /// "ne pas"). Those all answer "what is the French for …?"; a different surface
+    /// form of the word does not.
+    static func isHeadwordSpelling(_ form: String, of gap: GapItem) -> Bool {
+        if acceptsHeadword(gap, expected: form) { return true }
+        var spellings: [String] = [gap.frenchWord]
+        if gap.frenchWord.contains("/") {
+            spellings.append(contentsOf: gap.frenchWord.split(separator: "/").map(String.init))
+        }
+        let collapsed = spellings.flatMap { ellipsisForms(of: $0) }
+        spellings.append(contentsOf: collapsed)
+        let key = fold(normalize(form))
+        guard !key.isEmpty else { return false }
+        return spellings.contains { fold(normalize($0)) == key }
+    }
+
     /// The words of a French form, an elision ("j'ai", "l'eau") counting as two.
     static func words(_ s: String) -> [String] {
         s.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "'" || $0 == "\u{2019}" })
@@ -200,6 +244,31 @@ nonisolated enum AnswerGrader {
     /// so it has no meaning to ask for and nothing to read aloud.
     static func isCloze(_ s: String) -> Bool {
         s.range(of: #"_{2,}"#, options: .regularExpression) != nil
+    }
+
+    /// The runs of underscores in a string — the holes a cloze prompt shows. A
+    /// fill-blank has exactly one, spelled `blankToken`: the screen offers a single
+    /// text field, so two holes leave the learner unable to say which one they are
+    /// filling, and filling both with the one answer prints and speaks a sentence
+    /// that is not French (lesson-8-3).
+    static func blankRuns(in s: String) -> [String] {
+        var out: [String] = []
+        var run = 0
+        for character in s {
+            if character == "_" {
+                run += 1
+            } else {
+                if run >= 2 { out.append(String(repeating: "_", count: run)) }
+                run = 0
+            }
+        }
+        if run >= 2 { out.append(String(repeating: "_", count: run)) }
+        return out
+    }
+
+    /// Whether a prompt shows exactly one hole, spelled the way the app spells it.
+    static func hasSingleBlank(_ s: String) -> Bool {
+        blankRuns(in: s) == [blankToken]
     }
 
     /// Whether the dictionary headword is itself an accepted typed answer.

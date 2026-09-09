@@ -8,6 +8,7 @@
 //  retry — and a build without a translation key says so up front (E26).
 //
 
+import Foundation
 import SwiftUI
 import UIKit
 

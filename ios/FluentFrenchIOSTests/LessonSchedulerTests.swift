@@ -240,11 +240,59 @@ struct LessonSchedulerTests {
 
     @Test func reversedMultipleChoiceNeedsFrenchDistractors() {
         // A lone gap cannot be asked in reverse: no French to borrow, none invented.
+        // lesson-8-4: the forward question is then asked ONCE, not twice over.
         let alone = scheduler.build(for: lesson([gap("solo")]), abilityOptionCount: 4)
         let qs = questions(for: "solo", in: alone)
-        #expect(qs.count == 2 && qs.allSatisfy { $0.kind == .multipleChoice && !$0.isReversed })
+        #expect(qs.count == 1 && qs.allSatisfy { $0.kind == .multipleChoice && !$0.isReversed })
         #expect(qs.allSatisfy { $0.options.count == 4 && $0.options.contains("solo-en") }, "English fallbacks pad the forward question")
         for q in qs { #expect(q.options.allSatisfy { LessonScheduler.fallbackDistractors.contains($0) || $0 == "solo-en" }) }
+
+        // With French to borrow, both rounds are built and they differ.
+        let pair = scheduler.build(for: lesson([gap("a"), gap("b"), gap("c")]), abilityOptionCount: 4)
+        let aQs = questions(for: "a", in: pair)
+        #expect(aQs.count == Tuning.masteryTarget)
+        #expect(Set(aQs.map { LessonScheduler.identity(of: $0) }).count == aQs.count, "no repeated question")
+        #expect(aQs.contains { $0.isReversed }, "the second recognition round is the reverse direction")
+    }
+
+    /// lesson-8-4: a testable gap is never asked the identical question twice inside
+    /// one lesson — not even with the options reshuffled.
+    @Test func aTestableGapIsNeverAskedTheIdenticalQuestionTwice() {
+        for gaps in [[gap("solo")], [gap("a"), gap("b")], (0..<6).map { gap("g\($0)", reviewCount: 3, consecutiveCorrect: 1) }] {
+            let schedule = scheduler.build(for: lesson(gaps), abilityOptionCount: 4)
+            for g in gaps {
+                let keys = questions(for: g.id, in: schedule).map { LessonScheduler.identity(of: $0) }
+                #expect(Set(keys).count == keys.count, "\(g.id) repeats a question")
+            }
+        }
+    }
+
+    /// lesson-8-4: "Practice these now" over one or two missed items is widened with
+    /// the missed concepts' own other cards — the missed items always lead.
+    @Test func followUpScopeIsWidenedWithConceptSiblings() {
+        let pool = (0..<4).map { gap("a\($0)", concept: "ca") } + (0..<4).map { gap("b\($0)", concept: "cb") }
+            + (0..<3).map { gap("z\($0)", concept: "cz") }
+        let ids = LessonScheduler.followUpGapIds(missed: ["a0", "b0"], from: pool, size: 6)
+        #expect(ids.prefix(2) == ["a0", "b0"], "the missed items lead")
+        #expect(ids.count == 6)
+        #expect(Set(ids).count == ids.count, "no duplicates")
+        #expect(ids.allSatisfy { $0.hasPrefix("a") || $0.hasPrefix("b") }, "siblings come from the missed concepts only")
+        // Round-robin: both missed concepts contribute before either is exhausted.
+        #expect(ids.filter { $0.hasPrefix("a") }.count == 3 && ids.filter { $0.hasPrefix("b") }.count == 3)
+
+        // Nothing is added once the missed set already fills a lesson.
+        let full = (0..<8).map { "a\($0)" }
+        #expect(LessonScheduler.followUpGapIds(missed: full, from: pool, size: 6) == full)
+
+        // Mastered and probe siblings are not offered as filler.
+        let mastered = EngineFixtures.gap("a1", concept: "ca", mastered: EngineFixtures.now)
+        var probe = gap("a2", concept: "ca")
+        probe.isProbe = true
+        let thin = [gap("a0", concept: "ca"), mastered, probe, gap("a3", concept: "ca")]
+        #expect(LessonScheduler.followUpGapIds(missed: ["a0"], from: thin, size: 6) == ["a0", "a3"])
+
+        // A gap with no concept has no siblings to widen with, and is returned as-is.
+        #expect(LessonScheduler.followUpGapIds(missed: ["n0"], from: [gap("n0", concept: nil)], size: 6) == ["n0"])
     }
 
     @Test func optionCountIsFlooredAndCorrectAnswerIsAlwaysPresent() {

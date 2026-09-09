@@ -41,10 +41,13 @@ nonisolated enum SnapshotReconciler {
         }
 
         /// True when the device has mutated state since the last successful sync.
+        /// Compared with `isSameInstant`, not `==`: both clocks travel through a
+        /// `timeIntervalSince1970` round trip on their way to `UserDefaults`, which
+        /// is not lossless (store-8-1).
         var isDirty: Bool {
             guard let updatedAt else { return false }
             guard let lastSyncedUpdatedAt else { return true }
-            return updatedAt != lastSyncedUpdatedAt
+            return !SnapshotReconciler.isSameInstant(updatedAt, lastSyncedUpdatedAt)
         }
     }
 
@@ -76,9 +79,13 @@ nonisolated enum SnapshotReconciler {
         guard let remote else { return .pushLocal }
 
         if let remoteServer = remote.serverUpdatedAt,
-           let lastServer = local.lastSyncedServerUpdatedAt,
-           remoteServer >= lastServer {
-            if remoteServer == lastServer {
+           let lastServer = local.lastSyncedServerUpdatedAt {
+            // `isSameInstant`, not `==`: the remembered server timestamp came back
+            // from `UserDefaults` through a lossy `timeIntervalSince1970` round
+            // trip, so an untouched row compared unequal about half the time and
+            // this device applied its own row over itself (store-8-1).
+            let serverUnchanged = isSameInstant(remoteServer, lastServer)
+            if serverUnchanged {
                 // An unchanged server `updated_at` is NOT proof the row has not
                 // moved. It only means that while the database trigger that
                 // maintains the column is not applied, EVERY write leaves it
@@ -99,9 +106,11 @@ nonisolated enum SnapshotReconciler {
                 }
                 return local.isDirty ? .pushLocal : .alreadyInSync
             }
-            // The cloud row moved since this device last synced.
-            if !local.isDirty { return .applyRemote }
-            // Both sides moved: fall through to the client-clock tiebreak.
+            if remoteServer > lastServer {
+                // The cloud row moved since this device last synced.
+                if !local.isDirty { return .applyRemote }
+                // Both sides moved: fall through to the client-clock tiebreak.
+            }
         }
 
         return byClientClock(local: local, remote: remote)
@@ -118,6 +127,21 @@ nonisolated enum SnapshotReconciler {
     /// values can actually agree on.
     static func isSameClientClock(_ a: Date, _ b: Date) -> Bool {
         a.timeIntervalSince1970.rounded(.down) == b.timeIntervalSince1970.rounded(.down)
+    }
+
+    /// True when two `Date`s name the same instant as far as the sync markers can
+    /// tell. `CloudSync` persists a marker as `date.timeIntervalSince1970` and
+    /// reads it back with `Date(timeIntervalSince1970:)`; `Date` counts from 2001,
+    /// so that round trip is `(x + 978307200) - 978307200`, which loses about
+    /// 1e-7 s on roughly half of today's timestamps. Compared with `==`, a device
+    /// that had changed nothing read as dirty (a needless re-upload, and the
+    /// "couldn't back up your progress" warning on sign-out), and an untouched
+    /// cloud row read as moved — which makes a clean device apply its OWN row and
+    /// re-roll the day's plan (store-8-1). `markerInstantTolerance` is far below
+    /// the gap between two real learner actions, so a genuine change is never
+    /// mistaken for the same instant.
+    static func isSameInstant(_ a: Date, _ b: Date) -> Bool {
+        abs(a.timeIntervalSinceReferenceDate - b.timeIntervalSinceReferenceDate) < Tuning.markerInstantTolerance
     }
 
     /// True when an upload finished while a reconcile's read of the row was still

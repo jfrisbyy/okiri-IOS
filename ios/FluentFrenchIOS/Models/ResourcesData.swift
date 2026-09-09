@@ -6,6 +6,7 @@
 //  pronunciation categories, and verb-tense conjugation references.
 //
 
+import Foundation
 import SwiftUI
 
 // MARK: - Idioms

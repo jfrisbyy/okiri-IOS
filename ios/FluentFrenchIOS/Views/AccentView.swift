@@ -298,8 +298,24 @@ private struct AccentPracticeView: View {
         .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .top)))
     }
 
+    /// What the deck button says: already saved, the same word in English (no card
+    /// to make), or an invitation to save.
+    private func saveTitle(saved: Bool, selfGlossed: Bool) -> String {
+        if saved { return "In your deck" }
+        return selfGlossed ? "Same word in English" : "Save to my deck"
+    }
+
+    private func saveSymbol(saved: Bool, selfGlossed: Bool) -> String {
+        if saved { return "checkmark.circle.fill" }
+        return selfGlossed ? "equal.circle.fill" : "plus.circle.fill"
+    }
+
     private var recordCard: some View {
         let saved = store.hasGap(forWord: word.word)
+        // "important", "Paris" and "restaurant" are spelled the same in English:
+        // the store refuses a card whose meaning is its own headword, so the page
+        // says so here instead of opening a sheet that cannot save (read-8-2).
+        let selfGlossed = !saved && draft(for: word).isSelfGlossed
         return VStack(spacing: 12) {
             Image(systemName: "waveform").scaledFont(26).foregroundStyle(category.color)
                 .frame(width: 64 * Theme.chromeScale(typeScale), height: 64 * Theme.chromeScale(typeScale))
@@ -320,22 +336,26 @@ private struct AccentPracticeView: View {
             .accessibilityHint("Marks this word as practiced and moves to the next one")
             .padding(.top, 4)
             Button {
-                guard !saved else { return }
+                guard !saved, !selfGlossed else { return }
                 Haptics.tap()
                 captureDraft = draft(for: word)
             } label: {
-                Label(saved ? "In your deck" : "Save to my deck",
-                      systemImage: saved ? "checkmark.circle.fill" : "plus.circle.fill")
+                Label(saveTitle(saved: saved, selfGlossed: selfGlossed),
+                      systemImage: saveSymbol(saved: saved, selfGlossed: selfGlossed))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(saved ? Theme.success : category.color)
+                    .foregroundStyle(saved ? Theme.success : (selfGlossed ? Theme.textSecondary : category.color))
                     .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
-                    .background(saved ? Theme.successLight : category.color.opacity(0.1))
+                    .background(saved ? Theme.successLight : (selfGlossed ? Theme.borderLight : category.color.opacity(0.1)))
                     .clipShape(.rect(cornerRadius: Radius.chip))
             }
             .buttonStyle(.plain)
-            .disabled(saved)
-            .accessibilityLabel(saved ? "\(word.word) is already in your deck" : "Save \(word.word) to my deck")
-            .accessibilityHint(saved ? "" : "Adds this word to your practice deck")
+            .disabled(saved || selfGlossed)
+            .accessibilityLabel(saved ? "\(word.word) is already in your deck"
+                                : (selfGlossed ? "\(word.word) is the same word in English"
+                                   : "Save \(word.word) to my deck"))
+            .accessibilityHint(saved ? ""
+                               : (selfGlossed ? "Practice the sound here; there is nothing to review as a card"
+                                  : "Adds this word to your practice deck"))
         }
         .padding(20)
         .frame(maxWidth: .infinity)

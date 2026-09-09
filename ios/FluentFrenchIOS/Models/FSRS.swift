@@ -134,11 +134,19 @@ nonisolated enum FSRS {
     /// more; a lapse when recall was already unlikely (low retrievability) is the
     /// expected outcome and keeps more. The ratio is capped below 1 and the result
     /// floored at `Tuning.fsrsMinStability`.
+    ///
+    /// The fraction alone has no absolute bound, so a well-drilled card (stability
+    /// grows past 150 days after ~10 successful reviews) was rescheduled 77 days out
+    /// the moment the learner proved they had forgotten it, and no other path brings
+    /// it back: it is not due, not a review candidate, and its retrievability stays
+    /// near 1 for weeks. `Tuning.fsrsPostLapseMaxDays` bounds how long a forgotten
+    /// card can hide; the cap only ever SHORTENS the interval, so the lapse stays
+    /// strictly sooner than the success it replaced (engine-8-2).
     static func lapseStability(difficulty: Double, stability: Double, retrievability: Double) -> Double {
         let difficultyShape = pow(1 - Tuning.fsrsLapseDifficultyShape, difficulty - Tuning.fsrsNeutralDifficulty)
         let retrievabilityShape = 1 + Tuning.fsrsLapseRetrievabilityShape * (1 - min(1, max(0, retrievability)))
         let ratio = min(Tuning.fsrsLapseMaxRatio, Tuning.fsrsLapseFactorBase * difficultyShape * retrievabilityShape)
-        return max(Tuning.fsrsMinStability, stability * ratio)
+        return max(Tuning.fsrsMinStability, min(stability * ratio, Tuning.fsrsPostLapseMaxDays))
     }
 
     private static func nextInterval(stability: Double) -> Double {

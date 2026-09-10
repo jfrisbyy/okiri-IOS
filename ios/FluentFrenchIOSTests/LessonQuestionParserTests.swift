@@ -398,4 +398,46 @@ struct LessonQuestionParserTests {
         let q = try #require(ok.questions.first)
         #expect(q.prompt == "Je _____ ici." && q.explanation == "Je x-fr ici.")
     }
+
+    // MARK: lesson-9-2 — the model may not offer a second correct meaning
+
+    /// The gap's gloss has two sides ("I like / I love") and the model may answer with
+    /// either; an option that is the OTHER side is a second correct answer. Offering
+    /// it grades a right answer wrong — a heart, an error-log row and an FSRS lapse —
+    /// so it is dropped, exactly as `smartDistractors` already drops it locally.
+    @Test func anOptionThatIsTheGapsOtherMeaningIsDropped() throws {
+        var aime = gap("aime")
+        aime.frenchWord = "j'aime"
+        aime.englishTranslation = "I like / I love"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","prompt":"What does “j’aime” mean?","answer":"I like","options":["I like","I love","I hate","I run","I sleep"]}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [aime], optionCount: 4, seed: 3)
+        let mc = try #require(batch.questions.first { $0.kind == .multipleChoice })
+        #expect(mc.correctAnswer == "I like")
+        #expect(!mc.options.contains { AnswerGrader.normalize($0) == "i love" },
+                "“I love” is also correct for “j'aime”: \(mc.options)")
+        #expect(mc.options.count == 4 && mc.options.contains("I like"))
+        #expect(mc.options.allSatisfy { option in
+            AnswerGrader.optionMatches(option, mc.correctAnswer)
+                || LessonScheduler.distractorSides(of: option)
+                    .isDisjoint(with: LessonScheduler.distractorSides(of: aime.englishTranslation))
+        })
+
+        // The whole gloss offered as a distractor goes the same way, and a single-sided
+        // gloss is untouched.
+        let both = LessonQuestionParser.parse("""
+        {"questions":[{"wordIndex":0,"kind":"multipleChoice","answer":"I love","options":["I love","I like / I love","I hate","I run"]}]}
+        """, gaps: [aime], optionCount: 4, seed: 3)
+        let q = try #require(both.questions.first)
+        #expect(q.correctAnswer == "I love")
+        #expect(!q.options.contains("I like / I love"))
+        let plain = LessonQuestionParser.parse("""
+        {"questions":[{"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","y-en","z-en","w-en"]}]}
+        """, gaps: [gap("x")], optionCount: 4, seed: 3)
+        let plainQ = try #require(plain.questions.first)
+        #expect(plainQ.options.count == 4)
+    }
 }

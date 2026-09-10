@@ -962,7 +962,7 @@ private struct ConverseCallView: View {
                 HStack(spacing: 12) {
                     recapStat(value: timeString, label: "Duration")
                     recapStat(value: "\(userExchanges)", label: "Your lines")
-                    recapStat(value: "\(corrections.count)", label: "To fix")
+                    recapStat(value: "\(corrections.count + unsavableNotes.count)", label: "To fix")
                 }
 
                 whatToFixSection

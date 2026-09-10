@@ -464,6 +464,74 @@ struct ReadCaptureTests {
         #expect(s.pendingTranslations.count == 4)
     }
 
+    @Test func aWordWhoseMeaningTurnsOutToBeItselfIsDroppedNotCompleted() async {
+        let s = quietStore()
+        // A cognate tapped in a live headline while the lookup is unavailable: it
+        // saves fine ("save now, translate later"), and the meaning that comes back
+        // later is the word itself.
+        s.capture(CaptureDraft(untranslated: "situation", sourceType: .reading, sourceTab: "read",
+                               contextSentence: "La situation est difficile."), now: now)
+        s.capture(CaptureDraft(untranslated: "foule", sourceType: .reading, sourceTab: "read"), now: now.addingTimeInterval(60))
+        #expect(s.pendingTranslations.count == 2)
+
+        let resolved = await s.resolvePendingTranslations(using: { term, _ in
+            .gloss(WordGloss(term: term, translation: term == "situation" ? "The situation" : "crowd",
+                             explanation: "e", example: "", exampleTranslation: ""))
+        })
+        // read-9-1: every format a lesson could build for "situation" → "situation"
+        // hands the answer over, so the card is dropped rather than completed — and
+        // it does not sit pending for every later batch to look up again.
+        #expect(s.gaps.map(\.frenchWord) == ["foule"])
+        #expect(s.gaps.first?.englishTranslation == "crowd")
+        #expect(s.pendingTranslations.isEmpty)
+        #expect(resolved == 2, "both left the queue")
+
+        var asked: [String] = []
+        _ = await s.resolvePendingTranslations(using: { term, _ in
+            asked.append(term)
+            return .gloss(WordGloss(term: term, translation: "m", explanation: "", example: "", exampleTranslation: ""))
+        })
+        #expect(asked.isEmpty, "nothing is left to retry")
+    }
+
+    @Test func aWordStillWaitingForItsMeaningDoesNotDriveTheDaysLessons() async {
+        let s = quietStore()
+        #expect(s.gapsSinceLastLesson == 0)
+        for (i, w) in ["souri", "foule", "quotidien"].enumerated() {
+            s.capture(CaptureDraft(untranslated: w, sourceType: .reading, sourceTab: "read"), now: now.addingTimeInterval(Double(i)))
+        }
+        #expect(s.gaps.count == 3)
+        #expect(s.dueNow(at: now.addingTimeInterval(3600)).isEmpty, "no lesson can ask them yet")
+        // read-9-5: so they must not size the day's lessons or light "Lesson ready".
+        #expect(s.gapsSinceLastLesson == 0)
+        #expect(s.pendingLessonMaterial == 0)
+        #expect(!s.shouldOfferConsolidatedLesson(threshold: Tuning.consolidatedLessonThreshold))
+
+        // A capture that HAS a meaning counts at once.
+        s.capture(CaptureDraft(frenchWord: "sourire", englishTranslation: "to smile", sourceType: .reading, sourceTab: "read"), now: now)
+        #expect(s.gapsSinceLastLesson == 1)
+
+        // And a pending word joins the count the moment its meaning lands.
+        let resolved = await s.resolvePendingTranslations(using: { term, _ in
+            .gloss(WordGloss(term: term, translation: "meaning of \(term)", explanation: "", example: "", exampleTranslation: ""))
+        })
+        #expect(resolved == 3)
+        #expect(s.gapsSinceLastLesson == 4)
+    }
+
+    @Test func theSavedHeadwordIndexAgreesWithTheDeckItIsBuiltFrom() {
+        let s = quietStore()
+        s.capture(CaptureDraft(frenchWord: "l\u{2019}eau", englishTranslation: "water", sourceType: .reading, sourceTab: "read"), now: now)
+        s.capture(CaptureDraft(untranslated: "étions", sourceType: .reading, sourceTab: "tenses"), now: now)
+        // read-9-4: the conjugation tables ask "is this form saved, as this tense?"
+        // about ~110 forms per render, so they read the deck once through here.
+        let index = s.savedHeadwordMeanings()
+        #expect(index[AppStore.captureKey("L'eau")] == "water", "the same key `capture` dedupes on")
+        #expect(index[AppStore.captureKey("étions")] == "", "a word still waiting for its meaning is in the deck all the same")
+        #expect(index[AppStore.captureKey("fromage")] == nil)
+        #expect(Set(index.keys) == s.savedHeadwordKeys(), "the two indices never disagree")
+    }
+
     @Test func resolvedTranslationQueuesTagging() async {
         let s = EngineFixtures.store()
         var tagged: [String] = []

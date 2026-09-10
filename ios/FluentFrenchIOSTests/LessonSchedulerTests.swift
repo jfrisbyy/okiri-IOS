@@ -680,4 +680,50 @@ struct LessonSchedulerTests {
         #expect(LessonScoring.xp(forCombo: Tuning.comboHighStreak) == Int((Double(Tuning.xpPerCorrect) * Tuning.comboHighMultiplier).rounded()))
         #expect(LessonScoring.comboMultiplier(0) == 1)
     }
+
+    // MARK: lesson-9-1 — the fill-blank hint never prints the answer
+
+    /// A fill-blank's hint is the example's English. When that English spells the
+    /// French form the blank wants ("Le _____ est en retard." — "The train is late.")
+    /// it is the answer, not a hint: the learner reads it off the caption and a
+    /// first-try fill-blank grades `.easy`, pushing the interval out on a word they
+    /// may not know. The translation still shows in the explanation, after the answer.
+    @Test func aFillBlankHintThatSpellsTheAnswerIsDropped() throws {
+        let s = scheduler
+        var rng = LessonRandom(seed: 4)
+        var leak = gap("train", category: .pronunciation)
+        leak.frenchWord = "le train"
+        leak.blankForm = "train"
+        leak.exampleSentence = "Le train est en retard."
+        leak.exampleTranslation = "The train is late."
+        let q = try #require(s.question(for: leak, kind: .fillBlank, pool: [leak], optionCount: 4, rng: &rng))
+        #expect(q.kind == .fillBlank && q.correctAnswer == "train")
+        #expect(q.hint == nil, "the caption spells the answer")
+        #expect(q.explanation?.contains("The train is late.") == true, "it still explains after the answer is in")
+
+        var kept = gap("trois", category: .vocabulary)
+        kept.frenchWord = "trois"
+        kept.blankForm = "trois"
+        kept.exampleSentence = "Il est trois heures."
+        kept.exampleTranslation = "It is three o'clock."
+        let ok = try #require(s.question(for: kept, kind: .fillBlank, pool: [kept], optionCount: 4, rng: &rng))
+        #expect(ok.hint == "It is three o'clock.", "a hint that does not give the answer stays")
+    }
+
+    /// The same guard holds inside a capstone, where the hint is otherwise kept on
+    /// purpose (identical frames across two items).
+    @Test func aCapstoneFillBlankAlsoDropsALeakingHint() throws {
+        var leak = gap("train", category: .pronunciation)
+        leak.frenchWord = "le train"
+        leak.blankForm = "train"
+        leak.exampleSentence = "Le train est en retard."
+        leak.exampleTranslation = "The train is late."
+        leak.reviewCount = 4
+        leak.consecutiveCorrect = Tuning.productionEvidenceFloor
+        let capstone = lesson([leak], roles: [leak.id: .review], mode: .capstone)
+        let schedule = scheduler.build(for: capstone, abilityOptionCount: 4)
+        let fills = schedule.filter { $0.kind == .fillBlank }
+        #expect(fills.count == 1, "a blankable gap is asked at recall inside a capstone")
+        #expect(fills.allSatisfy { $0.isCapstone && $0.hint == nil })
+    }
 }

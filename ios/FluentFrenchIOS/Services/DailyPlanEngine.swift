@@ -255,7 +255,9 @@ struct DailyPlanEngine {
     /// those are more — at `Tuning.lessonSize` items each, clamped to
     /// [`Tuning.unlockedLessonsPerDayMin`, `Tuning.foundationLessonsPerDay`].
     /// The two are not summed: a capture starts due now (`makeCapturedGap` seeds
-    /// its schedule at capture), so it is already in the due count.
+    /// its schedule at capture), so it is already in the due count. That holds
+    /// because `addGap` counts only captures a lesson can ask about — a word still
+    /// waiting for its meaning is in neither number (read-9-5).
     func lessonTarget(now: Date) -> Int {
         let waiting = max(store.dueNow(at: now).count, store.gapsSinceLastLesson)
         let needed = Int((Double(waiting) / Double(max(1, Tuning.lessonSize))).rounded(.up))

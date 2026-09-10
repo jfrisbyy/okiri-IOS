@@ -566,7 +566,7 @@ struct RetentionCard: View {
             HStack {
                 retentionStat("\(store.masteredThisWeek)", "Mastered this week")
                 Spacer()
-                retentionStat("\(store.dueNow.count)", "Due now")
+                retentionStat("\(store.dueNowCount())", "Due now")
                 Spacer()
                 retentionStat("\(store.upcoming.count)", "Coming up")
             }

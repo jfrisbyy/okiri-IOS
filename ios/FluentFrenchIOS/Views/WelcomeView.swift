@@ -6,6 +6,10 @@
 //  learner is signed in, so all progress is tied to an account from the first tap.
 //
 
+// `Foundation` is named explicitly because `handleApple` uses Foundation members
+// (`String(data:encoding:)`, `PersonNameComponents.formatted()`) on types that
+// come from other modules; MEMBER_IMPORT_VISIBILITY does not honour re-exports.
+import Foundation
 import SwiftUI
 import AuthenticationServices
 

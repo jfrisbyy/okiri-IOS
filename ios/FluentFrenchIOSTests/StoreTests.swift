@@ -185,6 +185,49 @@ struct StoreTests {
         #expect(AppStore(persistence: scratch.defaults).errors.count == 1)
     }
 
+    // MARK: store-9-1 — a sign-out never destroys the preserved unreadable copy
+
+    /// The recovery screen's "Sign out" is a force sign-out: the backup could not be
+    /// verified, so the readable part goes with it. The unreadable copy belongs to
+    /// the device rather than to the account, and it is the last remaining trace of
+    /// the record — it stays.
+    @Test func signingOutKeepsThePreservedUnreadableCopy() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage)
+
+        store.clearForSignOut()
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage,
+                "a sign-out never deletes the unreadable copy")
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.loadError == nil, "and the wiped record reads cleanly next launch")
+        #expect(reloaded.corruptBlob(for: .corruptGaps) == garbage)
+    }
+
+    /// The two deliberate wipes still take it: an explicit "erase everything", and
+    /// another learner taking the device over (nothing of the previous one lingers).
+    @Test func deliberateWipesDiscardThePreservedUnreadableCopy() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        store.acknowledgeLoadError(discard: false)
+        store.resetProgress()
+        #expect(store.corruptBlob(for: .corruptGaps) == nil, "an explicit reset erases everything")
+
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1.corrupt")
+        store.beginSession(userId: "user-1")
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage, "the same device, no new learner")
+        store.beginSession(userId: "user-2")
+        #expect(store.corruptBlob(for: .corruptGaps) == nil,
+                "another learner's device record leaves nothing behind")
+    }
+
     @Test func oldGapJSONWithoutNewKeysDecodesWithDefaults() throws {
         var gap = EngineFixtures.gap("old", concept: "c")
         gap.isProbe = true
@@ -1269,7 +1312,11 @@ struct StoreTests {
         #expect(gap.fsrs != nil && gap.fsrs?.lapses == seededLapses + 1)
         #expect(gap.reviewCount == 1 && gap.consecutiveCorrect == 0)
         #expect(gap.lastReviewedAt == now)
-        #expect(s.gaps.count == 1 && s.gapsSinceLastLesson == 1)
+        #expect(s.gaps.count == 1)
+        // The correction was shortened, so the card carries no English yet. A lesson
+        // cannot ask about it until a lookup fills it in, so it is not counted as
+        // material waiting for the next lesson either (read-9-5).
+        #expect(gap.needsTranslation && s.gapsSinceLastLesson == 0)
         #expect(s.concept(concept.id)?.beta == 1 + Tuning.formatEvidenceWeight(.converse))
 
         // The same corrected form again: deduped on the headword, another lapse on the same gap.
@@ -1369,6 +1416,90 @@ struct StoreTests {
         #expect(s.masteredGaps.isEmpty)
         #expect(s.gaps[0].consecutiveCorrect < Tuning.gapMasteryStreak)
         #expect(s.masteredThisWeek == 0)
+    }
+
+    // MARK: firstrun-9-1 — "you saved N things" counts captures, not curriculum
+
+    @Test func capturedCountIgnoresCurriculumTheStoreSeededItself() {
+        let s = EngineFixtures.store()
+        s.gaps = EngineFixtures.foundationGaps(for: s.concepts.filter { $0.id == "negation" },
+                                               perConcept: 3, at: now)
+        #expect(s.capturedGapCount == 0, "authored curriculum is not something the learner saved")
+
+        // What a Speak / Read section actually banks.
+        s.gaps.insert(EngineFixtures.gap("kept", concept: "negation", sourceType: .speech), at: 0)
+        #expect(s.capturedGapCount == 1)
+
+        // A section that pulls a concept's whole authored slice in mid-session (the
+        // Speak/Converse evidence path) must not report that slice back as captures.
+        let before = s.capturedGapCount
+        let seeded = s.gaps.count
+        s.gaps.append(contentsOf: EngineFixtures.foundationGaps(for: s.concepts.filter { $0.id == "imparfait" },
+                                                                perConcept: 12, at: now))
+        #expect(s.gaps.count > seeded, "the slice really landed")
+        #expect(s.capturedGapCount == before, "…and none of it counts as saved")
+
+        // Mastering a captured card does not un-save it.
+        s.gaps[0].masteredAt = now
+        #expect(s.capturedGapCount == 1)
+    }
+
+    // MARK: firstrun-9-3 — the due scans and the Smart target are computed once
+
+    @Test func dueNowCountMatchesTheDueNowListItSummarises() {
+        let s = EngineFixtures.store()
+        let blocked = EngineFixtures.concept("blocked-c", prerequisites: ["missing-prereq"])
+        let open = EngineFixtures.concept("open-c")
+        s.concepts = [blocked, open, EngineFixtures.concept("missing-prereq")]
+        s.gaps = [
+            EngineFixtures.gap("due", concept: "open-c", due: now.addingTimeInterval(-60)),
+            EngineFixtures.gap("later", concept: "open-c", due: now.addingTimeInterval(3600)),
+            EngineFixtures.gap("blocked", concept: "blocked-c", due: now.addingTimeInterval(-60)),
+            EngineFixtures.gap("mine", concept: "blocked-c", due: now.addingTimeInterval(-60),
+                               sourceType: .speech)
+        ]
+        #expect(s.dueNow(at: now).map(\.id) == ["due", "mine"],
+                "a blocked Foundation item is not due; the learner's own capture always is")
+        #expect(s.dueNowCount(at: now) == s.dueNow(at: now).count)
+        #expect(s.prerequisiteBlockedConceptIds == ["blocked-c"])
+        for gap in s.gaps {
+            #expect(s.isPrerequisiteBlocked(gap, blocked: s.prerequisiteBlockedConceptIds)
+                    == s.isPrerequisiteBlocked(gap), "the set form and the per-gap form agree")
+        }
+
+        // Mastering the prerequisite opens the gate for both forms at once.
+        s.concepts[2] = EngineFixtures.mastered("missing-prereq")
+        #expect(s.prerequisiteBlockedConceptIds.isEmpty)
+        #expect(s.dueNowCount(at: now) == 3 && s.dueNowCount(at: now) == s.dueNow(at: now).count)
+    }
+
+    @Test func theSmartTargetIsMemoisedUntilTheStoreChanges() {
+        // Only the concept that HAS material can be the target, so the answer is
+        // pinned by which concept the gaps belong to.
+        let concepts = [EngineFixtures.concept("alpha"), EngineFixtures.concept("beta")]
+        let alphaGaps = (0..<3).map { EngineFixtures.gap("a\($0)", concept: "alpha", due: now) }
+        let betaGaps = (0..<3).map { EngineFixtures.gap("b\($0)", concept: "beta", due: now) }
+        let s = EngineFixtures.store(concepts: concepts, gaps: alphaGaps)
+
+        let first = s.nextSmartTargetConcept(now: now)
+        #expect(first?.id == "alpha")
+        #expect(first?.id == LessonPipeline(store: s).preview(.smart(now: now)).targetConceptId,
+                "the memo answers exactly what the selector would")
+        #expect(s.nextSmartTargetConcept(now: now)?.id == "alpha", "second read is the memo")
+
+        // Any persisted change retires it, so the label follows the material.
+        let generation = s.mutationGeneration
+        s.gaps = betaGaps
+        s.save(pushToCloud: false)
+        #expect(s.mutationGeneration != generation, "save() retires the memo")
+        #expect(s.nextSmartTargetConcept(now: now)?.id == "beta", "never the stale answer")
+
+        // And a memo never outlives its own clock window either, since a review can
+        // fall due with no mutation at all.
+        s.gaps = alphaGaps
+        #expect(s.nextSmartTargetConcept(now: now)?.id == "beta", "still inside the window")
+        let later = now.addingTimeInterval(Tuning.smartTargetCacheSeconds + 1)
+        #expect(s.nextSmartTargetConcept(now: later)?.id == "alpha", "window closed, recomputed")
     }
 }
 

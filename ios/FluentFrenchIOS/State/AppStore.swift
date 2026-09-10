@@ -269,6 +269,13 @@ final class AppStore {
     // one that is still encoding.
     @ObservationIgnored private var blobWriteTask: Task<Void, Never>? = nil
     @ObservationIgnored private var blobWriteGeneration = 0
+    /// Bumped by every `save()`, i.e. by every persisted change. Render-time memos
+    /// (`nextSmartTargetConcept`) key on it so they can never outlive the data they
+    /// were computed from (firstrun-9-3).
+    @ObservationIgnored private(set) var mutationGeneration = 0
+    /// The memoised answer to "what would a Smart lesson teach next", with the
+    /// generation and the clock reading it was computed at.
+    @ObservationIgnored private var smartTargetMemo: (generation: Int, at: Date, concept: Concept?)? = nil
 
     init(persistence: UserDefaults? = .standard) {
         self.persistence = persistence
@@ -292,6 +299,17 @@ final class AppStore {
     /// not go down as they master the phrases they saved (talkmedia-7-3);
     /// counts of what is still to review read `activeGaps` instead.
     var speechGaps: [GapItem] { gaps.filter { $0.sourceType == .speech && !$0.isProbe } }
+
+    /// How many gaps the LEARNER saved — everything they captured while reading,
+    /// speaking or listening, mastered ones included. Authored curriculum
+    /// (`.foundation`: the placement slice, the bridge slice, the on-demand concept
+    /// slices, probes) is not something the learner "saved", so a "you saved N
+    /// things" number must diff this, never `gaps.count`: one Speak round whose
+    /// feedback names a B1 concept seeds a dozen curriculum items and would
+    /// otherwise be reported back as a dozen captures (firstrun-9-1).
+    var capturedGapCount: Int {
+        gaps.reduce(0) { $0 + ($1.sourceType == .foundation ? 0 : 1) }
+    }
 
     /// Active gaps the learner has actually been asked at least once. Day one seeds
     /// the whole Foundation slice, so `activeGaps` is hundreds of items the learner
@@ -354,9 +372,16 @@ final class AppStore {
     }
 
     /// Capture a freshly built gap and kick off background concept tagging.
+    ///
+    /// `gapsSinceLastLesson` counts material a lesson can actually ask about, so a
+    /// word saved without a meaning (offline, no key, service down) is NOT counted
+    /// here: `dueNow` excludes it and `ConceptSelector.isPracticable` refuses it, so
+    /// counting it would size the day's lessons — and light Home's "Lesson ready"
+    /// card — from words the lesson would then have to skip (read-9-5). It joins the
+    /// count in `applyResolvedTranslation`, the moment it has a meaning.
     func addGap(_ gap: GapItem) {
         gaps.insert(gap, at: 0)
-        gapsSinceLastLesson += 1
+        if !gap.needsTranslation { gapsSinceLastLesson += 1 }
         save()
         tagConcept(for: gap.id)
     }
@@ -933,6 +958,16 @@ final class AppStore {
     /// state below `.unlocked` the modality actually has.
     private func governorHeldVerdict(for modality: LearningModality) -> ModalityReadiness {
         modality == .reading ? .foundation : .locked
+    }
+
+    /// True when Reading is closed ONLY because the retention governor is holding it:
+    /// coverage already clears `readingUnlock`, nothing is recorded open yet, and the
+    /// governor is active. The basics are built in that state, so the gate copy for the
+    /// higher modalities must blame the governor, not the Foundation track (firstrun-9-2).
+    var isReadingHeldByGovernor: Bool {
+        guard isGovernorActive,
+              !unlockedModalities.contains(LearningModality.reading.rawValue) else { return false }
+        return baseReadiness(for: .reading, config: .tuning) == .unlocked
     }
 
     /// The gate with no governor and no recorded unlocks applied — what coverage
@@ -1624,6 +1659,21 @@ final class AppStore {
         return keys
     }
 
+    /// The same index, but carrying each headword's MEANING — for a surface that
+    /// must ask more than "is it saved?" about many words at once. The conjugation
+    /// tables ask whether the saved card covers the tense on screen (read-4-2), one
+    /// question per row and per distinct form; asking it through `existingGap`
+    /// re-scanned the whole deck about a hundred times per render (read-9-4).
+    /// First match wins, exactly as `existingGap(forWord:)` returns the first.
+    func savedHeadwordMeanings() -> [String: String] {
+        var meanings = [String: String](minimumCapacity: gaps.count)
+        for gap in gaps where !gap.isProbe {
+            let key = Self.captureKey(gap.frenchWord)
+            if meanings[key] == nil { meanings[key] = gap.englishTranslation }
+        }
+        return meanings
+    }
+
     /// Store a captured gap unless the same headword is already saved (case-
     /// insensitive). Returns false when it was a duplicate and nothing changed.
     @discardableResult
@@ -1988,7 +2038,14 @@ final class AppStore {
     }
 
     /// Put EVERY field back to the honest empty state of a fresh install.
-    private func resetAllState() {
+    ///
+    /// `discardCorruptBlobs` says whether the preserved "<key>.corrupt" copies go
+    /// too. They belong to the device rather than to an account, they are never
+    /// read back into the app, and they are the last remaining trace of a record
+    /// that could not be decoded — so a sign-out KEEPS them (store-9-1); only a
+    /// deliberate wipe (`resetProgress`) or another learner taking over the device
+    /// removes them.
+    private func resetAllState(discardCorruptBlobs: Bool) {
         saveTask?.cancel()
         saveTask = nil
         // A background encode of the OLD record must never land after the wipe.
@@ -2025,7 +2082,7 @@ final class AppStore {
         // personal (they include the learner's free-text queries), so they go too
         // (store-1-4).
         persistence?.removeObject(forKey: ScenarioStorage.defaultsKey)
-        removeCorruptBlobs()
+        if discardCorruptBlobs { removeCorruptBlobs() }
         loadError = nil
         loadNotices = []
     }
@@ -2036,7 +2093,11 @@ final class AppStore {
     /// sign-out the learner asked for — see `beginSession(userId:)` for the
     /// involuntary case.
     func clearForSignOut() {
-        resetAllState()
+        // The unreadable copies stay: they are the only remaining trace of a record
+        // the app could not decode, they cost a few kilobytes, and a learner signing
+        // out from the recovery screen (offline, unable to restore) must not lose
+        // them (store-9-1).
+        resetAllState(discardCorruptBlobs: false)
         lastSignedInUserId = nil
         persistence?.removeObject(forKey: lastSignedInUserKey)
         save(pushToCloud: false)
@@ -2055,7 +2116,9 @@ final class AppStore {
             persistence?.set(userId, forKey: lastSignedInUserKey)
         }
         guard let previous = lastSignedInUserId, previous != userId else { return false }
-        resetAllState()
+        // A different learner is taking over the device: nothing of the previous
+        // one may linger, the preserved unreadable copies included.
+        resetAllState(discardCorruptBlobs: true)
         save(pushToCloud: false)
         flush()
         return true
@@ -2118,9 +2181,16 @@ final class AppStore {
 
     /// Give a base concept the placement only INFERRED (at or below a cleared band,
     /// but not fully probed) a `.learning` head start (B9): alpha and the raw
-    /// observation count gain `Tuning.placementInferredAlpha`, which sits below
-    /// `Tuning.minObservations` so the concept can never read as mastered from this
-    /// alone. Only a never-observed concept takes it — real evidence already speaks
+    /// observation count gain `Tuning.placementInferredAlpha`. The gain is recorded
+    /// as INFERRED (`Concept.inferredObservations`) so it can never pay for the
+    /// `Tuning.minObservations` floor: it used to supply half of it, and a concept
+    /// the placement never actually asked about became verified mastery — and
+    /// coverage toward the reading unlock — after two correct answers, while a
+    /// concept it probed three times clean was provisional and had to survive
+    /// `Tuning.seedVerificationPasses` check-ins days apart (engine-9-3). The head
+    /// start is still real: the concept reads `.learning` rather than untouched, and
+    /// the alpha it carries makes mastery arrive sooner once answers do.
+    /// Only a never-observed concept takes it — real evidence already speaks
     /// for itself, and a retake must not stack inferences into mastery.
     private func seedInferred(_ conceptId: String, now: Date) {
         guard let idx = concepts.firstIndex(where: { $0.id == conceptId }),
@@ -2128,6 +2198,7 @@ final class AppStore {
         var concept = concepts[idx]
         concept.alpha += Tuning.placementInferredAlpha
         concept.observationCount += Tuning.placementInferredAlpha
+        concept.inferredObservations += Tuning.placementInferredAlpha
         concept.lastTestedAt = now
         concepts[idx] = concept
     }
@@ -2270,6 +2341,9 @@ final class AppStore {
     /// sync clock and queues a debounced cloud push that fires on the next `flush()`.
     /// Cheap enough to call on every answer: nothing is encoded here.
     func save(pushToCloud: Bool = true) {
+        // Every persisted change passes through here, so this is the one place that
+        // can retire a render-time memo (`nextSmartTargetConcept`, firstrun-9-3).
+        mutationGeneration &+= 1
         if pushToCloud {
             localUpdatedAt = Date()
             pendingCloudPush = true
@@ -2440,7 +2514,8 @@ final class AppStore {
     /// Wipe all progress back to a fresh install (DEBUG tooling only — the release
     /// UI never offers it). Persists and pushes so the account matches the device.
     func resetProgress() {
-        resetAllState()
+        // A deliberate "erase everything" — the unreadable copies go too.
+        resetAllState(discardCorruptBlobs: true)
         save()
         flush()
     }
@@ -2526,6 +2601,25 @@ extension AppStore {
         refreshPlan(now: now) { DailyPlanEngine(store: self).makePlan(now: now) }
     }
 
+    /// The concept a Smart lesson would teach next — the name the Foundation card
+    /// puts on today's target, and the same answer `startSmartLesson` will act on.
+    ///
+    /// Memoised, because Home asks on EVERY body pass and the answer is expensive:
+    /// the selector ranks the whole taxonomy and filters the gap list once per
+    /// concept (firstrun-9-3). The memo is retired by any `save()` (every persisted
+    /// change bumps `mutationGeneration`) and, because a review can fall due with no
+    /// mutation at all, by `Tuning.smartTargetCacheSeconds` of wall clock. Previewing
+    /// records nothing, so this is safe to call from a view body.
+    func nextSmartTargetConcept(now: Date = Date()) -> Concept? {
+        if let memo = smartTargetMemo, memo.generation == mutationGeneration {
+            let age = now.timeIntervalSince(memo.at)
+            if age >= 0 && age < Tuning.smartTargetCacheSeconds { return memo.concept }
+        }
+        let target = concept(LessonPipeline(store: self).preview(.smart(now: now)).targetConceptId)
+        smartTargetMemo = (generation: mutationGeneration, at: now, concept: target)
+        return target
+    }
+
     // MARK: Entry-point gate (D1 / D5)
 
     /// Whether Home may open a modality's surface. Reading opens in the bridge
@@ -2547,7 +2641,8 @@ extension AppStore {
                                       readiness: readiness(for: modality),
                                       readingReadiness: readiness(for: .reading),
                                       readingMinutes: totalMinutes(.reading),
-                                      governorActive: isGovernorActive)
+                                      governorActive: isGovernorActive,
+                                      readingHeldByGovernor: isReadingHeldByGovernor)
     }
 
     /// Modalities the learner chose in Preferences that are still locked — Home
@@ -2620,8 +2715,10 @@ extension AppStore {
     /// blocked Foundation item can sit there for weeks. They are surfaced separately
     /// as `waitingForMeaning` and `blockedByPrerequisite`.
     func dueNow(at now: Date) -> [GapItem] {
-        visibleGaps.filter { $0.nextReviewAt <= now && !$0.needsTranslation && !isPrerequisiteBlocked($0) }
-            + dueMasteredGaps(at: now).filter { !isPrerequisiteBlocked($0) }
+        let blocked = prerequisiteBlockedConceptIds
+        return visibleGaps.filter {
+            $0.nextReviewAt <= now && !$0.needsTranslation && !isPrerequisiteBlocked($0, blocked: blocked)
+        } + dueMasteredGaps(at: now).filter { !isPrerequisiteBlocked($0, blocked: blocked) }
     }
 
     /// Words saved without a meaning (offline, no key, service down) that a lesson
@@ -2643,25 +2740,71 @@ extension AppStore {
         return concept.state == .neverObserved && !arePrerequisitesMet(concept)
     }
 
+    /// Every concept id whose Foundation items are prerequisite-blocked right now,
+    /// resolved in ONE pass over the taxonomy. The per-gap form above does a linear
+    /// concept lookup per gap and another per prerequisite, so a scan over a day-one
+    /// slice of hundreds of gaps costs hundreds of thousands of string comparisons —
+    /// three times per Home render (firstrun-9-3). Same rule, same answer.
+    var prerequisiteBlockedConceptIds: Set<String> {
+        var mastered = Set<String>()
+        for concept in concepts where concept.isMastered { mastered.insert(concept.id) }
+        var blocked = Set<String>()
+        for concept in concepts where concept.state == .neverObserved {
+            if !concept.prerequisites.allSatisfy(mastered.contains) { blocked.insert(concept.id) }
+        }
+        return blocked
+    }
+
+    /// `isPrerequisiteBlocked` against a set resolved once by the caller. An untagged
+    /// gap and a gap the learner captured themselves are never blocked, exactly as in
+    /// the per-gap form; a gap tagged with a concept the taxonomy does not know is not
+    /// in the set, so it is not blocked either.
+    func isPrerequisiteBlocked(_ gap: GapItem, blocked: Set<String>) -> Bool {
+        guard gap.sourceType == .foundation, let cid = gap.conceptId else { return false }
+        return blocked.contains(cid)
+    }
+
     /// Gaps `dueNow` and `upcoming` leave out because their concept is still
     /// prerequisite-blocked (`isPrerequisiteBlocked`).
     func blockedByPrerequisite(at now: Date) -> [GapItem] {
-        visibleGaps.filter { $0.nextReviewAt <= now && !$0.needsTranslation && isPrerequisiteBlocked($0) }
+        let blocked = prerequisiteBlockedConceptIds
+        return visibleGaps.filter {
+            $0.nextReviewAt <= now && !$0.needsTranslation && isPrerequisiteBlocked($0, blocked: blocked)
+        }
     }
 
     var dueNow: [GapItem] { dueNow(at: Date()) }
+
+    /// How many gaps are due now — the same rule as `dueNow`, counted in one pass
+    /// without materialising the list. Home draws this number in three places per
+    /// render and never needs the items (firstrun-9-3).
+    func dueNowCount(at now: Date = Date()) -> Int {
+        let blocked = prerequisiteBlockedConceptIds
+        var count = 0
+        for gap in gaps where !gap.isProbe {
+            guard !isPrerequisiteBlocked(gap, blocked: blocked) else { continue }
+            if gap.isMastered {
+                if gap.isDueForMasteryCheck(at: now) { count += 1 }
+            } else if gap.nextReviewAt <= now && !gap.needsTranslation {
+                count += 1
+            }
+        }
+        return count
+    }
 
     /// "Coming up": gaps due within `Tuning.upcomingWindowDays` that are not due now —
     /// unmastered gaps scheduled inside the window, and mastered gaps whose next
     /// check falls inside it. Disjoint from `dueNow`.
     func upcoming(at now: Date) -> [GapItem] {
         let horizon = now.addingTimeInterval(Tuning.upcomingWindowDays * 86_400)
+        let blocked = prerequisiteBlockedConceptIds
         let unmastered = visibleGaps.filter {
-            $0.nextReviewAt > now && $0.nextReviewAt <= horizon && !$0.needsTranslation && !isPrerequisiteBlocked($0)
+            $0.nextReviewAt > now && $0.nextReviewAt <= horizon && !$0.needsTranslation
+                && !isPrerequisiteBlocked($0, blocked: blocked)
         }
         let mastered = masteredGaps.filter {
             !$0.isDueForMasteryCheck(at: now) && $0.nextReviewAt > now && $0.nextReviewAt <= horizon
-                && !isPrerequisiteBlocked($0)
+                && !isPrerequisiteBlocked($0, blocked: blocked)
         }
         return unmastered + mastered
     }
@@ -2933,12 +3076,30 @@ extension AppStore {
     /// Fill a pending gap in from a real gloss: meaning, example (when it had
     /// none), pronunciation and dictionary detail. A gloss with no meaning is
     /// ignored. Once the gap has English the tagger has something to work with,
-    /// so tagging is queued if it is still untagged.
+    /// so tagging is queued if it is still untagged. Returns true when the gap is
+    /// no longer pending — filled in, or dropped as self-glossed (below).
     @discardableResult
     func applyResolvedTranslation(gapId: String, gloss: WordGloss) -> Bool {
         guard gloss.isUsable, let idx = gaps.firstIndex(where: { $0.id == gapId }) else { return false }
+        // The meaning came back as the headword itself ("situation" → "situation").
+        // `capture` refuses such a draft outright and the save buttons grey out for
+        // it (read-8-2), but a word saved offline is only glossed later — and a live
+        // French feed is full of cognates the reader offers as taps. Every format a
+        // lesson could build from the finished card would hand the answer over while
+        // still booking FSRS progress and concept evidence, so the card is dropped
+        // rather than completed; leaving it pending would only have every later
+        // batch look the same word up again, for ever (read-9-1).
+        guard !CaptureBuilder.isSelfGlossed(headword: gaps[idx].frenchWord, meaning: gloss.translation) else {
+            gaps.remove(at: idx)
+            translationAttempts[gapId] = nil
+            save()
+            return true
+        }
         gaps[idx].englishTranslation = gloss.translation.trimmingCharacters(in: .whitespacesAndNewlines)
         gaps[idx].needsTranslation = false
+        // It is askable material now, so it joins the lesson-trigger count it was
+        // deliberately kept out of at capture (read-9-5).
+        gapsSinceLastLesson += 1
         if gaps[idx].explanation.isEmpty || gaps[idx].explanation.hasPrefix("Note:") {
             let note = gaps[idx].explanation
             gaps[idx].explanation = [gloss.explanation, note].filter { !$0.isEmpty }.joined(separator: " · ")
@@ -2974,8 +3135,9 @@ extension AppStore {
     /// cannot parse never blocks every other word saved offline —
     /// `Tuning.pendingTranslationFailureStreak` failures in a row do end the pass,
     /// because that is the service being down rather than one odd word. Returns how
-    /// many were resolved. `resolver` is `TranslationService.lookup` in the app and a
-    /// fake in tests.
+    /// many left the queue (a word whose meaning turns out to be the word itself is
+    /// dropped, not filled in — see `applyResolvedTranslation`). `resolver` is
+    /// `TranslationService.lookup` in the app and a fake in tests.
     @discardableResult
     func resolvePendingTranslations(using resolver: (String, String) async -> GlossLookup,
                                     limit: Int = Tuning.pendingTranslationBatch) async -> Int {

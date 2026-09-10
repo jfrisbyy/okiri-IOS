@@ -288,13 +288,26 @@ struct ConceptSelector {
 
     // MARK: Scoring
 
+    /// Rank a concept on the four axes. The pool the urgency and confusion terms
+    /// read is the material a lesson could ACTUALLY ask for this concept: the same
+    /// filter every selection path applies (`practicableSpine`, the review pool, the
+    /// step-4 filler, `hasPracticableGap`), not the bare item schedule.
+    ///
+    /// Blind-spot probes are the reason this matters (engine-9-1). A probe is a
+    /// one-shot diagnostic: it is asked once, FSRS reschedules it like any item, and
+    /// no lesson will ever offer it again. Scoring it left every probed concept
+    /// permanently overdue — `urgencyScore` saturates after a week — so from seven
+    /// days after each probe that concept sat at a flat +1.0 on the heaviest weight
+    /// in the ranker, for ever, on a question the app refuses to ask. Ranking on the
+    /// same material the lesson can offer keeps the score honest.
     func score(_ concept: Concept, now: Date = Date()) -> Double {
-        let conceptGaps = store.gaps(forConcept: concept.id).filter { $0.isPracticable(at: now) }
+        let conceptGaps = store.gaps(forConcept: concept.id).filter { !$0.isProbe && isPracticable($0, at: now) }
         let w = effectiveWeights
+        let level = learnerLevel()
 
-        let urgency = urgencyScore(conceptGaps, now: now)
+        let urgency = urgencyScore(conceptGaps, now: now) * aboveLevelUrgencyFit(concept, level: level)
         let leverage = leverageScore(concept)
-        let frontierFit = frontierScore(concept, abilityLevel: learnerLevel())
+        let frontierFit = frontierScore(concept, abilityLevel: level)
         let confusion = confusionScore(conceptGaps)
         let recent = recentlyTaughtPenalty(concept)
 
@@ -304,6 +317,26 @@ struct ConceptSelector {
             + w.confusion * confusion
             - w.repeatDamp * recent
             + stallPrerequisiteBonus(concept)
+    }
+
+    /// How much of a concept's overdue-ness counts, given where it sits relative to
+    /// the learner (engine-9-2). Level fit used to be purely ADDITIVE and capped at
+    /// `weights.frontier` (0.8) while urgency is capped at 1.0 and saturates after a
+    /// week, so overdue-ness simply overrode level fit: a skill the learner is
+    /// working through has its items rescheduled by FSRS and decays toward urgency 0,
+    /// while a skill a band or two above them — seeded by a blind-spot probe, say —
+    /// keeps urgency 1.0 for ever and outranks it. A declared beginner was taught B1
+    /// grammar weeks before reading unlocked.
+    ///
+    /// So urgency is GATED by fit above the learner's band: material at or below the
+    /// learner keeps its full urgency (that is exactly what review is for), and
+    /// material above it counts only in proportion to its frontier fit, which reaches
+    /// zero `Tuning.frontierLevelSpanAbove` bands up. Rotting cannot promote a skill
+    /// the learner is not ready for; it can still be reviewed through the review
+    /// pool, it just cannot become the lesson's target.
+    private func aboveLevelUrgencyFit(_ concept: Concept, level: CEFRLevel) -> Double {
+        guard concept.cefrLevel.order > level.order else { return 1 }
+        return frontierScore(concept, abilityLevel: level)
     }
 
     /// Stall remediation (B15): when a concept has stalled, its UNMASTERED
@@ -656,9 +689,14 @@ struct ConceptSelector {
 
         // Per concept: practicable gaps touched inside the recency window, most
         // recent first; if none were, fall back to any practicable gap of the
-        // concept so an early learner still gets a capstone.
+        // concept so an early learner still gets a capstone. Probes are excluded
+        // here as they are everywhere else (engine-9-4): a blind-spot probe is a
+        // one-shot diagnostic whose prompt is a question and whose "translation" is
+        // the answer, and the scheduler drops one that reaches a lesson — so letting
+        // it take a capstone slot only made the milestone quiz come up short and
+        // count a skill it never tested.
         var queues: [[GapItem]] = capstoneRanked.map { scored in
-            let gaps = store.gaps(forConcept: scored.concept.id).filter { isPracticable($0, at: now) }
+            let gaps = store.gaps(forConcept: scored.concept.id).filter { !$0.isProbe && isPracticable($0, at: now) }
             let recent = gaps.filter { ($0.lastReviewedAt ?? .distantPast) >= recentSince }
             return (recent.isEmpty ? gaps : recent).sorted(by: Self.mostRecentlyReviewedFirst)
         }

@@ -282,6 +282,19 @@ struct SimulatedRun {
     private(set) var placement: PlacementOutcome? = nil
     /// Check-in items answered per concept over the whole run (and how many missed).
     private(set) var checkInsByConcept: [String: (asked: Int, missed: Int)] = [:]
+    /// Every lesson target chosen while reading was still LOCKED, with the day, the
+    /// concept's band and the band the learner read as at the time (engine-9-2).
+    private(set) var lockedTargets: [(day: Int, conceptId: String, band: CEFRLevel, learnerBand: CEFRLevel)] = []
+
+    /// Locked-phase targets above the learner's own band, formatted for a failure
+    /// message. A learner still working through Foundation must not be taught a
+    /// skill a band or two above them just because its seeded items rotted
+    /// (engine-9-2).
+    var aboveBandLockedTargets: [String] {
+        lockedTargets
+            .filter { $0.band.order > $0.learnerBand.order }
+            .map { "day \($0.day): \($0.conceptId) (\($0.band.rawValue)) taught to a \($0.learnerBand.rawValue) learner" }
+    }
 
     init(store: AppStore, learner: SyntheticLearner, now: Date) {
         self.driver = EngineDriver(store: store, now: now)
@@ -353,7 +366,13 @@ struct SimulatedRun {
                         violations.append("day \(day): \(item.gapId) belongs to blocked concept \(cid)")
                     }
                 }
-                if let target = output.targetConceptId { learner.teach(target) }
+                if let target = output.targetConceptId {
+                    learner.teach(target)
+                    if !unlockedAtStart, let concept = store.concept(target) {
+                        lockedTargets.append((day: day, conceptId: target, band: concept.cefrLevel,
+                                              learnerBand: output.learnerLevel))
+                    }
+                }
                 var lessonCheckIns: [(String, Bool)] = []
                 let lesson = driver.runLesson(.smart(now: driver.now)) { (gap: GapItem, role: SelectedItemRole) -> Bool in
                     guard let cid = gap.conceptId else { return false }

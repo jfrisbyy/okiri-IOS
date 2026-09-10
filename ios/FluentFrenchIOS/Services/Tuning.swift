@@ -335,8 +335,9 @@ nonisolated enum Tuning {
     /// Ceiling on alpha a placement seed can raise a concept to (repeat placements stop stacking here).
     static let placementSeedAlphaCap: Double = 9
     /// Alpha evidence a band-INFERRED seed adds to a never-observed concept (at or below
-    /// a cleared band but not fully probed). Kept below `minObservations` so it reads
-    /// as `.learning` — a head start, never mastery.
+    /// a cleared band but not fully probed). It reads as `.learning` — a head start,
+    /// never mastery: the weight is booked as `Concept.inferredObservations`, so it
+    /// never pays toward the `minObservations` floor (engine-9-3).
     static let placementInferredAlpha: Double = 2
     /// Real Foundation items seeded per concept the placement missed a probe on. The
     /// probe itself is a cloze stem, never a headword, so it can't become a card.
@@ -479,6 +480,11 @@ nonisolated extension Tuning {
     static let planMinuteBlock: Int = 5
     /// Seconds a Home toast (empty-lesson headline, capture summary) stays on screen.
     static let homeToastSeconds: Double = 2.6
+    /// How long the memoised "next Smart target" stays usable with no store mutation.
+    /// The selection itself only moves when the store changes — except for a review
+    /// falling due, which is pure clock — so this bounds how stale the Foundation
+    /// card's target name can get while Home re-renders.
+    static let smartTargetCacheSeconds: Double = 60
 }
 
 nonisolated extension Tuning {

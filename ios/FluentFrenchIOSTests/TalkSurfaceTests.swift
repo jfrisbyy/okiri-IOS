@@ -81,6 +81,24 @@ struct TalkSurfaceTests {
         #expect(ConverseRecap.unsavableNotes(in: transcript) == ["older shape note"])
     }
 
+    @Test func aNoteSurvivesTheRecapEvenWhenItsRewriteMatchesTheLearner() {
+        // The learner saw this note during the call, so the recap must not lose it
+        // just because the rewrite normalises equal to what they said (talkmedia-9-1).
+        let transcript = [
+            learner("je suis fatigué"),
+            tutor("t-1", correction: "Careful with the accent.", corrected: "Je suis fatigué."),
+            learner("slip"),
+            tutor("t-2", correction: "note-2", corrected: "fixed"),
+            learner("fine"),
+            tutor("t-3", corrected: "fine"),   // rewrite matched, no note → nothing to show
+        ]
+        #expect(ConverseRecap.corrections(in: transcript).map(\.correctedFrench) == ["fixed"])
+        #expect(ConverseRecap.unsavableNotes(in: transcript) == ["Careful with the accent."],
+                "the note of the turn that produced a correction row is not repeated as a bare note")
+        #expect(ConverseRecap.saveCandidate(for: transcript[0], in: transcript) == nil,
+                "nothing to save — the rewrite says what the learner already said")
+    }
+
     // MARK: Reply parsing
 
     @Test func replyParserToleratesTheOlderShapeAndValidatesConceptIds() {

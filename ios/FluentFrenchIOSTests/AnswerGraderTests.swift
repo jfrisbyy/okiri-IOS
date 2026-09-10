@@ -478,4 +478,87 @@ struct AnswerGraderTests {
         }
         #expect(checked > 50, "the content carries items whose blank is a different form (\(checked))")
     }
+
+    // MARK: lesson-9-3 — article leniency is decided by the item, not the skill
+
+    /// The category comes from the SKILL, so an ordinary articled noun that happens to
+    /// sit in a pronunciation or register skill ("le riz" in guttural-r) used to lose
+    /// article leniency and a learner typing "riz" for "rice" was graded wrong. The
+    /// article stays required where it is the point: every grammar item, and any item
+    /// whose English gloss names a determiner of its own ("the friends" — the liaison
+    /// item — "some bread", "a friend").
+    @Test func articleLeniencyFollowsTheItemNotTheSkill() {
+        let rice = gap("le riz", en: "rice", category: .pronunciation)
+        let france = gap("la France", en: "France", category: .pronunciation)
+        let work = gap("le boulot", en: "work (informal)", category: .register)
+        let friends = gap("les amis", en: "the friends", category: .pronunciation)
+        let sea = gap("la mer", en: "the sea", category: .pronunciation)
+        let mondays = gap("le lundi", en: "on Mondays", category: .grammar)
+        let someBread = gap("du pain", en: "some bread", category: .grammar)
+
+        #expect(AnswerGrader.grade(typed: "riz", against: rice, expected: "le riz", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "le riz", against: rice, expected: "le riz", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "France", against: france, expected: "la France", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "boulot", against: work, expected: "le boulot", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "la riz", against: rice, expected: "le riz", kind: .translation) == .incorrect,
+                "leniency drops the article, it never swaps it")
+        #expect(AnswerGrader.grade(typed: "amis", against: friends, expected: "les amis", kind: .translation) == .incorrect,
+                "“the friends” asks for the article the liaison item teaches")
+        #expect(AnswerGrader.grade(typed: "mer", against: sea, expected: "la mer", kind: .translation) == .incorrect)
+        #expect(AnswerGrader.grade(typed: "lundi", against: mondays, expected: "le lundi", kind: .translation) == .incorrect,
+                "grammar keeps its determiner: “lundi” is not “on Mondays”")
+        #expect(AnswerGrader.grade(typed: "pain", against: someBread, expected: "du pain", kind: .translation) == .incorrect)
+        // A fill-blank is still never lenient: the sentence around the hole supplies
+        // the determiner.
+        var blanked = rice
+        blanked.blankForm = "riz"
+        blanked.exampleSentence = "Le riz est chaud."
+        #expect(AnswerGrader.grade(typed: "le riz", against: blanked, expected: "riz", kind: .fillBlank) == .incorrect)
+
+        #expect(AnswerGrader.isArticleLenient(rice) && AnswerGrader.isArticleLenient(work))
+        #expect(!AnswerGrader.isArticleLenient(friends) && !AnswerGrader.isArticleLenient(mondays))
+        #expect(AnswerGrader.isArticleLenient(gap("le pain", en: "the bread")), "vocabulary is lenient as before")
+        #expect(!AnswerGrader.isArticleLenient(gap("parler", en: "to speak", category: .pronunciation)),
+                "an item with no article of its own has nothing to be lenient about")
+        #expect(AnswerGrader.glossCarriesDeterminer("the sea") && AnswerGrader.glossCarriesDeterminer("a friend (male)"))
+        #expect(!AnswerGrader.glossCarriesDeterminer("cats (in general)") && !AnswerGrader.glossCarriesDeterminer("rice"))
+    }
+
+    // MARK: lesson-9-1 — a hint that spells the answer is not a hint
+
+    @Test func aHintThatSpellsTheAnswerIsSuppressed() {
+        #expect(AnswerGrader.hintRevealsAnswer("The train is late.", answer: "train"))
+        #expect(AnswerGrader.hintRevealsAnswer("My parents live here.", answer: "parents"))
+        #expect(AnswerGrader.hintRevealsAnswer("Why is he looking at me?", answer: "me"))
+        #expect(AnswerGrader.hintRevealsAnswer("She has a sister.", answer: "a"))
+        #expect(AnswerGrader.hintRevealsAnswer("She drinks tea in the evening.", answer: "thé"),
+                "accents folded: typing the English “the” already grades close-accents")
+        #expect(!AnswerGrader.hintRevealsAnswer("It is three o'clock.", answer: "trois"))
+        #expect(!AnswerGrader.hintRevealsAnswer("The trainer is late.", answer: "train"), "whole words only")
+        #expect(!AnswerGrader.hintRevealsAnswer("", answer: "train") && !AnswerGrader.hintRevealsAnswer("x", answer: " "))
+        #expect(AnswerGrader.safeHint("The train is late.", answer: "train") == nil)
+        #expect(AnswerGrader.safeHint("  It is three o'clock. ", answer: "trois") == "It is three o'clock.")
+        #expect(AnswerGrader.safeHint("   ", answer: "trois") == nil)
+    }
+
+    /// Over the shipped content: no fill-blank ever ships a hint that contains the
+    /// French form its blank is asking for.
+    @Test func noShippedFillBlankHintContainsItsOwnAnswer() throws {
+        let data = try #require(bundledContentData(), "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        let gaps = FoundationContentLoader.gaps(from: file, now: EngineFixtures.now)
+        var scheduler = LessonSchedulerConfig.tuning
+        scheduler.seed = 11
+        let builder = LessonScheduler(config: scheduler)
+        var rng = LessonRandom(seed: 11)
+        var asked = 0
+        for gap in gaps where LessonScheduler.isBlankable(gap) {
+            guard let q = builder.question(for: gap, kind: .fillBlank, pool: [gap], optionCount: 4, rng: &rng),
+                  q.kind == .fillBlank else { continue }
+            asked += 1
+            #expect(!AnswerGrader.hintRevealsAnswer(q.hint ?? "", answer: q.correctAnswer),
+                    "\(gap.id): the hint “\(q.hint ?? "")” spells “\(q.correctAnswer)”")
+        }
+        #expect(asked > 100, "the content ships fill-blanks (\(asked))")
+    }
 }

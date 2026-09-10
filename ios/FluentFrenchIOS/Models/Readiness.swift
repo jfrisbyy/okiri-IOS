@@ -50,11 +50,17 @@ nonisolated enum ReadinessCopy {
     /// current readings. Nil when the modality is unlocked (nothing to explain).
     /// `readingMinutes` is lifetime demonstrated reading, so a higher modality can
     /// show real progress toward its bar ("8 of 15 min of Reading so far").
+    /// `readingHeldByGovernor` says WHY Reading is not open when it isn't: true when
+    /// coverage alone would have unlocked it and only the retention governor is
+    /// holding it in the bridge (`AppStore.isReadingHeldByGovernor`). The basics are
+    /// built in that state, so the higher modalities must not be told to build them
+    /// (firstrun-9-2).
     static func unlockCondition(for modality: LearningModality,
                                 readiness: ModalityReadiness,
                                 readingReadiness: ModalityReadiness,
                                 readingMinutes: Int,
                                 governorActive: Bool,
+                                readingHeldByGovernor: Bool = false,
                                 config: ReadinessConfig = .tuning) -> String? {
         switch modality {
         case .reading:
@@ -76,7 +82,13 @@ nonisolated enum ReadinessCopy {
         default:
             guard readiness != .unlocked else { return nil }
             guard readingReadiness == .unlocked else {
-                return "Unlocks after Reading — build the basics first."
+                // Reading itself can be closed for two different reasons, and the
+                // sentence has to name the right one: coverage still building, or
+                // the governor holding a coverage bar the learner already cleared.
+                // Telling a learner at 14 of 14 skills to "build the basics first"
+                // is a dead end they cannot act on (firstrun-9-2).
+                return readingHeldByGovernor ? governorCondition(for: modality)
+                                             : "Unlocks after Reading — build the basics first."
             }
             if governorActive { return governorCondition(for: modality) }
             let bar = config.higherDemonstratedMinutes
@@ -91,6 +103,14 @@ nonisolated enum ReadinessCopy {
     /// The governor holds a gate that coverage alone would open (Pass 3 F6).
     static func governorCondition(for modality: LearningModality) -> String {
         "Consolidating your base before opening \(modality.label.lowercased())."
+    }
+
+    /// The header over Home's locked-activity chips. "Build the basics" is a task a
+    /// learner at full base coverage has already finished, so while the governor is
+    /// the only thing holding the gate the header names consolidation instead
+    /// (firstrun-9-2).
+    static func lockedActivitiesHeader(readingHeldByGovernor: Bool) -> String {
+        readingHeldByGovernor ? "UNLOCKS AS YOU CONSOLIDATE" : "UNLOCKS AS YOU BUILD THE BASICS"
     }
 
     /// The plan's unlock item headline: "15 min of Reading unlocks Listening & Speaking".

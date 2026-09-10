@@ -26,10 +26,10 @@ nonisolated enum AnswerGrader {
     /// accepted alternatives, and (for vocabulary) the headword with or without
     /// its leading article.
     ///
-    /// Article leniency (vocabulary TRANSLATIONS only) is one-directional: "pain" is
-    /// accepted for "le pain" and "le pain" for "pain", but "la pain" is NOT accepted
-    /// for "le pain" — when the content carries an article, the article is part of
-    /// the answer.
+    /// Article leniency (TRANSLATIONS only, on the items `isArticleLenient` allows) is
+    /// one-directional: "pain" is accepted for "le pain" and "le pain" for "pain", but
+    /// "la pain" is NOT accepted for "le pain" — when the content carries an article,
+    /// the article is part of the answer.
     ///
     /// A FILL-BLANK gets no article leniency at all: the sentence around the blank
     /// already supplies (or withholds) the determiner, so an added or dropped article
@@ -42,7 +42,7 @@ nonisolated enum AnswerGrader {
 
         let candidates = acceptedForms(for: gap, expected: expected, kind: kind)
         guard !candidates.isEmpty else { return .incorrect }
-        let lenient = gap.category == .vocabulary && kind != .fillBlank
+        let lenient = isArticleLenient(gap) && kind != .fillBlank
 
         // 1. Exact (case-insensitive, normalised) match.
         for candidate in candidates where matches(typedNorm, candidate.normalized, articleLenient: lenient, fold: { $0 }) {
@@ -90,7 +90,7 @@ nonisolated enum AnswerGrader {
         // like every other alternative it has to fit the blank: in a fill-blank the
         // sentence already carries the determiner, and "Also accepted: la mère" under
         // "Ma _____ est gentille." advertises "Ma la mère est gentille."
-        if kind.isTyped, gap.category == .vocabulary, acceptsHeadword(gap, expected: expected),
+        if kind.isTyped, isArticleLenient(gap), acceptsHeadword(gap, expected: expected),
            kind != .fillBlank || fitsBlank(gap.frenchWord, gap: gap, expected: expected) {
             raw.append(gap.frenchWord)
         }
@@ -286,6 +286,65 @@ nonisolated enum AnswerGrader {
         if let bare = strippingArticle(headword), bare == expectedNorm { return true }
         if let expectedBare = strippingArticle(expectedNorm), expectedBare == headword { return true }
         return false
+    }
+
+    /// Whether this ITEM's leading article is optional in a typed translation
+    /// (lesson-9-3).
+    ///
+    /// The category comes from the SKILL, not the word, so keying leniency to it alone
+    /// makes the rule read as arbitrary: "le riz" glossed "rice" sits in the guttural-r
+    /// PRONUNCIATION skill, and a learner typing "riz" for "Translate to French: rice"
+    /// was graded wrong while the same noun inside a vocabulary skill was accepted.
+    ///
+    /// So the decision is made from the item:
+    ///   • a vocabulary item stays lenient as before — the skill is about the word;
+    ///   • a GRAMMAR item never is: there the determiner is routinely the very thing
+    ///     taught ("du pain" vs "pain", "le lundi" = "on Mondays", "des chats");
+    ///   • any other skill is lenient only for an ordinary articled noun whose ENGLISH
+    ///     gloss carries no determiner of its own ("rice", "France", "work") — when the
+    ///     gloss says "the sea" or "a friend", the prompt already names the determiner
+    ///     and the answer is expected to carry it (pronunciation "les amis" — the
+    ///     liaison item — keeps its article).
+    static func isArticleLenient(_ gap: GapItem) -> Bool {
+        if gap.category == .vocabulary { return true }
+        guard gap.category != .grammar else { return false }
+        guard strippingArticle(normalize(gap.frenchWord)) != nil else { return false }
+        return !glossCarriesDeterminer(gap.englishTranslation)
+    }
+
+    /// Whether an English gloss names a determiner of its own, on either side of an
+    /// "a / b" gloss. Parenthetical tags are dropped first ("cats (in general)").
+    static func glossCarriesDeterminer(_ gloss: String) -> Bool {
+        let words = fold(normalize(gloss)).split(whereSeparator: { !$0.isLetter }).map(String.init)
+        return words.contains { englishDeterminers.contains($0) }
+    }
+
+    /// English determiners: a gloss carrying one of these is asking for the French
+    /// determiner too.
+    static let englishDeterminers: Set<String> = ["the", "a", "an", "some", "any", "one", "no",
+                                                  "my", "your", "his", "her", "its", "our", "their",
+                                                  "this", "that", "these", "those", "each", "every"]
+
+    /// Whether a fill-blank's hint would hand the learner the answer (lesson-9-1).
+    ///
+    /// A fill-blank's hint is the example's English, and nine shipped items keep the
+    /// French form inside it — "Le _____ est en retard." captioned "The train is late."
+    /// The learner reads the answer off the caption, and a first-try fill-blank grades
+    /// `.easy`, so the free pass pushes the FSRS interval out on a word they may not
+    /// know. True when the expected form occurs as a whole word in the hint, with
+    /// accents folded so "thé" is caught inside "the tea".
+    static func hintRevealsAnswer(_ hint: String, answer: String) -> Bool {
+        let form = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !form.isEmpty, !hint.isEmpty else { return false }
+        if !wholeWordRanges(of: form, in: hint, caseInsensitive: true).isEmpty { return true }
+        return !wholeWordRanges(of: fold(form), in: fold(hint), caseInsensitive: true).isEmpty
+    }
+
+    /// A fill-blank hint, or nil when it would reveal the answer.
+    static func safeHint(_ hint: String, answer: String) -> String? {
+        let trimmed = hint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !hintRevealsAnswer(trimmed, answer: answer) else { return nil }
+        return trimmed
     }
 
     // MARK: - Normalisation

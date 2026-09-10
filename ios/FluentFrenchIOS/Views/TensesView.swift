@@ -31,14 +31,19 @@ struct TensesView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // What the deck already holds, read ONCE per render. Every row and every
+        // save hint asks "is this form saved, as this tense?", and asking that
+        // through `store.existingGap(forWord:)` re-scanned the whole deck about a
+        // hundred times per body evaluation (read-9-4).
+        let saved = store.savedHeadwordMeanings()
+        return VStack(spacing: 0) {
             header
             tenseChips
             ScrollView {
                 VStack(spacing: 16) {
                     if let currentTense { infoCard(currentTense) }
                     ForEach(TensesData.verbs) { verb in
-                        verbCard(verb)
+                        verbCard(verb, saved: saved)
                     }
                 }
                 .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 44)
@@ -111,10 +116,11 @@ struct TensesView: View {
     /// Whether the deck already holds this form AS the tense on screen. A form two
     /// tenses spell alike is one card, so "saved" has to mean the card covers this
     /// tense — not merely that the spelling is somewhere in the deck (read-4-2).
-    private func isSaved(_ form: String, in tense: FrenchTense) -> Bool {
+    /// `saved` is the deck index built once per render by `body`.
+    private func isSaved(_ form: String, in tense: FrenchTense, saved: [String: String]) -> Bool {
         let word = form.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let gap = store.existingGap(forWord: word) else { return false }
-        return ConjugationCard.covers(tense: tense.name, meaning: gap.englishTranslation)
+        guard let meaning = saved[AppStore.captureKey(word)] else { return false }
+        return ConjugationCard.covers(tense: tense.name, meaning: meaning)
     }
 
     /// The taxonomy concept a tense/verb pair is evidence of (nil when none fits).
@@ -208,7 +214,7 @@ struct TensesView: View {
         .softLift(radius: 14, y: 5, strength: 0.85)
     }
 
-    private func verbCard(_ verb: FrenchVerb) -> some View {
+    private func verbCard(_ verb: FrenchVerb, saved: [String: String]) -> some View {
         let conj = verb.tenses[selectedTense]
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -240,7 +246,7 @@ struct TensesView: View {
                             .accessibilityLabel("Listen to \(item.pronoun) \(item.form)")
                             .accessibilityHint("Reads the French aloud")
                             if let tense = currentTense {
-                                saveButton(for: verb, in: tense, pronoun: item.pronoun, form: item.form)
+                                saveButton(for: verb, in: tense, pronoun: item.pronoun, form: item.form, saved: saved)
                             }
                         }
                         .padding(.vertical, 2)
@@ -249,7 +255,7 @@ struct TensesView: View {
                         }
                     }
                 }
-                if let tense = currentTense { saveHint(for: verb, in: tense, forms: conj.forms()) }
+                if let tense = currentTense { saveHint(for: verb, in: tense, forms: conj.forms(), saved: saved) }
             }
         }
         .padding(18)
@@ -262,47 +268,48 @@ struct TensesView: View {
 
     /// Save-to-deck affordance (E25) for ONE conjugated form.
     private func saveButton(for verb: FrenchVerb, in tense: FrenchTense,
-                            pronoun: String, form: String) -> some View {
-        let saved = isSaved(form, in: tense)
+                            pronoun: String, form: String, saved: [String: String]) -> some View {
+        let alreadySaved = isSaved(form, in: tense, saved: saved)
         return Button {
-            guard !saved, let draft = draft(for: verb, in: tense, pronoun: pronoun, form: form) else { return }
+            guard !alreadySaved, let draft = draft(for: verb, in: tense, pronoun: pronoun, form: form) else { return }
             Haptics.tap()
             captureDraft = draft
         } label: {
-            Image(systemName: saved ? "checkmark.circle.fill" : "plus.circle")
+            Image(systemName: alreadySaved ? "checkmark.circle.fill" : "plus.circle")
                 .scaledFont(13)
-                .foregroundStyle(saved ? Theme.success : Theme.indigo)
+                .foregroundStyle(alreadySaved ? Theme.success : Theme.indigo)
                 .frame(width: 28 * Theme.chromeScale(typeScale), height: 28 * Theme.chromeScale(typeScale))
-                .background(saved ? Theme.successLight : Theme.indigo.opacity(0.1)).clipShape(.circle)
+                .background(alreadySaved ? Theme.successLight : Theme.indigo.opacity(0.1)).clipShape(.circle)
                 .minimumHitTarget()
         }
         .buttonStyle(.plain)
-        .disabled(saved)
-        .accessibilityLabel(saved ? "\(pronoun) \(form) is already in your deck"
-                                  : "Save \(pronoun) \(form) to my deck")
-        .accessibilityHint(saved ? "" : "Adds this form to your practice deck")
+        .disabled(alreadySaved)
+        .accessibilityLabel(alreadySaved ? "\(pronoun) \(form) is already in your deck"
+                                         : "Save \(pronoun) \(form) to my deck")
+        .accessibilityHint(alreadySaved ? "" : "Adds this form to your practice deck")
     }
 
     /// How much of this table is already in the deck, and how to add the rest.
     private func saveHint(for verb: FrenchVerb, in tense: FrenchTense,
-                          forms: [(pronoun: String, form: String)]) -> some View {
+                          forms: [(pronoun: String, form: String)],
+                          saved: [String: String]) -> some View {
         // Count DISTINCT forms: the deck keys cards by headword, so the repeated
         // rows of a paradigm (être/imparfait "étais" for je and tu) are one card,
         // and counting rows would jump to "2 of 6" after a single save. A card
         // only counts when it covers THIS tense (read-4-2).
         let unique = Set(forms.map { $0.form.trimmingCharacters(in: .whitespacesAndNewlines) })
-        let saved = unique.filter { isSaved($0, in: tense) }.count
+        let savedCount = unique.filter { isSaved($0, in: tense, saved: saved) }.count
         let text: String
-        if saved == 0 {
+        if savedCount == 0 {
             text = "Tap + on a form to save it to your deck"
-        } else if saved >= unique.count {
+        } else if savedCount >= unique.count {
             text = "Every form of \(verb.infinitive) in the \(tense.name.lowercased()) is in your deck"
         } else {
-            text = "\(saved) of \(unique.count) forms in your deck"
+            text = "\(savedCount) of \(unique.count) forms in your deck"
         }
         return Text(text)
             .font(.footnote)
-            .foregroundStyle(saved >= unique.count ? Theme.success : Theme.textSecondary)
+            .foregroundStyle(savedCount >= unique.count ? Theme.success : Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

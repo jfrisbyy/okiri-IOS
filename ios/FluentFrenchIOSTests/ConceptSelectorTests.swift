@@ -78,6 +78,60 @@ struct ConceptSelectorTests {
         #expect(score("at-a1") > 0, "and it does not write off everything the learner has passed")
     }
 
+    /// engine-9-2: level fit only ordered material while urgency was EQUAL. The
+    /// frontier term is additive and capped at `weights.frontier` (0.8) while urgency
+    /// is capped at 1.0 and saturates a week after an item falls due, so a skill the
+    /// learner is actually working through — its items rescheduled by FSRS, urgency
+    /// decaying to nothing — was outranked by a skill two bands above them that
+    /// nothing had ever touched. Urgency is now GATED by fit above the learner's
+    /// band: rotting cannot promote material the learner is not ready for. At or
+    /// below the band nothing changes — overdue at-level material is exactly what
+    /// review is for.
+    @Test func overduenessNeverPromotesMaterialAboveTheLearnersBand() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        // The A1 skill the beginner is mid-way through, practised two days ago and
+        // not due again for three, versus a B1 skill (seeded when a blind-spot probe
+        // was answered) that has been overdue for ten days.
+        let concepts = [EngineFixtures.learning("a1-skill", mastery: 0.5, level: .A1),
+                        EngineFixtures.learning("b1-skill", mastery: 0.5, level: .B1)]
+        let gaps = [EngineFixtures.gap("a1-0", concept: "a1-skill", due: now.addingTimeInterval(3 * day),
+                                       reviewCount: 2, lastReviewed: now.addingTimeInterval(-2 * day)),
+                    EngineFixtures.gap("b1-0", concept: "b1-skill", level: .B1,
+                                       due: now.addingTimeInterval(-10 * day))]
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps, theta: -0.8)   // reads A1
+        let selector = ConceptSelector(store: store)
+        func score(_ id: String) -> Double { selector.score(store.concept(id)!, now: now) }
+        #expect(selector.learnerLevel() == .A1)
+
+        #expect(score("a1-skill") > score("b1-skill"),
+                "a1 \(score("a1-skill")) vs b1 \(score("b1-skill"))")
+        let output = selector.select(.smart(now: now))
+        #expect(output.targetConceptId == "a1-skill", "the beginner is taught their own band")
+        #expect(output.rankedConcepts.first?.concept.id == "a1-skill")
+
+        // Ten days overdue buys the out-of-band skill nothing at all…
+        func setDue(_ gapId: String, _ due: Date) {
+            let idx = store.gaps.firstIndex { $0.id == gapId }!
+            store.gaps[idx].nextReviewAt = due
+        }
+        setDue("b1-0", now.addingTimeInterval(3 * day))
+        let restedB1 = score("b1-skill")
+        setDue("b1-0", now.addingTimeInterval(-10 * day))
+        #expect(abs(score("b1-skill") - restedB1) < 1e-9, "urgency is spent two bands above the learner")
+
+        // …while the same ten days count in FULL for material at or below the band.
+        store.abilityTheta = 1.0                                                        // reads B1
+        #expect(selector.learnerLevel() == .B1)
+        let restedA1 = score("a1-skill")
+        setDue("a1-0", now.addingTimeInterval(-10 * day))
+        #expect(abs((score("a1-skill") - restedA1) - ConceptSelectionWeights.tuning.urgency) < 1e-9,
+                "an overdue A1 item for a B1 learner still earns the whole urgency weight")
+        let atLevel = score("b1-skill")
+        setDue("b1-0", now.addingTimeInterval(3 * day))
+        #expect(atLevel - score("b1-skill") > 0, "and so does material at the learner's own band")
+    }
+
     @Test func learnerLevelFollowsAbility() {
         let store = EngineFixtures.store()
         let selector = ConceptSelector(store: store)
@@ -280,6 +334,45 @@ struct ConceptSelectorTests {
         store.gaps = [probe]
         #expect(!selector.hasPracticableGap(store.concept("c")!, now: now))
         #expect(selector.select(.smart(now: now)).isEmpty)
+    }
+
+    /// engine-9-1: and it can never keep its concept URGENT either. `score` pooled a
+    /// concept's gaps straight off the item schedule, without the `!isProbe` filter
+    /// every selection path applies, so a probe answered once — rescheduled by FSRS
+    /// and then never offered again — left its concept permanently overdue. Urgency
+    /// saturates a week out and is the heaviest weight in the ranker, so from then on
+    /// that concept carried a flat +1.0 for ever, earned on a question the app
+    /// refuses to ask.
+    @Test func anAnsweredProbeNeverDrivesItsConceptsUrgency() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let later = now.addingTimeInterval(40 * day)
+        // Two concepts with identical, not-yet-due material. One of them was probed:
+        // the probe was answered, rescheduled, and has been overdue ever since.
+        let concepts = [EngineFixtures.concept("p"), EngineFixtures.concept("q")]
+        var gaps = [EngineFixtures.gap("p-0", concept: "p", due: now.addingTimeInterval(60 * day)),
+                    EngineFixtures.gap("q-0", concept: "q", due: now.addingTimeInterval(60 * day))]
+        var probe = EngineFixtures.gap("probe-p-0", concept: "p", due: now,
+                                       reviewCount: 1, lastReviewed: now)
+        probe.isProbe = true
+        probe.probeOptions = ["x", "y", "z"]
+        gaps.append(probe)
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps, theta: -1.0)
+        store.sessionIndex = 1   // not a probe session: no fresh probe is injected
+        let selector = ConceptSelector(store: store)
+        func scores(_ when: Date) -> (Double, Double) {
+            (selector.score(store.concept("p")!, now: when), selector.score(store.concept("q")!, now: when))
+        }
+
+        let atProbeTime = scores(now)
+        #expect(abs(atProbeTime.0 - atProbeTime.1) < 1e-9, "\(atProbeTime)")
+        let longAfter = scores(later)
+        #expect(abs(longAfter.0 - longAfter.1) < 1e-9,
+                "40 days on, the probed concept is still ranked like its twin: \(longAfter)")
+
+        // And the probe is still not asked — the diagnostic drove nothing at all.
+        let output = selector.select(.smart(now: later))
+        #expect(!output.items.contains { $0.gapId == "probe-p-0" })
     }
 
     // MARK: E4 — a gap with no meaning yet can never carry a lesson
@@ -822,6 +915,34 @@ struct ConceptSelectorTests {
         let output = ConceptSelector(store: store).select(SelectionRequest(mode: .capstone, lessonSize: 5, now: EngineFixtures.now))
         #expect(output.items.count == 5)
         #expect(Set(output.items.compactMap { $0.conceptId }).count == 3, "breadth before depth")
+    }
+
+    /// engine-9-4: the capstone queue was the ONE selection path that did not exclude
+    /// probes, so a blind-spot probe could take a slot in the milestone quiz — where
+    /// the scheduler then silently drops it. The quiz came up short of
+    /// `Tuning.capstoneSize` and its headline counted a skill it never tested; with
+    /// the probe as the only practicable item the learner landed straight on the
+    /// completion screen.
+    @Test func capstoneNeverPullsInABlindSpotProbe() {
+        let now = EngineFixtures.now
+        var probe = EngineFixtures.gap("probe-c-0", concept: "c", due: now,
+                                       reviewCount: 1, lastReviewed: now.addingTimeInterval(-EngineFixtures.day))
+        probe.isProbe = true
+        probe.probeOptions = ["x", "y", "z"]
+        let real = EngineFixtures.gap("c-0", concept: "c", reviewCount: 1,
+                                      lastReviewed: now.addingTimeInterval(-EngineFixtures.day))
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.7)],
+                                         gaps: [real, probe])
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.capstone(now: now))
+        #expect(output.items.map { $0.gapId } == ["c-0"], "\(output.items.map { $0.gapId })")
+        #expect(output.headline == "Capstone: a mixed check across 1 skill.")
+
+        // With nothing but the probe there is honestly nothing to test — an empty
+        // quiz with an honest headline, not a quiz whose only item gets dropped.
+        store.gaps = [probe]
+        #expect(ConceptSelector(store: store).select(.capstone(now: now)).isEmpty)
     }
 
     @Test func capstoneIsEmptyBeforeAnythingWasObserved() {

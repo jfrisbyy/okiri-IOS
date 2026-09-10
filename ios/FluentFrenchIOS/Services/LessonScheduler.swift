@@ -191,6 +191,9 @@ nonisolated struct LessonScheduler {
                     // items ("Il est ___ heures." for both trois and cinq). Without it
                     // a correct French answer is graded "slipped" and the capstone
                     // records a lapse at capstone weight on an item the learner knows.
+                    // (It is already nil for the few examples whose English prints the
+                    // French answer — `AnswerGrader.safeHint`, lesson-9-1 — so a
+                    // capstone never reads the answer out either.)
                     rounds[0].append(q)
                 }
                 continue
@@ -361,8 +364,14 @@ nonisolated struct LessonScheduler {
             var explanation = gap.exampleSentence
             if !translation.isEmpty { explanation += " — \(translation)" }
             if !note.isEmpty { explanation += "\n\(note)" }
+            // The hint is the example's English, and a handful of shipped examples spell
+            // the French answer inside it ("Le _____ est en retard." — "The train is
+            // late."): that hands the learner the answer, and a first-try fill-blank
+            // grades `.easy`, pushing the interval out on a word they may not know
+            // (lesson-9-1). `safeHint` drops the caption in exactly those cases; the
+            // translation still appears in the explanation, after the answer is in.
             return LessonQuestion(gap: gap, kind: .fillBlank, prompt: prompt, correctAnswer: answer,
-                                  hint: translation.isEmpty ? nil : translation, role: role,
+                                  hint: AnswerGrader.safeHint(translation, answer: answer), role: role,
                                   explanation: explanation)
 
         case .trueFalse:

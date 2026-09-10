@@ -549,6 +549,47 @@ struct Pass3EngineTests {
                 "the inferred concept is eligible as a learning target")
     }
 
+    /// engine-9-3: a band-INFERRED seed is a guess, not evidence. Crediting it to the
+    /// raw observation count as well as to alpha handed it half of the
+    /// `Tuning.minObservations` floor, so a concept the placement never actually
+    /// asked about became VERIFIED mastery — and coverage toward the reading unlock —
+    /// after two correct answers, while a concept the placement probed
+    /// `Tuning.placementProbesPerConcept` times clean was marked provisional and had
+    /// to survive `Tuning.seedVerificationPasses` check-ins days apart. The head start
+    /// is still real (the concept reads `.learning`, and its alpha makes mastery
+    /// arrive sooner), it just cannot pay for the floor.
+    @Test func aBandInferredSeedNeverPaysForTheMasteryFloor() {
+        let s = EngineFixtures.store()
+        let cid = "possessive-adjectives"
+        #expect(ConceptTaxonomy.baseConceptIds.contains(cid), "the fixture concept is one the unlock counts")
+        let result = PlacementResult(vocabBand: 1, grammarBand: 1, estimatedLevel: .A1, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [], askedCount: 6, correctCount: 5,
+                                     inferredConceptIds: [cid])
+        s.applyPlacement(result, isFirstRun: true, now: now)
+
+        let seeded = s.concept(cid)!
+        #expect(seeded.state == .learning, "the head start is real: the concept is no longer untouched")
+        #expect(seeded.inferredObservations == Tuning.placementInferredAlpha)
+        #expect(seeded.testedObservations == 0, "placement never asked the learner anything about it")
+
+        // Real answers, one at a time. Only these count toward the floor.
+        for i in 1...Int(Tuning.minObservations) {
+            s.recordConceptAnswer(conceptId: cid, correct: true, now: now.addingTimeInterval(Double(i) * day))
+            let c = s.concept(cid)!
+            #expect(c.testedObservations == Double(i))
+            #expect(c.observationCount == Double(i) + Tuning.placementInferredAlpha)
+            if Double(i) < Tuning.minObservations {
+                #expect(c.state == .learning, "mastered on \(i) answered item(s) — the inference paid for the floor")
+                #expect(!c.isVerifiedMastered)
+                #expect(s.foundationMastered == 0, "and it counted toward the reading unlock")
+            }
+        }
+        let earned = s.concept(cid)!
+        #expect(earned.state == .mastered, "the floor is met by answers, so mastery arrives")
+        #expect(earned.isVerifiedMastered && !earned.isProvisional, "earned through practice, not seeded")
+        #expect(s.foundationMastered == 1)
+    }
+
     // MARK: B8 — coverage counts verified mastery only; the gate has hysteresis
 
     @Test func coverageIgnoresProvisionalSeedsAndPlacementRecordsNoUnlock() {

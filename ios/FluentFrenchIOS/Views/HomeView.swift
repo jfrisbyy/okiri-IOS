@@ -127,7 +127,7 @@ struct HomeView: View {
     // Activity time + capture tracking (for the daily plan + lesson trigger).
     // The session clock runs only while the scene is active (D9).
     @State private var activitySession: ActivitySession? = nil
-    @State private var sectionBaselineGaps: Int = 0
+    @State private var sectionBaselineCaptures: Int = 0
     @State private var toast: HomeToast? = nil
     @State private var toastTask: Task<Void, Never>? = nil
 
@@ -163,8 +163,8 @@ struct HomeView: View {
         dailyPlan.lessonItem?.target ?? Tuning.foundationLessonsPerDay
     }
 
-    private var greetingSubtitle: String {
-        HomeCopy.subtitle(streak: store.currentStreak, dueNow: store.dueNow.count,
+    private func greetingSubtitle(due: Int) -> String {
+        HomeCopy.subtitle(streak: store.currentStreak, dueNow: due,
                           lessonsToday: store.lessonsCompletedToday,
                           lessonTarget: lessonTarget, placed: placed)
     }
@@ -174,11 +174,18 @@ struct HomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // ONE reading of the due count per render, threaded through every surface
+        // that draws it — the header subtitle, the stats chip row, the Learn card's
+        // stat line and the Deck card's stat line. Each of those used to call
+        // `store.dueNowCount()` itself, and every call rebuilt
+        // `prerequisiteBlockedConceptIds` (two passes over the taxonomy) before
+        // scanning the whole gap list (firstrun-9-3).
+        let due = store.dueNowCount()
+        return NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    header
-                    statsCard
+                    header(due: due)
+                    statsCard(due: due)
                         .padding(.horizontal, 16)
                         .offset(y: -60)
                         .padding(.bottom, -44)
@@ -193,7 +200,7 @@ struct HomeView: View {
                             .padding(.top, 18)
                     }
 
-                    exploreSection
+                    exploreSection(due: due)
                         .padding(.top, 24)
 
                     headlinesSection
@@ -348,13 +355,15 @@ struct HomeView: View {
 
     /// The concept the selector would teach next — the same answer `startSmartLesson`
     /// acts on, so the Foundation card never promises one skill and teaches another.
+    /// The store memoises it: this is read on every body pass and a fresh selection
+    /// ranks the whole taxonomy (firstrun-9-3).
     private var nextTargetConcept: Concept? {
-        store.concept(LessonPipeline(store: store).preview(.smart()).targetConceptId)
+        store.nextSmartTargetConcept()
     }
 
     // MARK: - Header
 
-    private var header: some View {
+    private func header(due: Int) -> some View {
         ZStack(alignment: .bottom) {
             Theme.primaryGradient
                 .overlay(alignment: .topTrailing) {
@@ -434,7 +443,7 @@ struct HomeView: View {
                             .lineLimit(2)
                             .minimumScaleFactor(0.6)
                             .foregroundStyle(.white)
-                        Text(greetingSubtitle)
+                        Text(greetingSubtitle(due: due))
                             .font(.callout)
                             .foregroundStyle(.white.opacity(0.88))
                             .padding(.top, 6)
@@ -473,7 +482,7 @@ struct HomeView: View {
 
     // MARK: - Stats chip card (overlapping)
 
-    private var statsCard: some View {
+    private func statsCard(due: Int) -> some View {
         VStack(spacing: 0) {
             Button {
                 withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
@@ -487,8 +496,8 @@ struct HomeView: View {
                     chip(icon: "checkmark.seal.fill", value: "\(store.masteredThisWeek)", unit: "week", tint: Theme.success,
                          label: "\(store.masteredThisWeek) mastered this week")
                     chipDivider
-                    chip(icon: "brain.head.profile", value: "\(store.dueNow.count)", unit: HomeCopy.dueNowLabel.lowercased(), tint: Theme.secondary,
-                         label: "\(store.dueNow.count) \(HomeCopy.dueNowLabel.lowercased())")
+                    chip(icon: "brain.head.profile", value: "\(due)", unit: HomeCopy.dueNowLabel.lowercased(), tint: Theme.secondary,
+                         label: "\(due) \(HomeCopy.dueNowLabel.lowercased())")
                     Spacer()
                     // No reviews yet → an empty ring and "—", never a full ring reading
                     // 100 over data that does not exist (D19).
@@ -810,7 +819,7 @@ struct HomeView: View {
         let bridgeOpen = store.readiness(for: .reading) == .foundation
         return VStack(alignment: .leading, spacing: 8) {
             if !locked.isEmpty {
-                Text("UNLOCKS AS YOU BUILD THE BASICS")
+                Text(ReadinessCopy.lockedActivitiesHeader(readingHeldByGovernor: store.isReadingHeldByGovernor))
                     .font(.caption2.weight(.bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
                     .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 8) {
@@ -1114,7 +1123,11 @@ struct HomeView: View {
     private func beginActivityTracking(_ section: HomeSection) {
         activitySession = ActivitySession(modality: section.modality, startedAt: Date(),
                                           inForeground: scenePhase == .active)
-        sectionBaselineGaps = store.gaps.count
+        // Baseline what the LEARNER has saved, not every gap: a section can seed
+        // authored curriculum while it runs (Speak/Converse evidence on a concept
+        // pulls in its whole slice), and that is not something they captured
+        // (firstrun-9-1).
+        sectionBaselineCaptures = store.capturedGapCount
     }
 
     /// Credit the session's foreground time (capped by the store, D9) and
@@ -1127,7 +1140,7 @@ struct HomeView: View {
         if let modality = session.modality {
             store.creditActivity(modality, activeSeconds: session.activeSeconds(at: now), now: now)
         }
-        let newGaps = store.gaps.count - sectionBaselineGaps
+        let newGaps = store.capturedGapCount - sectionBaselineCaptures
         if newGaps > 0 {
             Haptics.success()
             showToast(HomeCopy.captured(newGaps), icon: "checkmark.seal.fill", tint: Theme.success)
@@ -1171,7 +1184,7 @@ struct HomeView: View {
 
     // MARK: - Explore (secondary tool drawer)
 
-    private var exploreSection: some View {
+    private func exploreSection(due: Int) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Button {
                 withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
@@ -1199,7 +1212,7 @@ struct HomeView: View {
             .accessibilityHint(exploreExpanded ? "Collapses the activity cards" : "Expands the activity cards")
 
             if exploreExpanded {
-                carousel.transition(reduceMotion ? AnyTransition.opacity
+                carousel(due: due).transition(reduceMotion ? AnyTransition.opacity
                                                  : AnyTransition.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -1207,7 +1220,7 @@ struct HomeView: View {
 
     // MARK: - Signature sliding carousel
 
-    private var featureCards: [FeatureCard] {
+    private func featureCards(due: Int) -> [FeatureCard] {
         [
             FeatureCard(id: "learn", title: "Learn", subtitle: "Practice your gaps",
                         description: "Master vocabulary, grammar & more with adaptive lessons",
@@ -1239,16 +1252,19 @@ struct HomeView: View {
             FeatureCard(id: "deck", title: "Deck", subtitle: "Spaced repetition",
                         description: "Drill your gaps until mastery with smart review",
                         icon: "square.stack.3d.up.fill", iconColor: Theme.primary, iconBg: Theme.primaryLight,
-                        stats: "\(store.dueNow.count) \(HomeCopy.dueNowLabel.lowercased())", modality: nil) { open(.deck) },
+                        stats: "\(due) \(HomeCopy.dueNowLabel.lowercased())", modality: nil) { open(.deck) },
         ]
     }
 
-    private var carousel: some View {
-        VStack(spacing: 18) {
+    private func carousel(due: Int) -> some View {
+        // Built once and shared with the nav bar below: the list was previously
+        // rebuilt for every card, every nav item and every width calculation.
+        let cards = featureCards(due: due)
+        return VStack(spacing: 18) {
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
-                    ForEach(featureCards) { card in
-                        featureCardView(card)
+                    ForEach(cards) { card in
+                        featureCardView(card, due: due)
                             .frame(width: cardWidth)
                             .scrollTransition(.interactive, axis: .horizontal) { content, phase in
                                 content
@@ -1267,28 +1283,24 @@ struct HomeView: View {
             .scrollPosition(id: $currentCardId)
             .scrollIndicators(.hidden)
 
-            miniNavBar
+            miniNavBar(cards)
         }
     }
 
     // MARK: - Floating frosted nav bar (icons only)
 
-    private var activeIndex: Int {
-        featureCards.firstIndex { $0.id == currentCardId } ?? 0
-    }
     /// Compact capsule that floats over the background — not a solid full-width bar.
     /// Sized from the item COUNT, not from a fixed 230 pt: seven indicators inside
     /// 230 pt are ~33 pt wide each, well under the 44 pt touch target, and adjacent
     /// targets that small get mis-tapped. It shrinks only if the screen genuinely
-    /// cannot fit `count × 44` plus a margin.
-    private var navBarWidth: CGFloat {
-        min(screenW - 40, CGFloat(featureCards.count) * Theme.minimumHitTarget)
-    }
-    private var navItemWidth: CGFloat { navBarWidth / CGFloat(max(1, featureCards.count)) }
-
-    private var miniNavBar: some View {
-        HStack(spacing: 0) {
-            ForEach(featureCards) { card in
+    /// cannot fit `count × 44` plus a margin. It reads the card list the carousel
+    /// already built rather than rebuilding it per item.
+    private func miniNavBar(_ cards: [FeatureCard]) -> some View {
+        let barWidth = min(screenW - 40, CGFloat(cards.count) * Theme.minimumHitTarget)
+        let itemWidth = barWidth / CGFloat(max(1, cards.count))
+        let activeIndex = cards.firstIndex { $0.id == currentCardId } ?? 0
+        return HStack(spacing: 0) {
+            ForEach(cards) { card in
                 let active = currentCardId == card.id
                 Button {
                     Haptics.tap()
@@ -1305,7 +1317,7 @@ struct HomeView: View {
                         // area is a full 44 pt square (the bar is sized from the
                         // item count so the width clears the target too), which
                         // leaves the bar's visible height unchanged.
-                        .frame(width: navItemWidth, height: Theme.minimumHitTarget)
+                        .frame(width: itemWidth, height: Theme.minimumHitTarget)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1316,8 +1328,8 @@ struct HomeView: View {
         .background(alignment: .leading) {
             Capsule()
                 .fill(Theme.primary.opacity(0.14))
-                .frame(width: navItemWidth, height: 34)
-                .offset(x: CGFloat(activeIndex) * navItemWidth)
+                .frame(width: itemWidth, height: 34)
+                .offset(x: CGFloat(activeIndex) * itemWidth)
                 .reducedMotionAnimation(.spring(response: 0.42, dampingFraction: 0.78), value: activeIndex)
         }
         // Horizontal only: each item is already 44 pt tall (the minimum touch
@@ -1327,10 +1339,10 @@ struct HomeView: View {
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(Capsule().stroke(Color.white.opacity(0.65), lineWidth: 0.5))
         .softLift(radius: 14, y: 5, strength: 0.9)
-        .frame(width: navBarWidth + 10)
+        .frame(width: barWidth + 10)
     }
 
-    private func featureCardView(_ card: FeatureCard) -> some View {
+    private func featureCardView(_ card: FeatureCard, due: Int) -> some View {
         let locked = card.modality.map { !store.canOpen($0) } ?? false
         let condition = card.modality.flatMap { store.unlockCondition(for: $0) }
         return Button(action: card.action) {
@@ -1364,7 +1376,7 @@ struct HomeView: View {
                 Spacer(minLength: 18)
 
                 if card.id == "learn" {
-                    learnStatRow
+                    learnStatRow(due: due)
                         .padding(.top, 16)
                         .overlay(alignment: .top) {
                             Rectangle().fill(Theme.borderLight).frame(height: 1)
@@ -1397,10 +1409,9 @@ struct HomeView: View {
         .accessibilityHint(locked ? "" : card.description)
     }
 
-    private var learnStatRow: some View {
+    private func learnStatRow(due: Int) -> some View {
         let active = store.visibleGaps.count
         let mastered = store.masteredGaps.count
-        let due = store.dueNow.count
         let total = max(active + mastered, 1)
         return VStack(spacing: 12) {
             HStack(spacing: 0) {

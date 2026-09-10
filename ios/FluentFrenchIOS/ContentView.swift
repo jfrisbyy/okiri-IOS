@@ -208,6 +208,9 @@ struct LocalDataRecoveryView: View {
     @State private var isRestoring = false
     @State private var isContinuing = false
     @State private var lastAttemptFailed = false
+    /// Sign-out from here is a force sign-out (the backup cannot be verified while
+    /// the device copy is unreadable), so it is never one tap (store-9-1).
+    @State private var showSignOutConfirm = false
 
     var body: some View {
         StatusScreen(
@@ -270,16 +273,26 @@ struct LocalDataRecoveryView: View {
             .accessibilityHint("Carries on with the part that was readable. Nothing is uploaded, and your account backup replaces this copy as soon as it can be reached.")
 
             Button("Sign out") {
-                Task { try? await auth.signOut(force: true) }
+                showSignOutConfirm = true
             }
             .scaledFont(15, weight: .medium)
             .foregroundStyle(Theme.textSecondary)
             .frame(minHeight: Theme.minimumHitTarget)
             .disabled(isBusy)
+            .accessibilityHint("Signs out without backing up. Asks you to confirm first.")
+        }
+        .confirmationDialog("Sign out without backing up?", isPresented: $showSignOutConfirm,
+                            titleVisibility: .visible) {
+            Button("Sign out anyway", role: .destructive) {
+                Task { try? await auth.signOut(force: true) }
+            }
+            Button("Stay signed in", role: .cancel) {}
+        } message: {
+            Text("Your progress can't be backed up while this device's copy is unreadable, so everything on this device that hasn't reached your account yet will be erased — including the part that was still readable. If your account has no backup yet, it can't be recovered. The unreadable copy is kept on this device.")
         }
     }
 
-    private var isBusy: Bool { isRestoring || isContinuing }
+    private var isBusy: Bool { isRestoring || isContinuing || auth.isSigningOut }
 
     private var failureMessage: String {
         if case .failed(let message) = cloud.syncState { return message }

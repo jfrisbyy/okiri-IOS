@@ -41,10 +41,18 @@ struct GapCardView: View {
     /// "7d overdue" in red would point the learner at work the app will not give
     /// them. It says what is actually true instead: it is waiting on earlier
     /// skills.
+    ///
+    /// A word saved without a meaning is excluded by the same rule: `makeCapturedGap`
+    /// seeds its schedule at capture, so it is instantly "due", but `dueNow` skips it
+    /// and no lesson can ask it until `resolvePendingTranslations` fills it in — so
+    /// "3d overdue" in red sat next to a header reading 0 due (read-9-2).
     private var urgency: (text: String, color: Color)? {
         if store.isPrerequisiteBlocked(gap) {
             return ("Waiting on earlier skills", Theme.textMuted)
         }
+        // The "Translation pending" pill above already says this; a second chip
+        // would repeat it on screen and in `statusValue` (read-9-2).
+        if gap.needsTranslation { return nil }
         let now = Date()
         if gap.nextReviewAt < now.addingTimeInterval(-86_400) {
             let days = Int(now.timeIntervalSince(gap.nextReviewAt) / 86_400)

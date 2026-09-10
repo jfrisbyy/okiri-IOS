@@ -158,6 +158,46 @@ struct HomeGateTests {
         #expect(s.readiness(for: .reading) == .unlocked)
     }
 
+    /// A learner at full base coverage whose Reading is held ONLY by the retention
+    /// governor must not be told to build the basics: they finished them, and Home
+    /// would be naming a task they cannot make progress on (firstrun-9-2).
+    @Test func governorHeldReadingGivesTheHigherModalitiesTheGovernorSentence() {
+        let s = store(coverage: config.readingUnlock)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(s.isReadingHeldByGovernor, "coverage cleared the bar — only the governor holds it")
+        #expect(s.readiness(for: .reading) == .foundation && s.canOpen(.reading))
+        for m in [LearningModality.watching, .speaking, .listening] {
+            #expect(s.unlockCondition(for: m) == ReadinessCopy.governorCondition(for: m))
+            #expect(s.unlockCondition(for: m) != "Unlocks after Reading — build the basics first.")
+        }
+        #expect(ReadinessCopy.lockedActivitiesHeader(readingHeldByGovernor: true)
+                == "UNLOCKS AS YOU CONSOLIDATE")
+
+        // Release the governor and Reading is really open: the higher gates go back
+        // to the demonstrated-minutes sentence they actually depend on.
+        s.checkInHistory = []
+        #expect(!s.isReadingHeldByGovernor)
+        #expect(s.unlockCondition(for: .listening)
+                == "\(config.higherDemonstratedMinutes) min of Reading unlocks Listening.")
+    }
+
+    /// The coverage bridge is the other reason Reading can be closed, and there the
+    /// basics really are unfinished — governor or not, the sentence stays.
+    @Test func coverageHeldReadingKeepsTheBuildTheBasicsSentence() {
+        let s = store(coverage: config.readingBridge)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(!s.isReadingHeldByGovernor, "coverage is below the unlock bar — coverage holds it")
+        #expect(s.unlockCondition(for: .listening) == "Unlocks after Reading — build the basics first.")
+        #expect(ReadinessCopy.lockedActivitiesHeader(readingHeldByGovernor: false)
+                == "UNLOCKS AS YOU BUILD THE BASICS")
+
+        // Reading recorded open is never "held by the governor" — nothing is holding it.
+        s.unlockedModalities = [LearningModality.reading.rawValue]
+        #expect(!s.isReadingHeldByGovernor)
+    }
+
     @Test func readinessCopyNamesModalitiesNaturally() {
         #expect(ReadinessCopy.names(of: []) == "more activities")
         #expect(ReadinessCopy.names(of: [.listening]) == "Listening")

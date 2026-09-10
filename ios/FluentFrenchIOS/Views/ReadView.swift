@@ -62,6 +62,41 @@ final class ReadModel {
     /// current one, and a superseded fetch also leaves `isLoading` alone.
     @ObservationIgnored private var loadToken = 0
 
+    /// The search box's current state, held here rather than in the view so a
+    /// superseded search cannot publish over a newer one (read-9-3).
+    var search: ReadSearchState = .idle
+
+    /// Rises with every search started OR cleared, for the same reason
+    /// `loadToken` does: submit "chat", clear the box, submit "sport", and
+    /// whichever request answered last used to win — showing "chat" articles
+    /// under a field reading "sport", or replacing real results with
+    /// "Nothing for “chat”".
+    @ObservationIgnored private var searchToken = 0
+
+    /// Run a search and publish it only while it is still the current one. An
+    /// empty query resets the box to idle and cancels whatever is in flight.
+    func runSearch(_ query: String) async {
+        searchToken &+= 1
+        let token = searchToken
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { search = .idle; return }
+        search = .loading
+        let outcome = await NewsService.search(q)
+        guard token == searchToken else { return }
+        switch outcome {
+        case .results(let articles): search = .results(articles)
+        case .noResults: search = .noResults(query: q)
+        case .failed(let failure): search = .failed(failure)
+        }
+    }
+
+    /// Clearing or closing the box: back to idle, and any in-flight search is
+    /// superseded so its answer cannot land on the empty state.
+    func clearSearch() {
+        searchToken &+= 1
+        search = .idle
+    }
+
     func load(level: CEFRLevel, reset: Bool = true) async {
         loadToken &+= 1
         let token = loadToken
@@ -94,7 +129,6 @@ struct ReadView: View {
     @State private var activeView: ReadTab = .feed
     @State private var searching = false
     @State private var searchText = ""
-    @State private var search: ReadSearchState = .idle
     /// 1 at the default text size, larger as the learner's text size grows.
     /// Chrome drawn around text (the header band, the image cards, the round
     /// search button) grows with it so scaled text still fits inside it.
@@ -179,7 +213,7 @@ struct ReadView: View {
                     withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching.toggle() }
                     // Closing search clears the query too, so re-opening it starts
                     // empty instead of showing a stale term with no results.
-                    if !searching { search = .idle; searchText = "" }
+                    if !searching { model.clearSearch(); searchText = "" }
                 } label: {
                     Image(systemName: searching ? "xmark" : "magnifyingglass")
                         .scaledFont(17, weight: .semibold).foregroundStyle(.white)
@@ -261,10 +295,10 @@ struct ReadView: View {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted).accessibilityHidden(true)
             TextField("Search any topic…", text: $searchText)
                 .font(.body).autocorrectionDisabled()
-                .onSubmit { Task { await runSearch() } }
+                .onSubmit { Task { await model.runSearch(searchText) } }
                 .accessibilityLabel("Search stories")
             if !searchText.isEmpty {
-                Button { searchText = ""; search = .idle } label: {
+                Button { searchText = ""; model.clearSearch() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted)
                         .frame(minWidth: 44, minHeight: 44)
                 }
@@ -277,17 +311,6 @@ struct ReadView: View {
         .clipShape(.rect(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
         .padding(.horizontal, 16).padding(.top, 12)
-    }
-
-    private func runSearch() async {
-        let q = searchText.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { search = .idle; return }
-        search = .loading
-        switch await NewsService.search(q) {
-        case .results(let articles): search = .results(articles)
-        case .noResults: search = .noResults(query: q)
-        case .failed(let failure): search = .failed(failure)
-        }
     }
 
     private var segmented: some View {
@@ -594,7 +617,7 @@ struct ReadView: View {
     private var searchContent: some View {
         ScrollView {
             VStack(spacing: 14) {
-                switch search {
+                switch model.search {
                 case .idle:
                     searchMessage(icon: "magnifyingglass", title: "Search for any topic",
                                   message: "Recipes, sports, tech, travel — results in French")
@@ -608,7 +631,7 @@ struct ReadView: View {
                         searchMessage(icon: failure == .offline ? "wifi.slash" : "exclamationmark.triangle",
                                       title: failure.searchTitle, message: failure.searchMessage)
                         if failure.isRetryable {
-                            Button { Haptics.tap(); Task { await runSearch() } } label: {
+                            Button { Haptics.tap(); Task { await model.runSearch(searchText) } } label: {
                                 Label("Try again", systemImage: "arrow.clockwise").font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.white).padding(.horizontal, 16).frame(minHeight: Theme.minimumHitTarget)
                                     .background(Theme.primary).clipShape(.capsule)

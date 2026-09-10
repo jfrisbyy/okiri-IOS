@@ -439,6 +439,18 @@ struct HeadlessDriverTests {
         }
         #expect(store.selectionLog.count == run.reports.reduce(0) { $0 + $1.lessons })
 
+        // engine-9-2: while reading is locked, every lesson target sits at or below
+        // the band the learner reads as. Level fit is additive and capped at
+        // `weights.frontier` (0.8) while urgency is capped at 1.0 and saturates a week
+        // after an item falls due, so overdue-ness used to simply override level fit:
+        // a skill above the learner that nothing had touched outranked the one they
+        // were mid-way through. Urgency is now gated by fit above the learner's band.
+        // NOTE: the band here is the engine's own (θ → CEFR), which rises with
+        // practice — this pins the ranker, not the ability model.
+        #expect(!run.lockedTargets.isEmpty, "\(label): the locked phase taught something")
+        #expect(run.aboveBandLockedTargets.isEmpty,
+                "\(label): targets above the learner's band while reading was locked: \(run.aboveBandLockedTargets.prefix(8).joined(separator: "; "))")
+
         // The estimator has to be RIGHT by the end, not merely inside [0, 1]: sixty
         // days of check-ins must have pulled the engine's belief close to the
         // learner's truth (engine-8-3).

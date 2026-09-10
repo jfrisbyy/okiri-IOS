@@ -216,13 +216,20 @@ nonisolated enum LessonQuestionParser {
             var others: [String] = []
             var seen = Set<String>()
             var found = false
+            // The gap's OWN meaning sides: an "a / b" gloss has two of them, and the
+            // model is free to answer with either. A distractor that is the other side
+            // is a second correct answer — offering "I love" beside the answer "I like"
+            // for "j'aime" grades a right answer wrong, costing a heart, an error-log
+            // row and an FSRS lapse (lesson-9-2). `smartDistractors` already refuses
+            // candidates that share a side; the model's own option list must too.
+            let ownSides = LessonScheduler.distractorSides(of: gap.englishTranslation)
             for option in options {
                 let key = AnswerGrader.normalize(option, keepingTags: true)
                 guard !key.isEmpty, seen.insert(key).inserted else { continue }
                 if !found, AnswerGrader.optionMatches(option, correct) {
                     correctOption = option
                     found = true
-                } else {
+                } else if LessonScheduler.distractorSides(of: option).isDisjoint(with: ownSides) {
                     others.append(option)
                 }
             }
@@ -272,8 +279,11 @@ nonisolated enum LessonQuestionParser {
             var explanation = gap.exampleSentence
             if !gap.exampleTranslation.isEmpty { explanation += " — \(gap.exampleTranslation)" }
             if let note { explanation += "\n\(note)" }
+            // Same guard as the scheduler's own fill-blank: an example whose English
+            // spells the French answer ("The train is late." over "Le _____ est en
+            // retard.") is not a hint, it is the answer (lesson-9-1).
             return LessonQuestion(gap: gap, kind: .fillBlank, prompt: local, correctAnswer: expected,
-                                  hint: gap.exampleTranslation.isEmpty ? nil : gap.exampleTranslation,
+                                  hint: AnswerGrader.safeHint(gap.exampleTranslation, answer: expected),
                                   explanation: explanation)
 
         case "truefalse", "true_false", "true-false", "tf":

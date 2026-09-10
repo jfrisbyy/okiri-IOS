@@ -43,7 +43,7 @@ struct DeckView: View {
         return store.visibleGaps
     }
 
-    private var dueNowCount: Int { store.dueNow.count }
+    private var dueNowCount: Int { store.dueNowCount() }
     private var upcomingCount: Int { store.upcoming.count }
 
     var body: some View {

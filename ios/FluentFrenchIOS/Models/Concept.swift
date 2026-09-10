@@ -34,6 +34,12 @@ nonisolated struct Concept: Codable, Identifiable, Hashable {
     /// Raw, UNDECAYED observation weight ever recorded. The min-observations gate
     /// reads this, never alpha + beta, so decay can't hide how little was seen.
     var observationCount: Double = 0
+    /// The part of `observationCount` that placement INFERRED from a cleared band
+    /// rather than from an answer the learner actually gave (B9's second tier).
+    /// It buys the head start — the concept reads `.learning` instead of untouched —
+    /// but never counts toward the `Tuning.minObservations` floor: mastery has to be
+    /// earned on real answers (engine-9-3).
+    var inferredObservations: Double = 0
 
     // MARK: Bookkeeping for selection / legibility
     /// Session index when this concept was last used as a lesson spine (for damping).
@@ -68,6 +74,15 @@ nonisolated struct Concept: Codable, Identifiable, Hashable {
     /// Real evidence accumulated — the raw, undecayed count.
     var observations: Double { observationCount }
 
+    /// Observation weight from answers the learner actually GAVE: everything except
+    /// what placement inferred from a cleared band. This is what the mastery floor
+    /// counts (engine-9-3) — a band inference used to supply half of
+    /// `Tuning.minObservations`, so a concept placement never asked about reached
+    /// verified mastery, and the reading unlock, on two answers, while a concept it
+    /// probed three times clean was marked provisional and had to earn three
+    /// check-ins days apart. Trust now runs the right way round.
+    var testedObservations: Double { max(0, observationCount - inferredObservations) }
+
     enum MasteryState: String, Codable {
         case neverObserved
         case learning
@@ -76,10 +91,11 @@ nonisolated struct Concept: Codable, Identifiable, Hashable {
 
     /// `neverObserved` until any evidence lands; `mastered` needs both the mastery
     /// threshold and the raw observation floor (`Tuning.masteryThreshold`,
-    /// `Tuning.minObservations`); everything else is `learning`.
+    /// `Tuning.minObservations`) met by ANSWERED evidence; everything else is
+    /// `learning`.
     var state: MasteryState {
         if observationCount <= 0 { return .neverObserved }   // untested ≠ mastered
-        if mastery >= Tuning.masteryThreshold && observationCount >= Tuning.minObservations { return .mastered }
+        if mastery >= Tuning.masteryThreshold && testedObservations >= Tuning.minObservations { return .mastered }
         return .learning
     }
 
@@ -94,7 +110,7 @@ nonisolated struct Concept: Codable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, category, cefrLevel, prerequisites, description
-        case alpha, beta, lastTestedAt, observationCount
+        case alpha, beta, lastTestedAt, observationCount, inferredObservations
         case lastTaughtSession, newlyUnlocked
         case isProvisional, provisionalPasses, nextCheckInAt, checkInIntervalDays
         case stallAttempts, lastTaughtState
@@ -118,6 +134,7 @@ nonisolated extension Concept {
         beta = try c.decodeIfPresent(Double.self, forKey: .beta) ?? 1
         lastTestedAt = try c.decodeIfPresent(Date.self, forKey: .lastTestedAt)
         observationCount = try c.decodeIfPresent(Double.self, forKey: .observationCount) ?? max(0, alpha + beta - 2)
+        inferredObservations = try c.decodeIfPresent(Double.self, forKey: .inferredObservations) ?? 0
         lastTaughtSession = try c.decodeIfPresent(Int.self, forKey: .lastTaughtSession)
         newlyUnlocked = try c.decodeIfPresent(Bool.self, forKey: .newlyUnlocked) ?? false
         isProvisional = try c.decodeIfPresent(Bool.self, forKey: .isProvisional) ?? false

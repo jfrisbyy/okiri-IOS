@@ -147,11 +147,15 @@ nonisolated enum ConverseRecap {
         }
     }
 
-    /// Tutor notes with no rewritten line (older reply shape): still worth showing
-    /// in the recap, but nothing can be saved from them.
+    /// Tutor notes that produced no row in `corrections(in:)`: a note with no
+    /// rewritten line (older reply shape), and a rewrite that turned out to match
+    /// what the learner said (so the pair was dropped) while the note still says
+    /// something. Both are shown in the recap — the learner saw the note during the
+    /// call, so it must not vanish — but nothing can be saved from them.
     static func unsavableNotes(in transcript: [ChatTurn]) -> [String] {
-        transcript.compactMap { turn in
-            guard turn.role == .tutor, turn.correctedFrench == nil,
+        let corrected = Set(corrections(in: transcript).map(\.id))
+        return transcript.compactMap { turn in
+            guard turn.role == .tutor, !corrected.contains(turn.id),
                   let note = nonEmpty(turn.correction) else { return nil }
             return note
         }

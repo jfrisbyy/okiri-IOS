@@ -251,3 +251,44 @@ is 2.37.0 in the committed tree (`de8d29e`'s message says 2.36.0; the tree is co
 - [low/compile] compile-10-1 VoiceRecorder.swift:138 — VoiceRecorder's interruption observer reads its weakly captured `self` inside a Task from a @Sendable block, which produces a concurrency warning in the Xcode build
 - [low/compile] compile-10-2 AuthManager.swift:71 — AuthManager awaits a synchronous main-actor method from a main-actor Task, which the compiler flags as an `await` with no async work
 - [low/compile] compile-10-3 HomeView.swift:1273 — Home's carousel reads the main-actor `@Environment` property `reduceMotion` inside `scrollTransition`'s @Sendable closure, which likely produces an isolation warning
+
+## Between rounds 10 and 11 — content merge and the engine problems it exposed
+
+Merging the 33 reviewed A1/A2 concepts (`ios/tools/content-staging/`) took the curriculum
+from 49 to 82 concepts (998 items). That broke engine simulations that had only passed because
+the old curriculum was small. These problems were found by the harness, not by an audit round,
+so they are listed here outside the round totals:
+
+- **Placement seeded only A1** (cited as firstrun-10-1). `PlacementEngine.result` seeded only
+  fully probed A1 base concepts. With A2 probes in the bank, an A2 or all-correct learner spent
+  the whole budget at bands 2–3 and was seeded with nothing. Seeds are now every concept
+  verified clean at or below its category's cleared band. Seeds stay provisional, nothing above
+  the placed band is seeded, and true beginners are still declared.
+- **Items of mastered concepts never asked** (engine-4-1 follow-up). Never-answered items of a
+  mastered concept were eligible for review but sat behind older due items in the 2 review
+  slots. Review now reserves slots for them first.
+- **Lapsed concepts abandoned** (cited as engine-8-3). A concept that lost practice-earned
+  mastery to one check-in miss could go 7–30 days untaught, because its items had been
+  rescheduled into the future. `Concept.lapsedAt` records the lapse (optional, so old saves
+  decode). `ConceptSelector.unfinishedConceptBonus` brings back a lapsed concept at once, and a
+  taught-but-unmastered one after `Tuning.unfinishedReturnDays`.
+
+**Two test-standard decisions for owner review:**
+1. `HeadlessDriverTests.expectMasteredCountTracksTruth` now counts "truly mastered" at the
+   engine's own standard. That is P(correct) ≥ `Tuning.masteryThreshold`, which is latent
+   ≈ 0.6875 under the simulated learner's guess rate. The old line was a stricter 0.85, and with
+   82 concepts it measured fixed study throughput rather than over-credit. The band stays 6
+   (measured 6, 4 and 3). The 0.85 line moved into a new, stricter check,
+   `expectCertificationsAreEarned`. It requires a mean true mastery of at least 0.85 at the
+   moment of certification, at most 10% of certifications below 0.85, and none below 0.6.
+   Measured: 0.95–0.99.
+2. The 14-day simulation now seeds the learner through the app's real first-run path instead
+   of giving all 82 concepts six due cards on day 0, which no app path does.
+
+**Test infrastructure.** `LaunchBudgetTests.waitUntil` had a 60 s ceiling. The 60-day
+simulations, now about two minutes long, hold the main actor under parallel test execution,
+so that ceiling failed the waits and once left the suite hanging on a never-released fetch.
+The ceiling is now 600 s.
+
+Open: the true-beginner mastered-count drift sits exactly at the band (6). It is seeded and
+deterministic, so it does not flake, but further content could push it over.

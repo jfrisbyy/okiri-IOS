@@ -1,4 +1,4 @@
-# Staged A1/A2 content (not yet in the app)
+# Staged A1/A2 content (merged into the app)
 
 These eight files hold lessons for the 33 A1/A2 concepts that had none. Each group was
 written by a French specialist agent, then worked through by a simulated English-speaking
@@ -6,16 +6,17 @@ learner. A second specialist then reviewed it, acting on or rejecting each learn
 Every group passed `validate_foundation_content.py`, and the full merge validated as
 `OK: 82 skills, 998 items`.
 
-They are **not merged** into `ios/FluentFrenchIOS/Resources/FoundationContent.json` yet.
-Merging them breaks two existing engine simulations:
+They are merged into `ios/FluentFrenchIOS/Resources/FoundationContent.json` by
+`merge_staged.py` (re-running it on the pre-merge file reproduces the shipped file byte
+for byte). The merge first broke two engine simulations, both fixed in the engine:
 
-- **Placement:** `PlacementFlowTests` fails because placement only seeds A1 concepts, so
-  an A2 learner gets no credit for A2 vocabulary.
-- **Mastery:** `HeadlessDriverTests.expectMasteredCountTracksTruth` fails because, as the
-  curriculum grows, the engine credits more concepts as mastered than the simulated
-  learner's ground truth supports, and some items are never asked.
-
-Both problems are in the engine, not in the content. Merge with `merge_staged.py` once
-they are fixed.
+- **Placement:** placement seeded only A1 base concepts, so an A2 learner got no credit
+  for A2 vocabulary. Seeds are now every concept verified clean at or below its
+  category's cleared band (firstrun-10-1, `PlacementEngine.seededConceptIds`).
+- **Mastery:** `HeadlessDriverTests.expectMasteredCountTracksTruth` counted truth at a
+  stricter line than the engine's own mastery standard, and at the matched standard the
+  engine left lapsed concepts untaught for weeks (engine-8-3,
+  `ConceptSelector.unfinishedConceptBonus`); some items of mastered concepts were never
+  asked (engine-4-1, reserved review slots).
 
 `flagged-for-human.json` lists the items the reviewers want a native speaker to check.

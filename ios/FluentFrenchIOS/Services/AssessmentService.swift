@@ -79,10 +79,14 @@ nonisolated struct PlacementResult {
     var grammarBand: Int
     var estimatedLevel: CEFRLevel
     var isTrueBeginner: Bool
-    /// Base concepts the learner DEMONSTRABLY knows — asked
-    /// `Tuning.placementProbesPerConcept` items and answered every one — seeded as
-    /// (provisional) mastery. Never contains a concept the learner missed an item
-    /// on (Pass 3 F5), and never one that was only inferred from its band (B9).
+    /// Concepts the learner DEMONSTRABLY knows — asked
+    /// `Tuning.placementProbesPerConcept` items and answered every one — at or below
+    /// the band their category cleared, seeded as (provisional) mastery. Never
+    /// contains a concept the learner missed an item on (Pass 3 F5), never one that
+    /// was only inferred from its band (B9), and never one above the band the
+    /// placement read for its category. Not limited to the A1 base set: an A2
+    /// learner spends the whole budget on A2 probes and has nothing else to seed
+    /// (`PlacementEngine.seededConceptIds`).
     var masteredConceptIds: [String]
     /// Gaps built from the items the learner missed → seed as things to teach.
     var missedGaps: [GapItem]
@@ -225,6 +229,16 @@ nonisolated struct PlacementEngine {
         return askedCount(for: cid) < probesPerConcept && unaskedCount(for: cid) > 0
     }
 
+    /// True while some category the bank can still ask about has neither cleared a
+    /// band nor bottomed out: the placement has no read on it yet, and stopping now
+    /// would report "nothing cleared" for a category it simply never measured.
+    private var hasUnreadCategory: Bool {
+        let askedIds = Set(asked.map { $0.id })
+        let bottomed = bottomedOutCategories
+        let askable = Set(bank.filter { !askedIds.contains($0.id) && !bottomed.contains($0.category) }.map { $0.category })
+        return askable.contains { clearedBand(for: $0) == 0 }
+    }
+
     /// A random item among the highest-band ones in `items` (nil when empty).
     private mutating func highestBandItem(in items: [AssessmentQuestion]) -> AssessmentQuestion? {
         guard let top = items.map({ $0.band }).max() else { return nil }
@@ -241,7 +255,15 @@ nonisolated struct PlacementEngine {
         // answering cleanly, so the read it was gathering never counted. With band-2
         // vocabulary in the bank that cut an A1 learner's only vocabulary read in half
         // the runs. `maxItems` still bounds the test.
-        if asked.count >= minItems && hasStabilized() && !isMidProbe { return nil }
+        // Nor does it stop on stability while a category it is still asking has no
+        // read at all (firstrun-10-1, re-opened by the A2 content merge): with A2
+        // vocabulary and grammar probes in the bank, a false beginner's first items
+        // go to band-2 concepts, and the staircase could settle after
+        // `placementMinItems` with one or two band-1 vocabulary answers — too few to
+        // clear the band — so a learner who knows A1 vocabulary read as a true
+        // beginner in 3 of 24 runs. A true beginner still stops early: a category
+        // that bottoms out is no longer unread, and `maxItems` bounds the rest.
+        if asked.count >= minItems && hasStabilized() && !isMidProbe && !hasUnreadCategory { return nil }
 
         // Pick an unused item closest to the current band, alternating category
         // so we gather evidence on both vocab and grammar. Among equally good
@@ -371,11 +393,12 @@ nonisolated struct PlacementEngine {
         for q in asked { if let cid = q.conceptId { askedCounts[cid, default: 0] += 1 } }
         var lowestMissed: [GapCategory: Int] = [:]
         for q in missed { lowestMissed[q.category] = min(lowestMissed[q.category] ?? q.band, q.band) }
-        // Two tiers (B9): a concept asked the full probe budget clean is seeded as
-        // (provisional) mastery; anything else at or below the cleared bands is only
-        // an inferred head start.
+        // Two tiers (B9): a concept asked the full probe budget clean, at or below
+        // its category's cleared band, is seeded as (provisional) mastery; a BASE
+        // concept at or below the cleared bands that was not fully probed is only an
+        // inferred head start.
         let inBand = AssessmentService.masteredConcepts(vocabBand: vocab, grammarBand: grammar, excluding: missedConcepts)
-        let mastered = fullyProbed.filter { ConceptTaxonomy.baseConceptIds.contains($0) }.sorted()
+        let mastered = seededConceptIds(fullyProbed: fullyProbed, vocabBand: vocab, grammarBand: grammar)
         let inferred = inBand.filter { !fullyProbed.contains($0) }
         return PlacementResult(
             vocabBand: vocab,
@@ -392,6 +415,44 @@ nonisolated struct PlacementEngine {
             askedCounts: askedCounts,
             lowestMissedBand: lowestMissed
         )
+    }
+
+    /// The concepts a placement seeds as provisional mastery: every taxonomy concept
+    /// the learner was asked the full probe budget on with no miss (Pass 3 F5),
+    /// whose CEFR band is at or below the band its category cleared.
+    ///
+    /// This used to be the fully probed concepts inside `ConceptTaxonomy.baseConceptIds`
+    /// only, and every base concept is A1. The staircase starts at band 2 and steps
+    /// down only on a miss, so once the bank held A2 vocabulary as well as A2 grammar
+    /// probes, a learner who knows A2 spent the whole budget on A2 concepts, never
+    /// touched band 1, and was seeded with nothing — 0 of 16 deterministic A2 runs,
+    /// and an all-correct learner the same (firstrun-10-1, re-opened by the A2
+    /// content merge; spec §7.1 names this fix: extend the seeding tier beyond the
+    /// base set). Seeding what was VERIFIED at the learner's own band is the honest
+    /// read of that evidence. The seed is still only a guess until a check-in
+    /// confirms it (`AppStore.seedMastered` marks it `isProvisional`), and it never
+    /// counts toward coverage before then.
+    ///
+    /// The band cap reads the concept's TAXONOMY level, not its items' bands: a
+    /// concept whose items sat below its level (a hand item filed a band low) proves
+    /// only the band it was asked at, and a concept above the placed band earns no
+    /// mastery credit there (D6 §3: mastery credit only inside the learner's band).
+    /// The category is the one its items were scored in, the same category the
+    /// cleared band was read from; anything outside grammar and vocabulary is never
+    /// seeded, as a text test cannot judge it.
+    private func seededConceptIds(fullyProbed: Set<String>, vocabBand: Int, grammarBand: Int) -> [String] {
+        let levels = Dictionary(ConceptTaxonomy.seed().map { ($0.id, $0.cefrLevel) }, uniquingKeysWith: { a, _ in a })
+        return fullyProbed.filter { cid in
+            guard let level = levels[cid],
+                  let category = asked.first(where: { $0.conceptId == cid })?.category else { return false }
+            let cleared: Int
+            switch category {
+            case .vocabulary: cleared = vocabBand
+            case .grammar: cleared = grammarBand
+            default: return false
+            }
+            return AssessmentService.bandForLevel(level) <= cleared
+        }.sorted()
     }
 
     /// Highest band b such that every tested band ≤ b was answered ≥50% correctly.
@@ -460,8 +521,10 @@ nonisolated enum AssessmentService {
     /// vocabulary (a text test can't fairly judge pronunciation, phrasing or
     /// register), leaving those never-observed for Foundation. A concept the learner
     /// missed an item on is never included, whatever its band (Pass 3 F5). The
-    /// engine splits this list into the mastered tier (fully probed) and the
-    /// inferred tier (`PlacementResult.inferredConceptIds`).
+    /// engine takes the inferred tier (`PlacementResult.inferredConceptIds`) from
+    /// this list: the base concepts here that were not fully probed. The mastered
+    /// tier is read from the evidence instead, and is not limited to the base set
+    /// (`PlacementEngine.seededConceptIds`, firstrun-10-1).
     static func masteredConcepts(vocabBand: Int, grammarBand: Int, excluding missed: Set<String> = []) -> [String] {
         ConceptTaxonomy.seed().compactMap { concept in
             guard ConceptTaxonomy.baseConceptIds.contains(concept.id), !missed.contains(concept.id) else { return nil }

@@ -317,6 +317,44 @@ struct ConceptSelector {
             + w.confusion * confusion
             - w.repeatDamp * recent
             + stallPrerequisiteBonus(concept)
+            + unfinishedConceptBonus(concept, now: now)
+    }
+
+    /// Come back to unfinished work (engine-8-3). A LEARNING concept the ranker has
+    /// already invested in gets a bonus until it is mastered or stalls:
+    ///   • a lapse — mastery earned through practice that later answers took away
+    ///     (`Concept.lapsedAt`) — gets `Tuning.lapsedConceptBonus` at once;
+    ///   • a concept that has been a lesson target and never reached mastery gets
+    ///     `Tuning.unfinishedConceptBonus` once `Tuning.unfinishedReturnDays` have
+    ///     passed with no evidence on it at all.
+    ///
+    /// Nothing else in the score brings the ranker back to either. Urgency reads a
+    /// concept's OVERDUE items, and the lesson that just practised them rescheduled
+    /// each one into the future, while on a curriculum larger than the day's
+    /// throughput every other concept carries overdue items; and a concept at or
+    /// below the learner's band has low frontier fit. Sixty-day runs on the
+    /// 82-concept curriculum ended with 10-12 concepts the learner truly held
+    /// (truth 0.75-0.94, P(correct) 0.80-0.95) left below the mastery line and
+    /// untouched for one to four weeks, so the engine's mastered count sat 10-12
+    /// below the truth at its own standard. Most had been knocked out of mastery by
+    /// one double-weight check-in miss (`Tuning.checkInMissWeight`) and never asked
+    /// again; the rest were dropped after a lesson or two while the estimate still
+    /// carried the misses made before the learner caught up.
+    ///
+    /// The return delay keeps this from turning into depth-first drilling: with no
+    /// delay the ranker held a fast learner on one concept for a whole day while the
+    /// estimate trailed far behind, and early-day calibration broke its ceiling.
+    /// The stall rule bounds both: a concept `Tuning.stallAttempts` target lessons
+    /// leave in the same state loses the bonus, and stall remediation (B15) turns to
+    /// its prerequisites instead, so a skill the learner cannot get yet never holds
+    /// the target slot. A concept only probed, or seeded by placement, was never a
+    /// target and earns nothing; a failed seed is not a lapse (`AppStore.recordConceptAnswer`).
+    func unfinishedConceptBonus(_ concept: Concept, now: Date) -> Double {
+        guard concept.state == .learning, !concept.isStalled else { return 0 }
+        if concept.lapsedAt != nil { return Tuning.lapsedConceptBonus }
+        guard concept.lastTaughtSession != nil, let tested = concept.lastTestedAt,
+              now.timeIntervalSince(tested) >= Tuning.unfinishedReturnDays * 86_400 else { return 0 }
+        return Tuning.unfinishedConceptBonus
     }
 
     /// How much of a concept's overdue-ness counts, given where it sits relative to
@@ -565,6 +603,20 @@ struct ConceptSelector {
         let review = store.schedulableGaps(at: now)
             .filter(isReviewCandidate)
             .sorted(by: Self.mostOverdueFirst(now: now))
+        //    The reserved review slots go FIRST to never-answered items of mastered
+        //    concepts (engine-4-1). Review is the only path such an item has: a mastered
+        //    concept is never a target, and its check-in rides on a practised gap. Under
+        //    plain oldest-first it waited behind every older due item, and once the
+        //    curriculum outgrew review capacity — the A2 bridge releases
+        //    `Tuning.foundationSeedBatch` items a day against a few review slots per
+        //    lesson — that queue never drained: a concept mastered on its first few
+        //    items kept the rest unasked for the whole run. Capped at `reviewSlots`, so
+        //    any further slot is still oldest-first review.
+        let unasked = review.filter { $0.isNew && belongsToMasteredConcept($0) }
+        for gap in unasked.prefix(config.reviewSlots) {
+            if items.count >= size { break }
+            take(gap, role: .review)
+        }
         for gap in review {
             if items.count >= size { break }
             take(gap, role: .review)

@@ -51,6 +51,16 @@ enum EngineFixtures {
         "passe-compose-etre", "prepositions-place-time", "liaison", "everyday-connectors",
         "imparfait", "imparfait-vs-pc", "object-pronouns", "subjunctive-intro",
         "savoir-vs-connaitre", "spoken-fillers", "idioms", "formal-register",
+        // The 33 A1/A2 concepts merged from ios/tools/content-staging (merge_staged.py).
+        "silent-final-consonants", "accent-marks", "elision", "e-muet", "vowel-contrasts",
+        "rhythm-and-stress", "avoir-expressions", "il-faut-necessity", "present-ir-re-verbs",
+        "imperative", "modal-verbs", "venir-de-recent-past", "futur-simple", "etre-en-train-de",
+        "on-pronoun", "depuis-pendant-il-y-a", "stressed-pronouns", "demonstrative-adjectives",
+        "contractions-au-du", "de-after-negation", "quantity-expressions",
+        "comparatives-superlatives", "adverb-formation", "countries-prepositions",
+        "shopping-money-vocab", "travel-transport-vocab", "health-vocab", "daily-routine-vocab",
+        "leisure-sports-vocab", "describing-people", "feelings-vocab", "everyday-transactions",
+        "polite-requests",
     ]
 
     /// A `foundationContent` closure that supplies synthetic items for exactly the
@@ -111,6 +121,25 @@ enum EngineFixtures {
             FoundationProbeContent(fr: "\(conceptId)-probe-\(i)-fr", en: "\(conceptId)-probe-\(i)-answer",
                                    ex: "\(conceptId)-probe-\(i)-ex", exEn: "\(conceptId)-probe-\(i)-exEn",
                                    options: ["\(conceptId)-d1", "\(conceptId)-d2", "\(conceptId)-d3"])
+        }
+    }
+
+    /// The seeding rule for a placement, stated independently of the engine: a
+    /// concept is seeded as provisional mastery when it was asked the full
+    /// `Tuning.placementProbesPerConcept` budget with no miss AND its taxonomy band is
+    /// at or below the band its category cleared (firstrun-10-1: the seeds used to be
+    /// the A1 base set only, so an A2 learner whose budget never reached band 1 was
+    /// seeded nothing). Grammar and vocabulary only.
+    nonisolated static func expectedPlacementSeeds(_ result: PlacementResult) -> Set<String> {
+        let byId = Dictionary(ConceptTaxonomy.seed().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return result.fullyProbedConceptIds.filter { cid in
+            guard let concept = byId[cid] else { return false }
+            let band = AssessmentService.bandForLevel(concept.cefrLevel)
+            switch concept.category {
+            case .vocabulary: return band <= result.vocabBand
+            case .grammar: return band <= result.grammarBand
+            default: return false
+            }
         }
     }
 

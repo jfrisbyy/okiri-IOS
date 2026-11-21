@@ -802,9 +802,16 @@ final class AppStore {
             concept.checkInIntervalDays = Tuning.checkInInitialDays
             concept.nextCheckInAt = now.addingTimeInterval(Tuning.checkInInitialDays * 86_400)
             concept.stallAttempts = 0
+            concept.lapsedAt = nil
         } else if wasMastered && concept.state != .mastered {
             // Lost mastery: it is real evidence now, not a seed, and the schedule
-            // restarts when it is earned again.
+            // restarts when it is earned again. Mastery that PRACTICE had earned is
+            // marked lapsed so the selector re-teaches it (engine-8-3): one missed
+            // check-in at `Tuning.checkInMissWeight` is enough to drop a skill the
+            // learner holds, and nothing else brings the ranker back to it. A failed
+            // placement seed is not marked: it was a guess, and its own Foundation
+            // items open up for teaching (B7/B9).
+            if !concept.isProvisional { concept.lapsedAt = now }
             concept.isProvisional = false
             concept.provisionalPasses = 0
             concept.nextCheckInAt = nil
@@ -2193,7 +2200,7 @@ final class AppStore {
         Tuning.placementTheta(for: level)
     }
 
-    /// Mark a base concept as known from placement (Pass 3 F5 / B9): the learner
+    /// Mark a concept as known from placement (Pass 3 F5 / B9): the learner
     /// answered every one of its `Tuning.placementProbesPerConcept` items. The seed
     /// BLENDS with whatever evidence the concept has: alpha gains
     /// `Tuning.placementSeedAlpha` (capped at `Tuning.placementSeedAlphaCap`), beta
@@ -2246,7 +2253,7 @@ final class AppStore {
     }
 
     /// Apply adaptive placement results: seed (provisional) mastery on demonstrated
-    /// base concepts, route the learner, and lay down the right starting gaps. A
+    /// concepts, route the learner, and lay down the right starting gaps. A
     /// knower lands on their shaky spots; a beginner gets the Foundation slice.
     /// Seeded concepts keep their Foundation gaps too: they are the items the
     /// verification check-ins ride on, and what gets taught if a seed fails.
@@ -2274,8 +2281,16 @@ final class AppStore {
 
         let missedConcepts = Set(result.missedConceptIds)
         // Two tiers (B9): fully probed → provisional mastery; band-inferred → learning.
-        let mastered = Set(result.masteredConceptIds)
-        for cid in result.masteredConceptIds where !missedConcepts.contains(cid) { seedMastered(cid, now: now) }
+        // A seed above the base set (an A2 learner's A2 concepts, firstrun-10-1) is
+        // taken only for a concept the content can teach: its gaps are the vehicles
+        // for the check-ins that confirm or reject the guess, and a concept with no
+        // material is never ranked, targeted or announced (store-6-2).
+        let seeds = result.masteredConceptIds.filter { cid in
+            !missedConcepts.contains(cid)
+                && (ConceptTaxonomy.baseConceptIds.contains(cid) || isTeachable(cid, now: now))
+        }
+        let mastered = Set(seeds)
+        for cid in seeds { seedMastered(cid, now: now) }
         for cid in result.inferredConceptIds where !missedConcepts.contains(cid) && !mastered.contains(cid) {
             seedInferred(cid, now: now)
         }
@@ -2291,7 +2306,7 @@ final class AppStore {
             // seeded a second time.
             if isInFoundation {
                 seeded.append(contentsOf: foundationSlice(
-                    conceptIds: FoundationSeeder.firstRunConceptIds(seededMastered: result.masteredConceptIds),
+                    conceptIds: FoundationSeeder.firstRunConceptIds(seededMastered: seeds),
                     excludedHeadwords: Set(seeded.map { FoundationSeeder.headwordKey($0.frenchWord) }),
                     existingIds: Set(seeded.map { $0.id }), now: now))
             }

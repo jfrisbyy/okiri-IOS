@@ -59,6 +59,11 @@ nonisolated struct Concept: Codable, Identifiable, Hashable {
     /// Current adaptive check-in interval in days (×`Tuning.checkInGrowth` on a pass,
     /// ÷`Tuning.checkInMissDivisor` on a miss, capped at `Tuning.checkInMaxDays`).
     var checkInIntervalDays: Double? = nil
+    /// When answers took this concept OUT of mastery it had earned through practice
+    /// (a missed check-in, usually). Nil once it is mastered again, and for a concept
+    /// that never was. While set, the selector re-teaches it
+    /// (`ConceptSelector.unfinishedConceptBonus`, engine-8-3).
+    var lapsedAt: Date? = nil
 
     // MARK: Stalls (Package B14/B15)
     /// Consecutive lessons this concept was the target without its state changing.
@@ -112,7 +117,7 @@ nonisolated struct Concept: Codable, Identifiable, Hashable {
         case id, name, category, cefrLevel, prerequisites, description
         case alpha, beta, lastTestedAt, observationCount, inferredObservations
         case lastTaughtSession, newlyUnlocked
-        case isProvisional, provisionalPasses, nextCheckInAt, checkInIntervalDays
+        case isProvisional, provisionalPasses, nextCheckInAt, checkInIntervalDays, lapsedAt
         case stallAttempts, lastTaughtState
     }
 }
@@ -141,6 +146,7 @@ nonisolated extension Concept {
         provisionalPasses = try c.decodeIfPresent(Int.self, forKey: .provisionalPasses) ?? 0
         nextCheckInAt = try c.decodeIfPresent(Date.self, forKey: .nextCheckInAt)
         checkInIntervalDays = try c.decodeIfPresent(Double.self, forKey: .checkInIntervalDays)
+        lapsedAt = try c.decodeIfPresent(Date.self, forKey: .lapsedAt)
         stallAttempts = try c.decodeIfPresent(Int.self, forKey: .stallAttempts) ?? 0
         lastTaughtState = try c.decodeIfPresent(MasteryState.self, forKey: .lastTaughtState)
     }

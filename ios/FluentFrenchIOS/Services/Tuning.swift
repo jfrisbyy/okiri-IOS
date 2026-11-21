@@ -436,6 +436,12 @@ nonisolated enum Tuning {
     static let stallAttempts: Int = 3
     /// Score bonus the selector adds to the unmastered prerequisites of a stalled concept.
     static let stallPrerequisiteBonus: Double = 1.5
+    /// Score bonus for a taught, never-mastered concept left unfinished, until mastered or stalled (engine-8-3).
+    static let unfinishedConceptBonus: Double = 0.5
+    /// Days without any evidence after which a taught, unmastered concept counts as left unfinished (engine-8-3).
+    static let unfinishedReturnDays: Double = 3
+    /// Score bonus for a concept that lost practice-earned mastery, until it is re-earned or stalls (engine-8-3).
+    static let lapsedConceptBonus: Double = 1.5
 
     // MARK: Engine metrics (Package B14)
     /// Most recent per-lesson metric snapshots kept in the MetricsLog.

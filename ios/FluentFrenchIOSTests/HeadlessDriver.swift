@@ -92,6 +92,16 @@ final class SyntheticLearner {
         guessRate + (1 - guessRate) * truth(conceptId)
     }
 
+    /// The ENGINE'S mastery standard in this learner's latent units: the true mastery
+    /// at which `pCorrect` reaches `Tuning.masteryThreshold`. The engine's estimate is
+    /// a Beta mean over right/wrong answers, i.e. an estimate of P(correct), and it
+    /// certifies at P(correct) >= `Tuning.masteryThreshold`; inverting
+    /// `pCorrect = guessRate + (1 − guessRate)·truth` gives this line (≈ 0.69 today).
+    /// Derived, never a literal, so it moves with the threshold and the guess floor.
+    var truthAtEngineMasteryStandard: Double {
+        (Tuning.masteryThreshold - guessRate) / (1 - guessRate)
+    }
+
     /// Assessment-style answer: no learning.
     func probe(_ conceptId: String) -> Bool {
         rng.uniform() < pCorrect(conceptId)
@@ -221,7 +231,12 @@ struct SimulatedRun {
         let lessonSize: Int
         /// Mean |engine mastery − true mastery| over observed concepts.
         let calibrationError: Double
+        /// Concepts whose true mastery is at or above `SimulatedRun.trueMasteryLine`.
         let trueMastered: Int
+        /// Concepts whose true mastery meets the ENGINE'S own mastery standard
+        /// (`SyntheticLearner.truthAtEngineMasteryStandard`): the count the engine's
+        /// mastered count is compared with.
+        let trueMasteredAtEngineStandard: Int
         let estimatedMastered: Int
         /// Mastered concepts that are NOT provisional seeds (what coverage counts).
         let verifiedMastered: Int
@@ -260,9 +275,22 @@ struct SimulatedRun {
         AssessmentService.bank + AssessmentService.contentBank(concepts: store.concepts, probes: EngineFixtures.syntheticProbes)
     }
 
+    /// The learner's true mastery at or above which a concept counts as truly mastered.
+    static let trueMasteryLine = 0.85
+    /// The true mastery below which an engine-mastered concept is a ghost (forgotten).
+    static let ghostLine = 0.6
+
     let driver: EngineDriver
     let learner: SyntheticLearner
     private(set) var reports: [DayReport] = []
+    /// Every certification the engine made during `run`: a concept that read
+    /// `.mastered` at the end of a day it did not start mastered, with the learner's
+    /// true mastery that evening. Placement seeds are not in it (they are mastered
+    /// before day 1 and have their own verification deadline). This separates the
+    /// question "does the engine certify skills the learner does not have?" from
+    /// "does the learner forget certified skills faster than the plan maintains
+    /// them?" — the mastered-count drift mixes the two.
+    private(set) var certifications: [(day: Int, conceptId: String, truth: Double)] = []
     /// First day reading read as unlocked, if it ever did.
     private(set) var unlockDay: Int? = nil
     /// Reading has read as unlocked at some point before the current lesson.
@@ -369,6 +397,7 @@ struct SimulatedRun {
             var violations: [String] = []
             var checkIns = 0, checkInMisses = 0
             let unlockedAtStart = store.readiness(for: .reading) == .unlocked
+            let masteredAtStart = Set(store.concepts.filter { $0.state == .mastered }.map { $0.id })
             // The lessons spine the app would show on this day's card. `makePlan`
             // previews the selection, so asking for it neither logs a selection nor
             // moves any scheduling state.
@@ -410,6 +439,9 @@ struct SimulatedRun {
                 lastTarget = lesson?.targetConcept?.id
                 lastSize = lesson?.gaps.count ?? 0
             }
+            for concept in store.concepts where concept.state == .mastered && !masteredAtStart.contains(concept.id) {
+                certifications.append((day: day, conceptId: concept.id, truth: learner.truth(concept.id)))
+            }
             learner.dayPasses(practiced: practiced)
             let unlocked = store.readiness(for: .reading) == .unlocked
             if unlocked && unlockDay == nil { unlockDay = day }
@@ -429,14 +461,17 @@ struct SimulatedRun {
         let observed = store.concepts.filter { $0.state != .neverObserved }
         let calibration = observed.isEmpty ? 0 :
             observed.map { abs($0.mastery - learner.truth($0.id)) }.reduce(0, +) / Double(observed.count)
-        let trueMastered = store.concepts.filter { learner.truth($0.id) >= 0.85 }.count
+        let trueMastered = store.concepts.filter { learner.truth($0.id) >= Self.trueMasteryLine }.count
+        let standard = learner.truthAtEngineMasteryStandard
+        let trueAtStandard = store.concepts.filter { learner.truth($0.id) >= standard }.count
         let estMastered = store.concepts.filter { $0.state == .mastered }.count
         let verified = store.concepts.filter { $0.isVerifiedMastered }.count
         let ghostIds = store.concepts
-            .filter { $0.state == .mastered && learner.truth($0.id) < 0.6 }
+            .filter { $0.state == .mastered && learner.truth($0.id) < Self.ghostLine }
             .map { "\($0.id)(\(String(format: "%.2f", learner.truth($0.id))))" }
         return DayReport(day: day, lessons: lessons, plannedLessons: planned, targetConceptId: target, lessonSize: size,
                          calibrationError: calibration, trueMastered: trueMastered,
+                         trueMasteredAtEngineStandard: trueAtStandard,
                          estimatedMastered: estMastered, verifiedMastered: verified, ghosts: ghostIds.count,
                          checkIns: checkIns, checkInMisses: checkInMisses,
                          governorActive: store.isGovernorActive,
@@ -458,6 +493,7 @@ struct SimulatedRun {
             parts.append("size " + pad(String(r.lessonSize), 3))
             parts.append("calib " + String(format: "%.2f", r.calibrationError))
             parts.append("trueM " + pad(String(r.trueMastered), 3))
+            parts.append("trueStd " + pad(String(r.trueMasteredAtEngineStandard), 3))
             parts.append("estM " + pad(String(r.estimatedMastered), 3))
             parts.append("verM " + pad(String(r.verifiedMastered), 3))
             parts.append("ghosts " + pad(String(r.ghosts), 2))
@@ -480,6 +516,27 @@ struct SimulatedRun {
         footer += "\nlevel changes: \(bandChanges) — \(bandTrace)"
         if let placement {
             footer += "  placement: level \(placement.result.estimatedLevel.rawValue), seeds \(placement.seededConceptIds.count), inferred \(placement.inferredConceptIds.count), asked \(placement.result.askedCount)"
+        }
+        footer += "\nmastery lines: trueStd counts truth >= \(String(format: "%.4f", learner.truthAtEngineMasteryStandard)) (the engine's P(correct) >= \(Tuning.masteryThreshold) at guess rate \(learner.guessRate)), trueM counts truth >= \(Self.trueMasteryLine)"
+        // The two sides of the mastered-count comparison, concept by concept, so a
+        // drift names its concepts: truth at the engine's standard but not mastered
+        // (under-credit), and mastered with truth below it (over-credit).
+        do {
+            let store = driver.store
+            let standard = learner.truthAtEngineMasteryStandard
+            func describe(_ c: Concept) -> String {
+                let since = c.lastTestedAt.map { String(format: "%.0f", driver.now.timeIntervalSince($0) / 86_400) } ?? "-"
+                return "\(c.id)(truth \(String(format: "%.2f", learner.truth(c.id))), est \(String(format: "%.2f", c.mastery)), obs \(String(format: "%.0f", c.observationCount)), \(since)d)"
+            }
+            let under = store.concepts.filter { learner.truth($0.id) >= standard && $0.state != .mastered }
+            let over = store.concepts.filter { learner.truth($0.id) < standard && $0.state == .mastered }
+            footer += "\nunder-credited at the engine's standard: \(under.count) " + under.map(describe).joined(separator: ", ")
+            footer += "\nover-credited at the engine's standard: \(over.count) " + over.map(describe).joined(separator: ", ")
+        }
+        if !certifications.isEmpty {
+            let mean = certifications.map { $0.truth }.reduce(0, +) / Double(certifications.count)
+            let below = certifications.filter { $0.truth < Self.trueMasteryLine }.count
+            footer += "\ncertifications: \(certifications.count), true mastery that evening \(String(format: "%.2f", mean)) on average, \(below) below \(Self.trueMasteryLine)"
         }
         if let last = reports.last, !last.ghostConceptIds.isEmpty {
             footer += "\nghosts at day \(last.day): " + last.ghostConceptIds.joined(separator: ", ")

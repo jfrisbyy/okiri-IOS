@@ -622,6 +622,94 @@ struct ConceptSelectorTests {
                 "an unverified seed is checked, never re-taught")
     }
 
+    /// engine-8-3: the ranker comes back to unfinished work. A lapse (practised
+    /// mastery a check-in took away) gets `Tuning.lapsedConceptBonus` at once; a
+    /// concept taught as a target and never mastered gets `Tuning.unfinishedConceptBonus`
+    /// once `Tuning.unfinishedReturnDays` pass with no evidence on it. Neither
+    /// applies to a stalled concept, a mastered one, or one that was never a target.
+    @Test func unfinishedAndLapsedConceptsEarnTheirReturnBonusesOnlyWhileUnfinished() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let selector = ConceptSelector(store: EngineFixtures.store(concepts: [], gaps: []))
+        let returnAfter = Tuning.unfinishedReturnDays * day
+
+        var lapsed = EngineFixtures.learning("lapsed", mastery: 0.6)
+        lapsed.lapsedAt = now
+        lapsed.lastTestedAt = now
+        #expect(selector.unfinishedConceptBonus(lapsed, now: now) == Tuning.lapsedConceptBonus,
+                "a lapse is re-taught at once")
+        lapsed.stallAttempts = Tuning.stallAttempts
+        #expect(selector.unfinishedConceptBonus(lapsed, now: now) == 0, "a stalled lapse hands over to stall remediation")
+
+        var taught = EngineFixtures.concept("taught", alpha: 4, beta: 2, lastTaughtSession: 1)
+        taught.lastTestedAt = now.addingTimeInterval(-returnAfter)
+        #expect(taught.state == .learning)
+        #expect(selector.unfinishedConceptBonus(taught, now: now) == Tuning.unfinishedConceptBonus,
+                "taught, never mastered, and left alone for the return delay")
+        taught.lastTestedAt = now.addingTimeInterval(-returnAfter + 1)
+        #expect(selector.unfinishedConceptBonus(taught, now: now) == 0, "still inside the return delay")
+
+        var probed = EngineFixtures.concept("probed", alpha: 1, beta: 2)
+        probed.lastTestedAt = now.addingTimeInterval(-10 * returnAfter)
+        #expect(selector.unfinishedConceptBonus(probed, now: now) == 0, "never a lesson target: nothing to finish")
+
+        var known = EngineFixtures.mastered("known")
+        known.lapsedAt = now
+        #expect(selector.unfinishedConceptBonus(known, now: now) == 0, "mastered again: nothing to finish")
+    }
+
+    /// engine-4-1, at curriculum scale: making a never-answered item of a mastered
+    /// concept review-ELIGIBLE was not enough once the deck outgrew review capacity.
+    /// Review was plain oldest-first, so the item waited behind every older due item;
+    /// with the A2 bridge releasing a day's batch of items against a few review slots
+    /// per lesson, that queue never drained, and a 60-day run ended with 33 authored
+    /// items never asked on concepts mastered on their first few. Review is the only
+    /// path those items have, so the reserved review slots take them first — capped
+    /// at the reserved slots, so the rest of review stays oldest-first.
+    @Test func reservedReviewSlotsTakeAMasteredConceptsUnaskedItemsBeforeOlderReview() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let busy = EngineFixtures.learning("busy", mastery: 0.5)
+        let known = EngineFixtures.mastered("known")
+        var gaps = (0..<3).map { EngineFixtures.gap("busy-\($0)", concept: "busy", due: now) }
+        // The mastered concept's practised gap: its check-in vehicle.
+        gaps.append(EngineFixtures.gap("known-0", concept: "known", due: now.addingTimeInterval(-2 * day),
+                                       consecutiveCorrect: 2, reviewCount: 4))
+        // One more of its curriculum items than the lesson reserves review slots for,
+        // none reached by a lesson yet, all due today. The expectation below is read
+        // from `Tuning.reviewSlotsPerLesson`, never a hard-coded count.
+        let reserved = Tuning.reviewSlotsPerLesson
+        let unaskedIds = (0...reserved).map { "known-new-\($0)" }
+        gaps += unaskedIds.map { EngineFixtures.gap($0, concept: "known", due: now) }
+        // A backlog of OLDER due review, longer than any lesson: saved words on no
+        // concept, overdue between 5 and `lessonSize + 4` days, oldest first by index.
+        let backlog = Tuning.lessonSize
+        let savedIds = (0..<backlog).map { "saved-\($0)" }
+        gaps += savedIds.indices.map {
+            EngineFixtures.gap(savedIds[$0], concept: nil, category: .vocabulary,
+                               due: now.addingTimeInterval(-Double(backlog + 4 - $0) * day),
+                               consecutiveCorrect: 1, reviewCount: 2, sourceType: .reading)
+        }
+        let store = EngineFixtures.store(concepts: [busy, known], gaps: gaps)
+        store.sessionIndex = 1   // not a probe session
+
+        let output = ConceptSelector(store: store).select(.smart(now: now))
+        #expect(output.targetConceptId == "busy")
+        #expect(output.checkInItems.map { $0.gapId } == ["known-0"], "practised material still returns as ONE check-in")
+        #expect(output.items.count == Tuning.lessonSize)
+        let review = output.items.filter { $0.role == .review }.map { $0.gapId }
+        #expect(Array(review.prefix(reserved)) == Array(unaskedIds.prefix(reserved)),
+                "the reserved review slots go to the mastered concept's unasked items, ahead of older review")
+        // What is left of the lesson after the spine, the check-in and the reserved
+        // slots goes to oldest-first review again.
+        let spineAndCheckIns = output.items.filter { $0.role == .target || $0.role == .checkIn }.count
+        let rest = Tuning.lessonSize - spineAndCheckIns - reserved
+        #expect(rest >= 1, "the fixture leaves at least one slot past the reserved ones")
+        #expect(Array(review.dropFirst(reserved)) == Array(savedIds.prefix(rest)),
+                "capped at the reserved slots: the next slots are the oldest due review again")
+        #expect(!review.contains(unaskedIds[reserved]), "the unasked item past the reserved slots waits for the next lesson")
+    }
+
     /// A consolidation day (nothing left to teach) let check-ins take every slot, so
     /// the whole session was material the engine already believes the learner knows
     /// while genuinely due items kept rotting. `reviewSlotsPerLesson` is a floor on

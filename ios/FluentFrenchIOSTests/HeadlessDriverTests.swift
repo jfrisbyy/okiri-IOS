@@ -318,15 +318,27 @@ struct HeadlessDriverTests {
 
     // MARK: Synthetic learner against the real engine
 
-    /// Cards only for the concepts the shipped content covers: one with no authored
-    /// content has no cards in the app either (EngineFixtures.authoredConceptIds) —
-    /// fabricating them for all 181 concepts simulated a curriculum the product does
-    /// not ship (engine-10-4).
+    /// A new learner placed at A1, seeded the way the APP seeds one: the full taxonomy,
+    /// content shaped like the shipped file, and a declared-beginner placement applied
+    /// through the real `AppStore.applyPlacement` (the "I'm a beginner" button on the
+    /// assessment screen). That lays down the base concepts' Foundation slice only,
+    /// staggered `Tuning.foundationSeedBatch` items a day (`FoundationSeeder`, D3); A2
+    /// arrives through the bridge at unlock and anything else through the probe path.
+    ///
+    /// This fixture used to give every AUTHORED concept six due-now cards on day 0
+    /// (`EngineFixtures.foundationGaps(for: authoredConcepts)`), a seeding no app path
+    /// performs (engine-10-4 fixed the same mismatch in the sixty-day runs). Once the
+    /// A1/A2 merge grew the authored set to 82 concepts, that put all 54 non-base
+    /// concepts (the A1 pronunciation and register skills, A2 and B1) in front of the
+    /// estimator from day 0, and the
+    /// day-3 to day-5 calibration error (0.35-0.39) measured the fixture's curriculum,
+    /// not the product's.
     private func realTaxonomyStore() -> AppStore {
-        let concepts = ConceptTaxonomy.seed()
-        let gaps = EngineFixtures.foundationGaps(for: EngineFixtures.authoredConcepts(concepts), perConcept: 6,
-                                                 at: EngineFixtures.now)
-        let store = EngineFixtures.store(concepts: concepts, gaps: gaps, theta: -0.8)   // placed A1
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.shippedShapeContent()
+        var placement = PlacementEngine(bank: SimulatedRun.placementBank(for: store), seed: 7)
+        placement.declareBeginner()
+        store.applyPlacement(placement.result(), isFirstRun: true, now: EngineFixtures.now)
         return store
     }
 
@@ -390,8 +402,10 @@ struct HeadlessDriverTests {
     /// estimator trails a learner whose truth decays daily on every skill a lesson
     /// does not reach; that lag is printed in the trace, and bounded here.
     private static let stressSettledCalibrationCeiling = 0.22
-    /// How far the engine's mastered COUNT may sit from the truth at day 60 for a
-    /// learner who does every lesson the plan asks for (measured ≤ 3 of 49 concepts).
+    /// How far the engine's mastered COUNT may sit from the truth, at the engine's own
+    /// mastery standard, at day 60 for a learner who does every lesson the plan asks
+    /// for (measured ≤ 3 of 49 concepts on the 28-concept curriculum; on the 82-concept
+    /// one, after engine-8-3: 6 for the true beginner, 4 fast, 3 false beginner).
     private static let masteredCountBand = 6
     /// Days after the seed-resolution deadline on which the engine may transiently
     /// read a concept as mastered that the learner has not really learned (measured 2
@@ -487,14 +501,67 @@ struct HeadlessDriverTests {
     /// The engine's mastered COUNT tracks the truth for a learner who does every
     /// lesson the plan asks for. Ghost-free only says no single concept is badly
     /// over-credited; this says the totals agree (engine-8-3).
+    ///
+    /// Both sides of the count use the SAME standard: the engine's own. The engine
+    /// reads a concept as mastered when its estimate of P(correct) reaches
+    /// `Tuning.masteryThreshold`, which in the synthetic learner's latent units is
+    /// `SyntheticLearner.truthAtEngineMasteryStandard` (derived from the threshold
+    /// and the learner's guess floor, ≈ 0.69 today). This used to count truth at
+    /// `SimulatedRun.trueMasteryLine` (0.85), a stricter standard than the one the
+    /// engine certifies against. On the 28-concept curriculum the two agreed by
+    /// accident; on the 82-concept one a learner spread across the whole curriculum
+    /// at the plan's fixed throughput settles near 0.82 per concept — above the
+    /// engine's line, below the test's — and the count drifted by 11 to 35 while the
+    /// engine's certifications averaged true mastery 0.94-0.99, none below the ghost
+    /// line. The 0.85 line did not go away: "a certification sits on real knowledge"
+    /// is held per certification by `expectCertificationsAreEarned` (mean at or above
+    /// 0.85, at most `maxShareCertifiedBelowTruthLine` below it, none below the ghost
+    /// line), which is where a stricter-than-the-threshold bar belongs.
+    /// `masteredCountBand` is unchanged.
+    ///
+    /// At the matched standard the drift flipped sign and was still 10-12: now the
+    /// engine UNDER-counted, leaving concepts the learner held below the line for
+    /// weeks — mostly ones a single double-weight check-in miss had knocked out of
+    /// mastery, which nothing ever asked about again. That was an engine defect, not
+    /// a test artefact, and was fixed in the ranker (engine-8-3,
+    /// `ConceptSelector.unfinishedConceptBonus`); the summary prints both sides
+    /// ("under-credited" / "over-credited") so a future drift names its concepts.
     private func expectMasteredCountTracksTruth(_ run: SimulatedRun, label: String) {
         guard let last = run.reports.last else {
             #expect(Bool(false), "\(label): the run produced no reports to judge")
             return
         }
-        let drift = abs(last.trueMastered - last.estimatedMastered)
+        let drift = abs(last.trueMasteredAtEngineStandard - last.estimatedMastered)
         #expect(drift <= Self.masteredCountBand,
-                "\(label) day \(last.day): engine says \(last.estimatedMastered) mastered, truth says \(last.trueMastered)")
+                "\(label) day \(last.day): engine says \(last.estimatedMastered) mastered, truth at the engine's standard (\(run.learner.truthAtEngineMasteryStandard)) says \(last.trueMasteredAtEngineStandard)")
+    }
+
+    /// Share of the engine's certifications that may land on a concept the learner
+    /// truly holds below `SimulatedRun.trueMasteryLine` that evening (measured on the
+    /// 82-concept curriculum: 5 of 73 for the true beginner, 0 of 71 for the false
+    /// beginner, 0 of 78 for the fast learner — four answers in a row can be right by
+    /// luck — with none below the ghost line).
+    private static let maxShareCertifiedBelowTruthLine = 0.1
+
+    /// The engine certifies a concept as mastered only when the learner really holds
+    /// it. This is the over-credit question on its own: the mastered-COUNT drift
+    /// below also includes certified skills the learner later FORGETS faster than the
+    /// plan's fixed throughput can maintain them, which grows with the curriculum the
+    /// learner is spread across and is not a claim the engine made without evidence.
+    /// A certification must sit on real knowledge: on average at or above the truth
+    /// line, rarely below it, and never on a concept already below the ghost line.
+    private func expectCertificationsAreEarned(_ run: SimulatedRun, label: String) {
+        let certified = run.certifications
+        #expect(!certified.isEmpty, "\(label): the run certified nothing")
+        guard !certified.isEmpty else { return }
+        let mean = certified.map { $0.truth }.reduce(0, +) / Double(certified.count)
+        #expect(mean >= SimulatedRun.trueMasteryLine,
+                "\(label): certified concepts averaged true mastery \(mean) that evening")
+        let below = certified.filter { $0.truth < SimulatedRun.trueMasteryLine }
+        #expect(Double(below.count) <= Self.maxShareCertifiedBelowTruthLine * Double(certified.count),
+                "\(label): \(below.count) of \(certified.count) certifications below the truth line: \(below.prefix(8).map { "day \($0.day) \($0.conceptId) \(String(format: "%.2f", $0.truth))" })")
+        let ghosts = certified.filter { $0.truth < SimulatedRun.ghostLine }
+        #expect(ghosts.isEmpty, "\(label): certified a concept the learner does not have: \(ghosts.map { "day \($0.day) \($0.conceptId)" })")
     }
 
     /// The capacity finding, kept visible: an unlocked learner who does ONE lesson
@@ -543,6 +610,7 @@ struct HeadlessDriverTests {
         #expect(run.placement?.inferredConceptIds.isEmpty == true)
         expectNoGhostsInTheFinalWeek(run, label: "true beginner")
         expectMasteredCountTracksTruth(run, label: "true beginner")
+        expectCertificationsAreEarned(run, label: "true beginner")
 
         // Interleaved review is a real share of the run, not a rounding error: with
         // check-in and review slots reserved (engine-1-2) a steady-state lesson is
@@ -582,6 +650,7 @@ struct HeadlessDriverTests {
         expectAnA1LockedPhase(run, label: "fast")
         expectNoGhostsInTheFinalWeek(run, label: "fast")
         expectMasteredCountTracksTruth(run, label: "fast")
+        expectCertificationsAreEarned(run, label: "fast")
         #expect(run.unlockDay != nil, "a fast learner unlocks reading inside 60 days")
         #expect(run.readingToggles <= 1, "the gate never flip-flops")
     }
@@ -607,12 +676,17 @@ struct HeadlessDriverTests {
         #expect(!placement.result.isTrueBeginner, "the staircase sees the vocabulary")
         #expect(!placement.seededConceptIds.isEmpty, "placement seeds provisional mastery on what it fully probed")
         #expect(!placement.inferredConceptIds.isEmpty, "and a learning head start on what it only inferred")
-        #expect(Set(placement.seededConceptIds) == placement.result.fullyProbedConceptIds.filter { ConceptTaxonomy.baseConceptIds.contains($0) },
-                "only a base concept asked \(Tuning.placementProbesPerConcept) items clean is seeded as mastered (B9)")
+        // B9, widened by firstrun-10-1: a concept asked \(Tuning.placementProbesPerConcept)
+        // items clean, at or below its category's cleared band, is seeded as mastered —
+        // not only an A1 base concept.
+        #expect(Set(placement.seededConceptIds) == EngineFixtures.expectedPlacementSeeds(placement.result),
+                "only a concept asked \(Tuning.placementProbesPerConcept) items clean, inside its placed band, is seeded as mastered (B9)")
         #expect(Set(placement.seededConceptIds).isDisjoint(with: placement.result.missedConceptIds),
                 "a concept with a missed item is never seeded")
         #expect(Set(placement.seededConceptIds).isDisjoint(with: placement.inferredConceptIds))
-        #expect(placement.seededConceptIds.allSatisfy { ConceptTaxonomy.baseConceptIds.contains($0) })
+        #expect(placement.seededConceptIds.allSatisfy { cid in
+            run.driver.store.concept(cid).map { $0.cefrLevel.order <= placement.result.estimatedLevel.order } ?? false
+        }, "no seed above the level the placement read")
         // Seeds were verified: none is still provisional after sixty days of check-ins.
         #expect(run.driver.store.concepts.allSatisfy { !$0.isProvisional }, "every seed was verified or un-mastered")
         #expect(run.reports.reduce(0) { $0 + $1.checkIns } > 0, "check-ins ran")
@@ -630,6 +704,7 @@ struct HeadlessDriverTests {
         // resolved by the tuning-derived deadline.
         expectNoGhostsInTheFinalWeek(run, label: "false beginner")
         expectMasteredCountTracksTruth(run, label: "false beginner")
+        expectCertificationsAreEarned(run, label: "false beginner")
         let deadline = seedResolutionDeadline(seeds: placement.seededConceptIds.count)
         #expect(deadline <= 60)
         #expect(run.reports.contains { $0.day == deadline }, "the deadline day is inside the run")

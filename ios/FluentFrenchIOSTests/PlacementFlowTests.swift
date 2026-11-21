@@ -211,6 +211,121 @@ struct PlacementFlowTests {
         }
     }
 
+    /// firstrun-10-1, re-opened by the A2 content merge: with A2 vocabulary and
+    /// grammar probes in the bank, an A2 learner's whole budget stays on bands 2-3 and
+    /// never fully probes an A1 base concept, so a base-only seed rule seeded them
+    /// nothing. The seeds must be what the staircase VERIFIED at their band: concepts
+    /// asked the full probe budget clean, at or below the band their category
+    /// cleared — never a concept above the placed level, never one with a miss.
+    @Test func anA2LearnersSeedsAreTheConceptsVerifiedAtTheirOwnBand() throws {
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the A2-seed check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let s = EngineFixtures.store()
+        let bank = AssessmentService.placementBank(concepts: s.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+        let levels = Dictionary(s.concepts.map { ($0.id, $0.cefrLevel) }, uniquingKeysWith: { a, _ in a })
+        let seeds = Array(UInt64(1)...16)
+        var seededAtA2 = 0
+        for seed in seeds {
+            var engine = PlacementEngine(bank: bank, seed: seed)
+            _ = run(&engine) { $0.band <= 2 }
+            let r = engine.result()
+            #expect(r.estimatedLevel == .A2, "seed \(seed): an A2 learner placed at \(r.estimatedLevel.rawValue)")
+            #expect(Set(r.masteredConceptIds) == EngineFixtures.expectedPlacementSeeds(r),
+                    "seed \(seed): seeds \(r.masteredConceptIds) are not the fully probed concepts inside the placed band")
+            for cid in r.masteredConceptIds {
+                let level = try #require(levels[cid])
+                #expect(level.order <= CEFRLevel.A2.order, "seed \(seed): \(cid) (\(level.rawValue)) is above the placed A2")
+                #expect(r.askedCount(for: cid) >= Tuning.placementProbesPerConcept && !r.missedConceptIds.contains(cid),
+                        "seed \(seed): \(cid) was not verified")
+            }
+            if r.masteredConceptIds.contains(where: { levels[$0] == .A2 }) { seededAtA2 += 1 }
+        }
+        #expect(seededAtA2 >= seeds.count * 3 / 4, "an A2 learner was seeded an A2 concept in \(seededAtA2) of \(seeds.count) runs")
+    }
+
+    /// The widened seed rule must not leak upward: a learner who knows only A1 is
+    /// placed at A1 and seeded A1 concepts only, however many A2 probes the bank holds.
+    @Test func anA1LearnerOnTheShippedBankIsNeverSeededAboveA1() throws {
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the A1-seed check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let s = EngineFixtures.store()
+        let bank = AssessmentService.placementBank(concepts: s.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+        let levels = Dictionary(s.concepts.map { ($0.id, $0.cefrLevel) }, uniquingKeysWith: { a, _ in a })
+        let seeds = Array(UInt64(1)...16)
+        var seeded = 0
+        for seed in seeds {
+            var engine = PlacementEngine(bank: bank, seed: seed)
+            _ = run(&engine) { $0.band <= 1 }
+            let r = engine.result()
+            #expect(!r.isTrueBeginner && r.estimatedLevel == .A1, "seed \(seed): placed at \(r.estimatedLevel.rawValue)")
+            #expect(r.masteredConceptIds.allSatisfy { levels[$0] == .A1 },
+                    "seed \(seed): an A1 learner seeded \(r.masteredConceptIds.filter { levels[$0] != .A1 })")
+            if !r.masteredConceptIds.isEmpty { seeded += 1 }
+        }
+        #expect(seeded >= seeds.count * 3 / 4, "an A1 learner was seeded in \(seeded) of \(seeds.count) runs")
+    }
+
+    /// The band cap reads the concept's TAXONOMY level, not the band its items were
+    /// filed at: three clean answers on items a band below a concept's level prove
+    /// that band only. imparfait is B1; asked at band 2 it is evidence, not a seed.
+    /// Asked at its own band it is a seed, and one miss takes it out again.
+    @Test func aConceptVerifiedBelowItsOwnLevelIsEvidenceNotASeed() {
+        let low = (0..<3).map { question(2, .grammar, "imparfait", $0) } + (0..<3).map { question(2, .grammar, "negation", $0) }
+        var below = PlacementEngine(bank: low, seed: 1)
+        for q in low { below.record(q, correct: true) }
+        let r = below.result()
+        #expect(r.grammarBand == 2)
+        #expect(r.fullyProbedConceptIds == ["imparfait", "negation"])
+        #expect(r.masteredConceptIds == ["negation"], "imparfait (B1) was verified only at band 2: \(r.masteredConceptIds)")
+
+        let atLevel = (0..<3).map { question(3, .grammar, "imparfait", $0) }
+        var own = PlacementEngine(bank: atLevel, seed: 1)
+        for q in atLevel { own.record(q, correct: true) }
+        #expect(own.result().grammarBand == 3)
+        #expect(own.result().masteredConceptIds == ["imparfait"], "a B1 concept verified at B1 is a seed for a B1 placement")
+
+        var slipped = PlacementEngine(bank: atLevel, seed: 1)
+        for (i, q) in atLevel.enumerated() { slipped.record(q, correct: i != 1) }
+        #expect(slipped.result().masteredConceptIds.isEmpty, "a concept with a miss is never seeded")
+        #expect(slipped.result().missedConceptIds == ["imparfait"])
+    }
+
+    /// A seed above the base set is still a guess (workplan: "a placement seed is a
+    /// guess until it is tested"): it reads as mastered but `isProvisional`, it is not
+    /// verified mastery, it has its first check-in scheduled, and its Foundation gaps
+    /// are seeded as the vehicles for that check-in. A seed for a concept the content
+    /// cannot teach is not taken at all — nothing could ever confirm it.
+    @Test func anA2SeedIsProvisionalKeepsItsGapsAndNeedsMaterial() {
+        let result = PlacementResult(vocabBand: 2, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                     masteredConceptIds: ["negation", "passe-compose-avoir"], missedGaps: [],
+                                     askedCount: 9, correctCount: 9, inferredConceptIds: ["plurals"])
+        let s = contentStore()
+        s.applyPlacement(result, isFirstRun: true, now: now)
+        for cid in result.masteredConceptIds {
+            let c = s.concept(cid)!
+            #expect(c.state == .mastered && c.isProvisional, "\(cid): a placement seed reads as a provisional mastery")
+            #expect(!c.isVerifiedMastered, "\(cid): a seed is not verified mastery until a check-in confirms it")
+            #expect(c.nextCheckInAt == now.addingTimeInterval(Tuning.seedVerificationDays * day), "\(cid): its check-in is scheduled")
+            #expect(s.gaps.contains { $0.conceptId == cid && $0.sourceType == .foundation && !$0.isProbe },
+                    "\(cid): a seed keeps its Foundation gaps — the check-in vehicles (B7)")
+        }
+        #expect(s.foundationSeededMastered == 0, "provisional seeds never count as Foundation progress")
+
+        // The same result on a store whose content covers only the base set.
+        let bare = EngineFixtures.store()
+        bare.foundationContent = EngineFixtures.syntheticContent(for: FoundationSeeder.baseConceptIds)
+        bare.applyPlacement(result, isFirstRun: true, now: now)
+        #expect(bare.concept("negation")?.isProvisional == true)
+        #expect(bare.concept("passe-compose-avoir")?.state == .neverObserved,
+                "a seed the content cannot teach is not taken: no material, no check-in, no confirmation")
+    }
+
     /// firstrun-10-1: a cleared band is a floor, not a ceiling. Above A1 the bank
     /// holds little vocabulary, so a learner who answers every item correctly can
     /// clear vocabulary band 1 and grammar band 4 — and must not be told their
@@ -432,7 +547,9 @@ struct PlacementFlowTests {
             }
             #expect(result.vocabBand >= 1 || result.grammarBand >= 1)
             #expect(!result.inferredConceptIds.isEmpty, "seed \(seed): in-band concepts are inferred")
-            #expect(result.masteredConceptIds.allSatisfy { ConceptTaxonomy.baseConceptIds.contains($0) && result.askedCount(for: $0) >= Tuning.placementProbesPerConcept })
+            #expect(result.masteredConceptIds.allSatisfy { result.askedCount(for: $0) >= Tuning.placementProbesPerConcept })
+            // firstrun-10-1: seeds are the fully probed concepts inside their placed band, not only A1 base ones.
+            #expect(Set(result.masteredConceptIds) == EngineFixtures.expectedPlacementSeeds(result), "seed \(seed)")
             #expect(Set(result.masteredConceptIds).isDisjoint(with: result.missedConceptIds))
             if result.vocabBand >= 1 { vocabReads += 1 }
             if !result.masteredConceptIds.isEmpty { seededRuns += 1 }

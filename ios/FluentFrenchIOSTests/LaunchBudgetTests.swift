@@ -46,7 +46,12 @@ struct LaunchBudgetTests {
     private let offerDelay: TimeInterval = 2
 
     private func waitUntil(_ condition: () -> Bool) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+        // A generous ceiling, not a timing assertion: Swift Testing runs suites in
+        // parallel, and the 60-day HeadlessDriver simulations hold the main actor for
+        // about two minutes on the 82-concept curriculum. A 60-second ceiling let
+        // that starvation fail these waits (and then hang on the never-released
+        // fetch). The ceiling only exists so a genuine hang still ends the test.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(600))
         while !condition(), ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(10))
         }

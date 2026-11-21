@@ -51,6 +51,7 @@ struct Pass3EngineTests {
         #expect(migrated.state == .mastered)
         #expect(!migrated.isProvisional && migrated.nextCheckInAt == nil && migrated.checkInIntervalDays == nil)
         #expect(migrated.stallAttempts == 0 && migrated.lastTaughtState == nil)
+        #expect(migrated.lapsedAt == nil)
 
         var full = EngineFixtures.mastered("y")
         full.observationCount = 2
@@ -59,6 +60,7 @@ struct Pass3EngineTests {
         full.checkInIntervalDays = 3
         full.stallAttempts = 2
         full.lastTaughtState = .learning
+        full.lapsedAt = now
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let round = try decoder.decode(Concept.self, from: encoder.encode(full))
@@ -92,6 +94,40 @@ struct Pass3EngineTests {
         s.recordConceptAnswer(conceptId: "c", correct: true, weight: 0, now: now)
         #expect(s.concept("c")! == snapshot, "zero weight is a no-op")
         #expect(s.concept("c")!.observationCount == Tuning.minObservations + 6)
+    }
+
+    /// engine-8-3: mastery that practice earned and a missed check-in then took away
+    /// is marked as a lapse, so the selector comes back to re-teach it; earning it
+    /// again clears the mark. A placement seed that fails is a guess that was wrong,
+    /// not a lapse, and is never marked.
+    @Test func losingPractisedMasteryMarksALapseAndReEarningItClearsIt() throws {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("c")], gaps: [])
+        for i in 1...Int(Tuning.minObservations) {
+            s.recordConceptAnswer(conceptId: "c", correct: true, now: now.addingTimeInterval(Double(i)))
+        }
+        #expect(s.concept("c")?.state == .mastered)
+        #expect(s.concept("c")?.lapsedAt == nil, "a concept that never lost mastery is no lapse")
+
+        let missAt = now.addingTimeInterval(day)
+        s.recordConceptAnswer(conceptId: "c", correct: false, isCheckIn: true, now: missAt)
+        let lapsed = try #require(s.concept("c"))
+        #expect(lapsed.state == .learning, "one check-in miss at double weight drops a fresh mastery")
+        #expect(lapsed.lapsedAt == missAt)
+
+        var i = 0
+        while s.concept("c")?.state != .mastered && i < 20 {
+            i += 1
+            s.recordConceptAnswer(conceptId: "c", correct: true, now: missAt.addingTimeInterval(Double(i)))
+        }
+        #expect(s.concept("c")?.state == .mastered)
+        #expect(s.concept("c")?.lapsedAt == nil, "re-earned mastery clears the lapse")
+
+        var seed = EngineFixtures.mastered("seed")
+        seed.isProvisional = true
+        let seeded = EngineFixtures.store(concepts: [seed], gaps: [])
+        for _ in 0..<3 { seeded.recordConceptAnswer(conceptId: "seed", correct: false, isCheckIn: true, now: now) }
+        #expect(seeded.concept("seed")?.state == .learning)
+        #expect(seeded.concept("seed")?.lapsedAt == nil, "a failed placement seed is not a lapse")
     }
 
     // MARK: B6 — a check-in miss weighs double
@@ -455,9 +491,17 @@ struct Pass3EngineTests {
         var engine = PlacementEngine(bank: AssessmentService.bank + bank)
         while let q = engine.next() { engine.record(q, correct: true) }
         let result = engine.result()
-        #expect(!result.masteredConceptIds.isEmpty)
-        #expect(Set(result.masteredConceptIds) == result.fullyProbedConceptIds.filter { ConceptTaxonomy.baseConceptIds.contains($0) },
-                "only BASE concepts are seeded; a fully probed higher concept is evidence, not a seed")
+        #expect(!result.masteredConceptIds.isEmpty, "an all-correct learner is seeded what it was verified on")
+        // firstrun-10-1: the seeds used to be the fully probed BASE concepts only.
+        // Every base concept is A1, and an all-correct learner's budget never leaves
+        // bands 2-4 once the bank holds A2 probes, so it was seeded nothing. The rule
+        // is now: fully probed AND at or below its category's cleared band.
+        #expect(Set(result.masteredConceptIds) == EngineFixtures.expectedPlacementSeeds(result),
+                "a fully probed concept inside its placed band is a seed; anything else is evidence, not a seed")
+        let placedBand = AssessmentService.bandForLevel(result.estimatedLevel)
+        #expect(result.masteredConceptIds.allSatisfy { cid in
+            s.concept(cid).map { AssessmentService.bandForLevel($0.cefrLevel) <= placedBand } ?? false
+        }, "no seed above the placed level")
     }
 
     @Test func placementSeedsBlendAreProvisionalAndKeepTheirGaps() {

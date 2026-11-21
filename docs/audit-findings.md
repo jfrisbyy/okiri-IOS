@@ -16,8 +16,9 @@ never as a refutation.
 | 7 | 19 | 2 | `c204b8d` |
 | 8 | 16 | 2 | `53c9393` |
 | 9 | 18 | 0 | `4bd041a` |
+| 10 | 52 | 5 | `e37f0a2`, `5f37b9b`, `de8d29e` |
 
-**Total confirmed and fixed: 208.**
+**Total confirmed: 260; fixed: 259 (engine-10-6 partial, see round 10).**
 
 > **Rounds 1–4:** the per-finding entries were in the ledger file that was lost with the session
 > scratch directory (November 2026). Each round's commit message describes its findings in full;
@@ -176,3 +177,80 @@ OPEN — no fix agent ran
 ### Refuted in round 9
 - store-9-2 (dueNow rescan cost — mechanism real, magnitude off by an order of magnitude)
 - store-9-3 (ProgressSnapshot tolerant decoder — the triggering input cannot exist)
+
+## Round 10 — 52 confirmed of 52 raw, 0 refuted, 0 unverified (51 fixed, 1 partial)
+
+First round on the rebuilt harness and audit script, which now cover all 128 Swift files and
+compile 63 product files on Linux (round 9's harness compiled about 35). **The count rose from
+18 to 52 and highs from 0 to 5, so this round does not confirm convergence.** Two causes:
+the wider scope reached files earlier rounds never compiled or audited closely (Watch captions,
+the reading tagger, the placement bank), and verification was lenient — 155 of 156 verdicts
+upheld their finding, against roughly 10–30% refuted in rounds 6–9. Spot checks of the highs
+found them genuine, so the fixes stand, but the confirmed count is not comparable with earlier
+rounds.
+
+Fixes landed in three checkpoint commits while the waves ran (`e37f0a2`, `5f37b9b`, `de8d29e`);
+each checkpoint was green on the Linux harness. Final tree: 619 tests in 23 suites, 0 warnings,
+both lints clean, content validator OK, views outside the harness parse.
+
+The recheck caught one fix-introduced problem: store-10-1 raised the supabase-swift floor to
+2.36.0, but `AuthOptions(emitLocalSessionAsInitialSession:)` first appears in 2.37.0. The floor
+is 2.37.0 in the committed tree (`de8d29e`'s message says 2.36.0; the tree is correct).
+
+**engine-10-6 is partial.** Content corrections now reach seeded gaps (matched by concept +
+headword, never array index), but a correction to an item's headword (`fr`) is still not
+delivered: the old card stays as an orphan. Closing it needs a stable `id` on every content
+item (schema v2), which touches `FoundationContent.json` and the validator.
+
+- [medium/learning] lesson-10-1 LessonScheduler.swift:648 — A correct meaning is offered as a wrong option, and true statements are marked False, when one item's gloss is the untagged form of another's ('on' means 'we' graded False).
+- [medium/learning] lesson-10-2 LessonScheduler.swift:443 — The reversed multiple choice ('Which one means X?') picks its French options with no check on what they mean, so two options are often both correct (donc and alors for 'so / therefore').
+- [medium/learning] lesson-10-3 LessonQuestionParser.swift:273 — Every AI-written fill-blank shows a bare French sentence with a hole and no hint, so on any open frame a correct French answer is graded wrong.
+- [medium/learning] lesson-10-4 LessonScheduler.swift:374 — The lesson-9-1 fix leaves 9 shipped fill-blanks with no hint on open frames, so in capstones and check-ins a correct French answer is graded 'slipped' at full weight (a regression of lesson-5-1).
+- [medium/learning] lesson-10-5 LessonAssembler.swift:171 — The skill card's content examples print the exact sentence and translation that a reviewed item is fill-blanked on moments later (lesson-5-3 is incomplete).
+- [medium/learning] lesson-10-6 LessonSession.swift:424 — The match round books a successful review for the pair left over at the end, which cannot be got wrong, and for the corrected pairing seconds after a miss, so a word just missed leaves the round with a correct streak.
+- [low/learning] lesson-10-7 LessonScheduler.swift:79 — In one- and two-item lessons the fallback distractors include correct meanings, so 'salut' means 'hello' is graded False and 'thank you' is a wrong answer for 'Je vous remercie'.
+- [low/ux] lesson-10-8 GapCardView.swift:34 — The deck card's streak bar turns 'success' green at 3 of 5 because of a hard-coded 3, so a word looks finished two answers before it is mastered.
+- [high/learning] firstrun-10-1 AssessmentService.swift:492 — The shipped placement bank has no band-2 vocabulary items. Half of A2-level learners are told their vocabulary is "Just starting", and strong learners get mastery seeds less than half as often as weak ones.
+- [medium/honesty] firstrun-10-2 AssessmentView.swift:96 — The retake screen promises it 'never lowers what you've earned' and that 'practice you've put in outweighs one bad answer', yet one retake slip removes any mastery earned through practice (prior fix firstrun-5-2 is incomplete).
+- [medium/honesty] firstrun-10-3 HomeCopy.swift:346 — A learner placed at B1 or B2 is told on Home that they are "B2 · Studying" and "now studying at B2", while the app only lets them drill A1 Foundation (round-2 fix 5528c39 is incomplete).
+- [medium/honesty] firstrun-10-4 RetentionView.swift:252 — The error-pattern detail screen's "HERE'S WHY" gives the learner diagnoses the engine never made, such as "You confuse the meaning of this item with a similar word".
+- [low/honesty] firstrun-10-5 DailyPlanEngine.swift:397 — Today's Plan tells a learner whose top-ranked concepts have never been practised that "Your weak spots lately are vocabulary-heavy".
+- [low/honesty] firstrun-10-6 DailyPlanEngine.swift:153 — With the governor active, the Foundation card says "Consolidating your base before opening reading" even when coverage, not the governor, is what keeps reading closed (round-4 fix is incomplete).
+- [low/functionality] firstrun-10-7 WelcomeView.swift:182 — A non-cancel failure of Sign in with Apple on the required front door does nothing visible.
+- [low/learning] firstrun-10-8 DailyPlanEngine.swift:21 — The plan's tilt weights, the readiness thresholds and the time budgets are constants kept outside Tuning.swift.
+- [high/learning] read-10-1 HeuristicTagger.swift:227 — A word saved from reading is filed on an article, gender or filler skill at full confidence: café is filed under Indefinite articles, lundi under Definite articles and coup under Spoken fillers, so practising its meaning becomes evidence for a grammar skill it never tests
+- [high/learning] read-10-2 TensesView.swift:84 — A saved aller passé-composé row grades correct agreement as wrong: 'suis allée', 'êtes allés' and 'sont allées' are misses, on the one skill whose content teaches that agreement
+- [medium/learning] read-10-3 HeuristicTagger.swift:507 — An indicative phrase saved from reading ('parce qu'il pleut', 'je pense qu'il est', 'il dit que je suis') is filed as subjunctive evidence
+- [medium/learning] read-10-4 ArticleText.swift:22 — The half-word NewsAPI cuts off at the end of every live excerpt is offered as Key Vocabulary and can be saved as a card ('ferroviai', 'urgen')
+- [medium/learning] read-10-5 ContentScreens.swift:180 — A word the deck already holds with its article ('le matin', 'le café', 'le pain') is offered as new in the reader and saved as a second card, which then appears as a second correct option in multiple choice
+- [low/honesty] read-10-6 NewsService.swift:241 — With no news key, the feed presents invented news events as published '1h ago' to '8h ago' (France 'qualified for the final', a 'major scientific discovery in Paris') (reported medium)
+- [low/data] read-10-7 ContentScreens.swift:699 — 'Where you met it' and the saved context show the first sentence containing the word, not the sentence the learner tapped in
+- [low/functionality] read-10-8 TranslatorView.swift:241 — In the Translator, swapping languages while a translation is in flight shows the old result under the wrong language label
+- [low/honesty] read-10-9 ReadingContent.swift:257 — The library files 'Histoire de Carthage' under France and the Europe filter
+- [low/compile] read-10-10 TranslationCache.swift:141 — Several read-area constants live outside Tuning.swift, against the binding rule
+- [high/honesty] talkmedia-10-1 TranscriptService.swift:144 — Watch shows an English-only video's English captions as 'the video's own French': no footnote, tappable as French, and quoted on cards as French seen in the wild.
+- [medium/learning] talkmedia-10-2 AppStore.swift:3300 — One spoken or written slip in Speak is booked as two or more misses on the same concept, while the identical slip in Converse is one. (reported high)
+- [medium/learning] talkmedia-10-3 TalkSupport.swift:300 — A 'correction' that only adds commas or changes an apostrophe saves the learner's own correct French as a slip card with a lapse, while an accent-only fix in a longer answer is dropped as 'too long to save'.
+- [medium/learning] talkmedia-10-4 WatchPlayerView.swift:585 — Tapping a word in a Watch transcript saves the elided or capitalised surface form ('l'homme', 'J'ai', 'Alors'), so the same word becomes two different deck cards. The read-5-1 headword rule was never applied to Watch.
+- [medium/data] talkmedia-10-5 ScenarioGuide.swift:177 — Bookmarking a freshly generated guide silently deletes the guide saved earlier for the same situation, including every phrase the learner added to it with the translator.
+- [low/ux] talkmedia-10-6 SpeakView.swift:93 — Switching Speak's Free/Guided/Write tab while a recording is still transcribing shows and records that answer's feedback in the new tab. Leaving Speak does not stop it either. This makes the talkmedia-5-2 fix incomplete.
+- [low/learning] talkmedia-10-7 ConverseView.swift:977 — The Converse recap labels a correction with a concept the app has no material for, and Speak's 'Solid:' chips do the same. The store-6-3 announcement rule is applied only to Speak's 'Work on' chips.
+- [low/functionality] talkmedia-10-8 ElevenLabsTTS.swift:266 — Tapping a bubble's speaker in Converse while recording a reply switches the shared audio session to playback, which silently kills the capture while the countdown keeps running.
+- [low/ux] talkmedia-10-9 PlaybackState.swift:277 — Listen's progress bar stops at (n−1)/n: a finished dialogue shows 'Finished' over a bar that is not full.
+- [low/functionality] talkmedia-10-10 WatchView.swift:172 — Two Watch searches in flight race: an earlier query's results can land under the newer query.
+- [medium/functionality] store-10-1 AuthManager.swift:80 — An offline cold launch more than about an hour after the last token refresh shows the sign-in screen, so a learner whose whole record is on the device cannot study offline
+- [medium/data] store-10-2 AppStore.swift:2118 — After a session ends on its own, signing back in with a different account (for example Google instead of an Apple hide-my-email ID) silently erases every answer that never reached the first account
+- [low/functionality] store-10-3 CloudSync.swift:666 — Backgrounding the app with a change pending uploads the whole record two or three times, and if the redundant upload fails the profile says 'Backup failed' and sign-out warns about unsynced progress that is already in the account
+- [low/learning] store-10-4 CloudSync.swift:109 — Sync and ability tuning constants live in CloudSync and AppStore instead of Tuning.swift, against the workplan's binding rule
+- [low/honesty] store-10-5 types.ts:370 — The schema comment in backend/types.ts names the `client_updated_at` column as the whole-second witness, but the app never reads that column
+- [high/learning] engine-10-1 ConceptSelector.swift:611 — A declared beginner still locked in Foundation is told they are B1 and taught B1 grammar, because blind-spot probes seed a whole A2/B1 curriculum every day, and reading unlocks 35–60% later as a result
+- [medium/ux] engine-10-2 ConceptSelector.swift:417 — The learner's level flips between A2 and B1 every few days for a learner of steady ability, so the Home badge, the ranking and every level-gated surface flip with it
+- [medium/honesty] engine-10-3 ConceptSelector.swift:777 — A single mix-up makes every later lesson tell the learner 'You keep confusing this with X', forever, however many times they have answered it right since
+- [low/functionality] engine-10-4 HeadlessDriver.swift:329 — The headless calibration simulations do not model the shipped curriculum: they never fire a single blind-spot probe and they discard the real seeding, so engine-10-1 is invisible to every 60-day assertion (reported medium)
+- [low/honesty] engine-10-5 AppStore.swift:882 — On day 2 a declared beginner is told 'New skills unlocked: Subjunctive after il faut que, Savoir vs connaître, Common idioms', B1 skills the app's own ranker gives zero level fit
+- [low/data] engine-10-6 FoundationContentLoader.swift:287 — A content correction never reaches a learner whose gaps are already seeded: seeded gaps are frozen copies keyed by array index, with no refresh path — PARTIAL
+- [low/data] engine-10-7 FoundationContentLoader.swift:322 — The loader scores all eight B1 skills as 'early-A2 bridge' material using magic numbers outside Tuning, while the same concept's probe is scored as B1
+- [low/learning] engine-10-8 FSRS.swift:71 — No shipped gap ever gets the grade-ordered first interval the FSRS tests certify: a first-try production answer returns in 16 hours, barely later than a true/false
+- [low/compile] compile-10-1 VoiceRecorder.swift:138 — VoiceRecorder's interruption observer reads its weakly captured `self` inside a Task from a @Sendable block, which produces a concurrency warning in the Xcode build
+- [low/compile] compile-10-2 AuthManager.swift:71 — AuthManager awaits a synchronous main-actor method from a main-actor Task, which the compiler flags as an `await` with no async work
+- [low/compile] compile-10-3 HomeView.swift:1273 — Home's carousel reads the main-actor `@Environment` property `reduceMotion` inside `scrollTransition`'s @Sendable closure, which likely produces an isolation warning

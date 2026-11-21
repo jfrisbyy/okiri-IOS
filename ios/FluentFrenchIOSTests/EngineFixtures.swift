@@ -71,6 +71,27 @@ enum EngineFixtures {
         return { when in FoundationContentLoader.gaps(from: file, now: when) }
     }
 
+    /// Synthetic content SHAPED like the shipped `FoundationContent.json`: every
+    /// authored concept, `itemsEach` items (the shipped file has 12–15 per skill),
+    /// the shipped easy/okay/hard mix (≈ 41 / 47 / 12 %) and the taxonomy's category.
+    /// Tokens, not French. The headless runs seed from this through the REAL
+    /// placement, first-run slice, probe and bridge paths, so the curriculum they
+    /// measure is the one the app delivers (engine-10-4).
+    nonisolated static func shippedShapeContent(itemsEach: Int = 12) -> (Date) -> [GapItem] {
+        let categories = Dictionary(ConceptTaxonomy.seed().map { ($0.id, $0.category) }, uniquingKeysWith: { a, _ in a })
+        let skills = authoredConceptIds.sorted().map { cid in
+            FoundationSkillContent(id: cid, category: (categories[cid] ?? .grammar).rawValue,
+                                   items: (0..<itemsEach).map { i in
+                                       let diff: GapDifficulty = [0, 2, 5].contains(i % 8) ? .easy : (i % 8 == 7 ? .hard : .okay)
+                                       return FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                                                    ex: "x \(cid)-w\(i) y", exEn: "t", diff: diff.rawValue,
+                                                                    blank: "\(cid)-w\(i)")
+                                   })
+        }
+        let file = FoundationContentFile(version: 2, skills: skills)
+        return { when in FoundationContentLoader.gaps(from: file, now: when) }
+    }
+
     /// Taxonomy concepts with no authored content yet.
     nonisolated static let unauthoredConceptIds: Set<String> =
         ConceptTaxonomy.ids.subtracting(authoredConceptIds)

@@ -1063,4 +1063,113 @@ struct Pass3EngineTests {
         #expect(gaps[2].isTestable == false && gaps[2].blankForm == nil)
         #expect(FoundationContentLoader.skill(for: "missing", in: file)?.id == nil)
     }
+
+    // MARK: Round 10 — content corrections and item difficulty
+
+    private func item(_ fr: String, en: String = "e", note: String = "n", blank: String? = nil,
+                      alts: [String]? = nil, testable: Bool? = nil) -> FoundationItemContent {
+        FoundationItemContent(fr: fr, en: en, note: note, ex: "x \(fr) y", exEn: "t", blank: blank ?? fr,
+                              alts: alts, testable: testable)
+    }
+
+    private func contentFile(_ items: [FoundationItemContent], concept: String = "present-irregular") -> FoundationContentFile {
+        FoundationContentFile(version: 2, skills: [FoundationSkillContent(id: concept, category: GapCategory.grammar.rawValue,
+                                                                          items: items)])
+    }
+
+    /// engine-10-6: a seeded gap was a frozen copy keyed by array index, so a content
+    /// correction never reached a learner who already had the item.
+    @Test func contentCorrectionsReachSeededGapsAndKeepTheirEvidence() throws {
+        let v1 = contentFile([item("w0", alts: ["bad"]), item("w1"), item("w2")])
+        var seeded = FoundationContentLoader.gaps(from: v1, now: now)
+        #expect(seeded.allSatisfy { $0.contentFingerprint != nil }, "seeding stamps the content it came from")
+        // The learner has practised w0.
+        seeded[0].reviewCount = 4
+        seeded[0].consecutiveCorrect = 2
+        seeded[0].lastReviewedAt = now
+        seeded[0].nextReviewAt = now.addingTimeInterval(3 * day)
+        seeded[0].fsrs = FSRS.review(state: seeded[0].fsrs, grade: .good, now: now)
+        let before = seeded[0]
+
+        // v2 fixes w0's alts and note, and inserts a new item at index 0.
+        let v2 = contentFile([item("new"), item("w0", note: "fixed", alts: ["good"]), item("w1"), item("w2")])
+        let later = now.addingTimeInterval(day)
+        let refreshed = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v2, now: later),
+                                                              now: later)
+        let w0 = try #require(refreshed.first { $0.frenchWord == "w0" })
+        #expect(w0.acceptedAnswers == ["good"] && w0.explanation == "fixed", "the correction reached the learner")
+        #expect(w0.id == before.id && w0.reviewCount == before.reviewCount && w0.consecutiveCorrect == before.consecutiveCorrect
+                && w0.nextReviewAt == before.nextReviewAt && w0.fsrs == before.fsrs && w0.lastReviewedAt == before.lastReviewedAt,
+                "schedule and evidence are untouched")
+        // The inserted item arrives, under an id that does not collide with w0's old one.
+        let fresh = try #require(refreshed.first { $0.frenchWord == "new" })
+        #expect(fresh.id != before.id && Set(refreshed.map { $0.id }).count == refreshed.count)
+        #expect(fresh.isNew && fresh.nextReviewAt == later)
+        #expect(refreshed.count == 4)
+        // Idempotent: a second launch changes nothing.
+        let again = FoundationContentLoader.refreshSeeded(refreshed, content: FoundationContentLoader.gaps(from: v2, now: later),
+                                                          now: later)
+        #expect(again == refreshed)
+    }
+
+    /// engine-10-6: the learner's own additions to a seeded card (a second reading
+    /// folded in at capture) are theirs; a correction never wipes them.
+    @Test func aContentRefreshKeepsWhatTheLearnerAddedToACard() throws {
+        var seeded = FoundationContentLoader.gaps(from: contentFile([item("w0", alts: ["a"])]), now: now)
+        seeded[0].englishTranslation = "e / another reading"
+        seeded[0].acceptedAnswers = ["a", "mine"]
+        let v2 = contentFile([item("w0", note: "fixed", blank: "w0", alts: ["b"], testable: false)])
+        let refreshed = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v2, now: now), now: now)
+        let w0 = try #require(refreshed.first)
+        #expect(w0.englishTranslation == "e / another reading" && w0.acceptedAnswers == ["a", "mine"])
+        #expect(w0.isTestable == false, "fields no learner path writes still follow the content")
+    }
+
+    /// engine-10-6: a skill met only through one placement miss is not topped up with
+    /// the whole curriculum at launch — that is its own seeding path's job.
+    @Test func aContentRefreshTopsUpOnlySkillsTheLearnerWasSeededWith() {
+        let file = contentFile((0..<10).map { item("w\($0)") })
+        let content = FoundationContentLoader.gaps(from: file, now: now)
+        let oneMiss = [content[3]]
+        #expect(FoundationContentLoader.refreshSeeded(oneMiss, content: content, now: now).count == 1)
+        let most = Array(content.prefix(6))
+        #expect(FoundationContentLoader.refreshSeeded(most, content: content, now: now).count == 10)
+        // A headword the learner already captured from reading is not seeded again.
+        var captured = EngineFixtures.gap("read-1", concept: nil, sourceType: .reading)
+        captured.frenchWord = content[9].frenchWord
+        let topped = FoundationContentLoader.refreshSeeded(most + [captured], content: content, now: now)
+        #expect(topped.count == 10 && topped.filter { $0.frenchWord == content[9].frenchWord }.count == 1)
+    }
+
+    /// engine-10-6: the seeder skipped an inserted item because its index id was
+    /// already taken by the item it displaced.
+    @Test func theSeederDeliversAnItemWhoseIndexIdIsTaken() {
+        let content = FoundationContentLoader.gaps(from: contentFile([item("new"), item("w0")]), now: now)
+        let old = FoundationContentLoader.gaps(from: contentFile([item("w0")]), now: now)
+        let slice = FoundationSeeder.slice(from: content, conceptIds: ["present-irregular"],
+                                           excludedHeadwords: Set(old.map { FoundationSeeder.headwordKey($0.frenchWord) }),
+                                           existingIds: Set(old.map { $0.id }))
+        #expect(slice.map { $0.frenchWord } == ["new"])
+        #expect(!old.map { $0.id }.contains(slice[0].id))
+        #expect(FoundationSeeder.availableId(for: content[0], taken: Set(old.map { $0.id })) == slice[0].id, "stable")
+    }
+
+    /// engine-10-7: every non-A1 skill was scored at the A2 bridge value, so B1 grammar
+    /// was easier to the ability model than an A2 capture and indistinguishable from A2.
+    @Test func foundationItemDifficultyFollowsTheSkillsBand() {
+        func b(_ level: CEFRLevel, _ diff: GapDifficulty = .okay) -> Double {
+            FoundationContentLoader.irtDifficulty(level: level, difficulty: diff)
+        }
+        #expect(b(.A1) < b(.A2) && b(.A2) < b(.B1), "each band is harder than the one below")
+        #expect(b(.B1) == Tuning.foundationIrtDifficulty(for: .B1))
+        #expect(abs(b(.B1, .hard) - (b(.B1) + Tuning.irtHardBump)) < 1e-9)
+        #expect(abs(b(.B1, .easy) - (b(.B1) + Tuning.irtEasyBump)) < 1e-9)
+        #expect(b(.A2) <= Tuning.irtDifficulty(for: .A2) && b(.B1) <= Tuning.irtDifficulty(for: .B1),
+                "a teaching item is never scored harder than a capture of its band")
+        // An `okay` B1 item cannot carry ability past B1 on its own.
+        #expect(b(.B1) + Tuning.thetaEvidenceCeiling < Tuning.levelThetaFloor(for: .B2))
+        // And the loader really uses it for a B1 skill's items.
+        let file = contentFile([item("w0")], concept: "subjunctive-intro")
+        #expect(FoundationContentLoader.gaps(from: file, now: now).first?.irtDifficulty == b(.B1))
+    }
 }

@@ -208,14 +208,35 @@ nonisolated enum ConceptIdFilter {
 }
 
 /// Text normalisation shared by the capture builders: two French strings are the
-/// same phrase when they match ignoring case, surrounding whitespace and trailing
-/// punctuation.
+/// same phrase when they match ignoring case, whitespace and punctuation — every
+/// comma, full stop and quote, wherever it sits — with every apostrophe style
+/// read as one. Accents are KEPT: "a" and "à", "ou" and "où" are different
+/// words. A correction that only adds commas or straightens an apostrophe is
+/// the learner's own correct French, never a slip card with a lapse; one that
+/// only adds an accent is a real correction (talkmedia-10-3). The apostrophe
+/// and the hyphen are part of a word ("j'ai", "peut-être"), so they stay.
 nonisolated enum PhraseKey {
     static func normalized(_ text: String) -> String {
-        var s = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        while let last = s.last, last.isPunctuation || last.isWhitespace { s.removeLast() }
-        return s
+        var folded = ""
+        folded.unicodeScalars.reserveCapacity(text.unicodeScalars.count)
+        for scalar in text.lowercased().unicodeScalars {
+            if apostrophes.contains(scalar) {
+                folded.unicodeScalars.append("'")
+            } else if hyphens.contains(scalar) {
+                folded.unicodeScalars.append("-")
+            } else if CharacterSet.punctuationCharacters.contains(scalar) {
+                folded.unicodeScalars.append(" ")
+            } else {
+                folded.unicodeScalars.append(scalar)
+            }
+        }
+        return folded.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
     }
+
+    /// Apostrophe styles a keyboard, a transcriber or a model may produce.
+    private static let apostrophes: Set<Unicode.Scalar> = ["'", "\u{2019}", "\u{2018}", "\u{02BC}", "\u{2032}"]
+    /// Hyphens inside a word (an en or em dash between words is punctuation).
+    private static let hyphens: Set<Unicode.Scalar> = ["-", "\u{2010}", "\u{2011}"]
 
     static func same(_ a: String, _ b: String) -> Bool {
         normalized(a) == normalized(b)
@@ -296,11 +317,13 @@ nonisolated enum CorrectionCard {
         let old = words(original), new = words(corrected)
         guard !new.isEmpty else { return nil }
         var lower = 0
+        // Words compare on the phrase key: punctuation never counts as a change,
+        // an accent always does (talkmedia-10-3).
         while lower < min(old.count, new.count),
-              SentenceExtractor.fold(old[lower]) == SentenceExtractor.fold(new[lower]) { lower += 1 }
+              PhraseKey.same(old[lower], new[lower]) { lower += 1 }
         var suffix = 0
         while suffix < min(old.count, new.count) - lower,
-              SentenceExtractor.fold(old[old.count - 1 - suffix]) == SentenceExtractor.fold(new[new.count - 1 - suffix]) {
+              PhraseKey.same(old[old.count - 1 - suffix], new[new.count - 1 - suffix]) {
             suffix += 1
         }
         var upper = new.count - suffix

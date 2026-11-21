@@ -364,13 +364,17 @@ export type Database = {
       //      `updated_at` from its last successful sync; if the row has not
       //      moved since, the device's newer local work is pushed; if the row
       //      moved and the device has no local work, the row is applied.
-      //   3. `client_updated_at` (device clock, mirrors snapshot.clientUpdatedAt)
-      //      is only the fallback when a server timestamp is missing on either
-      //      side or both sides changed; newest wins, the row wins ties.
+      //   3. The snapshot JSON's own `clientUpdatedAt` (device clock) is only
+      //      the fallback when a server timestamp is missing on either side or
+      //      both sides changed; newest wins, the row wins ties.
       //      It is also the witness that catches another device's write while the
-      //      `updated_at` trigger is unapplied, and it is written WITHOUT
-      //      fractional seconds, so the device compares it with its marker at
-      //      whole-second granularity (store-7-2).
+      //      `updated_at` trigger is unapplied. The app encodes it WITHOUT
+      //      fractional seconds (JSONEncoder `.iso8601`), so the device compares
+      //      it with its marker at whole-second granularity (store-7-2).
+      //   The `client_updated_at` COLUMN is informational only: the app writes it
+      //   with a separate formatter (it can differ from the JSON field by a
+      //   second) and never reads it. Do not build a filter, trigger or rule on
+      //   it — read `snapshot->>'clientUpdatedAt'` instead (store-10-5).
       // Fetch errors are never treated as "no row".
       // The device-side markers rule 2 depends on (last synced `updated_at` +
       // local clock) are only cleared on a sign-out the learner asked for; a

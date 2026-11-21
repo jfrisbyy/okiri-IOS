@@ -46,10 +46,23 @@ enum Theme {
 // MARK: - Supabase (supabase-swift): the two PostgREST chains in CloudSync.swift
 //   .from(t).upsert(row, onConflict:).select(cols).single().execute().value
 //   .from(t).select(cols).eq(col, value:).limit(n).execute().value
-// plus SupabaseClient(supabaseURL:supabaseKey:) in SupabaseManager.swift.
+// plus SupabaseClient(supabaseURL:supabaseKey:options:) and the one auth option
+// SupabaseManager.swift sets (SupabaseClientOptions(auth: .init(emitLocalSessionAsInitialSession:))).
 nonisolated final class SupabaseClient: Sendable {
-    init(supabaseURL: URL, supabaseKey: String) {}
+    init(supabaseURL: URL, supabaseKey: String, options: SupabaseClientOptions) {}
     func from(_ table: String) -> PostgrestQueryBuilder { PostgrestQueryBuilder() }
+}
+
+nonisolated struct SupabaseClientOptions: Sendable {
+    let auth: AuthOptions
+    init(auth: AuthOptions) { self.auth = auth }
+
+    struct AuthOptions: Sendable {
+        let emitLocalSessionAsInitialSession: Bool
+        init(emitLocalSessionAsInitialSession: Bool = false) {
+            self.emitLocalSessionAsInitialSession = emitLocalSessionAsInitialSession
+        }
+    }
 }
 
 nonisolated struct PostgrestQueryBuilder: Sendable {

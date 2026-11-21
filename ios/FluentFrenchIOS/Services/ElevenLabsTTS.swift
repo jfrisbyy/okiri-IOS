@@ -178,6 +178,23 @@ final class NaturalVoice: NSObject {
     /// its "playing" highlight instead of leaving it lit forever.
     private(set) var isSpeaking = false
 
+    /// True while a `VoiceRecorder` holds the microphone. Playing anything moves
+    /// the shared audio session to `.playback`, which silently ends the capture —
+    /// a change the app makes itself posts no interruption, so the recorder
+    /// would go on counting down over a dead microphone and send a truncated
+    /// clip. Nothing plays while a capture runs (talkmedia-10-8). Read from the
+    /// recorder itself (held weakly), so a recorder that stops — or goes away —
+    /// can never leave every speaker in the app muted.
+    var isCapturing: Bool { capturingRecorder?.isRecording == true }
+    @ObservationIgnored private weak var capturingRecorder: VoiceRecorder?
+
+    /// A recording took the microphone: silence any voice, drop any clip still
+    /// loading, and refuse playback while it records (talkmedia-10-8).
+    func beginCapture(by recorder: VoiceRecorder) {
+        stop()
+        capturingRecorder = recorder
+    }
+
     /// Who asked for the utterance that is loading or sounding now, so a surface
     /// with several speak controls can light up exactly the one that started it.
     /// Observable, so those controls re-render when the owner changes.
@@ -200,7 +217,8 @@ final class NaturalVoice: NSObject {
     ///   - owner: identifies the control that started this utterance.
     func speak(_ text: String, voice: NaturalVoiceID = .female, rate: Float = 1.0, fallbackLanguage: String = "fr-FR", owner: UUID? = nil) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
+        // A tap on a speaker mid-recording would end the capture (talkmedia-10-8).
+        guard !clean.isEmpty, !isCapturing else { return }
         stop()
         self.owner = owner
         token += 1

@@ -236,6 +236,29 @@ nonisolated enum TranscriptCapture {
     /// The surface stamped on the capture (`OriginalContext.sourceTab`).
     static let sourceTab = "watch"
 
+    /// The words of a transcript line as the panel lays them out, one tap target each.
+    static func tokens(of line: String) -> [String] {
+        line.split(separator: " ").map(String.init)
+    }
+
+    /// The headword a tap on `tokens(of: line)[index]` looks up and saves: the
+    /// reader's rule (read-5-1), so "l'école" in a video and "école" in an
+    /// article are ONE card, an elided "qu'il" is never a card of its own, and
+    /// a capital that only opens a sentence comes off (talkmedia-10-4). A line's
+    /// first word, or a word after a sentence end, opens a sentence.
+    static func headword(tokenAt index: Int, in line: String) -> String {
+        let words = tokens(of: line)
+        guard words.indices.contains(index) else { return "" }
+        let opensSentence: Bool
+        if index == 0 {
+            opensSentence = true
+        } else {
+            let previous = words[index - 1].trimmingCharacters(in: CharacterSet(charactersIn: "\"'»”)"))
+            opensSentence = previous.last.map { ".!?…".contains($0) } ?? false
+        }
+        return KeyVocabulary.headword(for: words[index], opensSentence: opensSentence)
+    }
+
     /// The sentence the card may quote: the video's own French, nothing else.
     static func quotedContext(_ sentence: String, origin: TranscriptOrigin) -> String {
         origin.isNativeFrench ? sentence : ""
@@ -298,15 +321,14 @@ nonisolated enum CaptionLanguage {
         return reported == wanted
     }
 
-    /// The language named in the backend's `source` field ("supadata:fr",
-    /// "supadata_translate:fr-FR"); nil for "none", "supadata:empty" or a
-    /// missing field.
+    /// The tag after the colon of the backend's `source` field ("supadata:fr" →
+    /// "fr", "supadata_translate:fr-FR" → "fr-FR"); nil for "none" or a missing
+    /// field. A marker such as "supadata:empty" comes back as itself and
+    /// matches no language.
     static func fromBackendSource(_ source: String?) -> String? {
         guard let source, let colon = source.lastIndex(of: ":") else { return nil }
         let code = String(source[source.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-        guard let primary = primary(code), primary.count >= 2, primary.count <= 3,
-              primary.allSatisfy({ $0.isLetter }) else { return nil }
-        return code
+        return primary(code) == nil ? nil : code
     }
 
     /// The primary subtag, lowercased: "fr-CA" → "fr", "EN_us" → "en".

@@ -120,6 +120,10 @@ nonisolated struct ConfusionLink: Codable, Hashable, Identifiable {
     var wrongPicks: Int
     var lastConfusedAt: Date
     var strength: Double
+
+    /// The learner has mixed the pair up more than once — the only case the copy
+    /// may call "keep confusing" (engine-10-3).
+    var isRepeated: Bool { wrongPicks >= Tuning.confusionRepeatPicksFloor }
 }
 
 // MARK: - Gap item
@@ -182,6 +186,13 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// meaning — asking "What does “vous avez” mean?" over pronunciation options is
     /// unanswerable. Nil → the scheduler's default stem.
     var probePrompt: String? = nil
+    /// Fingerprint of the content-owned fields (meaning, note, example, blank, alts,
+    /// testable) exactly as a Foundation content item SEEDED them. Nil for anything
+    /// not seeded from content (and for gaps seeded before it existed). It lets a
+    /// later content correction reach a gap already on the learner's record while
+    /// telling the learner's own edits apart from stale content (engine-10-6):
+    /// `FoundationContentLoader.refreshSeeded`.
+    var contentFingerprint: String? = nil
 
     /// Explicit keys so the tolerant decoder below and the synthesized encoder agree.
     enum CodingKeys: String, CodingKey {
@@ -191,7 +202,7 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
         case currentInterval, irtDifficulty, fsrs, originalContext, confusionLinks
         case partOfSpeech, gender, article, baseForm, register, relatedWords, conceptId
         case isProbe, blankForm, acceptedAnswers, isTestable, tagConfidence, needsTranslation
-        case probeOptions, probePrompt
+        case probeOptions, probePrompt, contentFingerprint
     }
 
     /// The mastery badge (`Tuning.gapMasteryStreak` consecutive correct). A badge,
@@ -237,6 +248,21 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
             return min(0.95, 0.4 + Double(consecutiveCorrect) * 0.12)
         }
         return FSRS.retrievability(state: fsrs, now: now)
+    }
+
+    /// Confusion links the learner has NOT yet put behind them. A link is written on
+    /// the first mix-up and nothing ever weakens it, so one wrong pick used to label
+    /// the word "you keep confusing this" and boost its concept's rank for ever,
+    /// however often it was answered right afterwards (engine-10-3). A link retires
+    /// once the item's current correct streak — every answer of it given after the
+    /// last mix-up — reaches `Tuning.confusionClearStreak`; a new mix-up revives it.
+    var activeConfusionLinks: [ConfusionLink] {
+        confusionLinks.filter { !isConfusionResolved($0) }
+    }
+
+    private func isConfusionResolved(_ link: ConfusionLink) -> Bool {
+        guard consecutiveCorrect >= Tuning.confusionClearStreak, let last = lastReviewedAt else { return false }
+        return last > link.lastConfusedAt
     }
 }
 
@@ -286,6 +312,7 @@ nonisolated extension GapItem {
         needsTranslation = try c.decodeIfPresent(Bool.self, forKey: .needsTranslation) ?? false
         probeOptions = try c.decodeIfPresent([String].self, forKey: .probeOptions)
         probePrompt = try c.decodeIfPresent(String.self, forKey: .probePrompt)
+        contentFingerprint = try c.decodeIfPresent(String.self, forKey: .contentFingerprint)
     }
 }
 

@@ -185,4 +185,68 @@ struct FSRSTests {
         let miss = FSRS.review(state: fresh, grade: Tuning.gradeMapping(format: .translation, correct: false, firstTry: true), now: later)
         #expect(intervalDays(miss) < intervalDays(next(.trueFalse)))
     }
+
+    // MARK: engine-10-8 — the first answer on a real gap
+
+    /// Every gap the app creates starts from `makeUnseenState`, so THIS is the state
+    /// the grade ordering has to hold from — the tests above start from
+    /// `makeInitialState`, which no shipped gap ever has. The first answer used to be
+    /// scored as a second review of a failed card: a first-try production answer came
+    /// back in 16 hours, a true/false in 13, and `Tuning.fsrsInitialStability` reached
+    /// no gap at all.
+    @Test func theFirstAnswerOnAnUnseenGapIsScheduledByGrade() {
+        let unseen = FSRS.makeUnseenState(now: now)
+        #expect(unseen.reps == 0)
+        let later = now.addingTimeInterval(day)
+        let grades: [ReviewGrade] = [.again, .hard, .good, .easy]
+        let states = grades.map { FSRS.review(state: unseen, grade: $0, now: later) }
+        for (grade, state) in zip(grades, states) {
+            #expect(abs(state.stability - Tuning.fsrsInitialStability(for: grade)) < 1e-9,
+                    "\(grade): first-answer stability \(state.stability)")
+            #expect(state.reps == 1)
+            #expect(state.lapses == (grade == .again ? 1 : 0))
+        }
+        for i in 1..<grades.count {
+            #expect(intervalDays(states[i - 1]) < intervalDays(states[i]), "\(grades[i - 1]) before \(grades[i])")
+        }
+        // Production and recognition are not scheduled alike.
+        func first(_ format: AnswerFormat) -> FsrsState {
+            FSRS.review(state: unseen, grade: Tuning.gradeMapping(format: format, correct: true, firstTry: true), now: later)
+        }
+        #expect(intervalDays(first(.translation)) >= 3 * intervalDays(first(.trueFalse)),
+                "translation \(intervalDays(first(.translation))) d vs true/false \(intervalDays(first(.trueFalse))) d")
+        #expect(intervalDays(first(.trueFalse)) < intervalDays(first(.multipleChoice)))
+        #expect(intervalDays(first(.multipleChoice)) < intervalDays(first(.fillBlank)))
+    }
+
+    /// The first interval is grade-ordered without compounding into years: an easy
+    /// chain from the shipped starting state stays inside a sane range.
+    @Test func anEasyChainFromAnUnseenGapDoesNotExplode() {
+        var state = FSRS.makeUnseenState(now: now)
+        var clock = now
+        var intervals: [Double] = []
+        for _ in 0..<5 {
+            state = FSRS.review(state: state, grade: .easy, now: clock)
+            intervals.append(intervalDays(state))
+            clock = state.dueAt
+        }
+        for i in 1..<intervals.count { #expect(intervals[i] > intervals[i - 1]) }
+        #expect(intervals.last! < 120, "five easy answers schedule \(intervals.last!) d out: \(intervals)")
+    }
+
+    /// The same, through the store: a first-try production answer on a fresh
+    /// Foundation gap comes back well after a first true/false.
+    @Test func theStoreSchedulesAFirstProductionAnswerLaterThanARecognitionOne() throws {
+        var production = EngineFixtures.gap("p", concept: "c", fsrs: FSRS.makeUnseenState(now: now))
+        production.nextReviewAt = now
+        var recognition = EngineFixtures.gap("r", concept: "c", fsrs: FSRS.makeUnseenState(now: now))
+        recognition.nextReviewAt = now
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c")], gaps: [production, recognition])
+        store.recordAnswer(gapId: "p", correct: true, format: .translation, firstTry: true, now: now)
+        store.recordAnswer(gapId: "r", correct: true, format: .trueFalse, firstTry: true, now: now)
+        let p = try #require(store.gaps.first { $0.id == "p" })
+        let r = try #require(store.gaps.first { $0.id == "r" })
+        #expect(p.nextReviewAt.timeIntervalSince(now) >= 3 * r.nextReviewAt.timeIntervalSince(now))
+        #expect(r.nextReviewAt.timeIntervalSince(now) / day >= Tuning.fsrsInitialStability(for: .hard) - 1e-6)
+    }
 }

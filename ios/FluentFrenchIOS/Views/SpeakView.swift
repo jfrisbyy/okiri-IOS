@@ -41,6 +41,13 @@ struct SpeakView: View {
     @State private var feedbackFailure: TalkServiceFailure? = nil
     @State private var lastRequest: (response: String, prompt: String)? = nil
     @State private var feedbackTask: Task<Void, Never>? = nil
+    /// The stop → transcribe → feedback hand-off of a finished recording, kept so
+    /// leaving the round (another tab, another prompt, leaving Speak) cancels a
+    /// transcript still on its way (talkmedia-10-6).
+    @State private var transcribeTask: Task<Void, Never>? = nil
+    /// Bumped whenever a round is left; a transcript that lands under a newer
+    /// round is dropped even if its task handle was lost (talkmedia-10-6).
+    @State private var roundToken = 0
     @FocusState private var writeFocused: Bool
 
     enum Mode { case free, guided, write }
@@ -72,6 +79,11 @@ struct SpeakView: View {
         .onDisappear {
             NaturalVoice.shared.stop()
             recorder.cancel()
+            // An answer still transcribing when the learner left is abandoned,
+            // never graded and saved unseen (talkmedia-10-6).
+            roundToken &+= 1
+            transcribeTask?.cancel()
+            transcribeTask = nil
             feedbackTask?.cancel()
         }
         .onChange(of: recorder.stoppedAtCap) { _, stopped in
@@ -94,6 +106,16 @@ struct SpeakView: View {
             NaturalVoice.shared.stop()
             clearRound()
         }
+        // A new prompt is a new round: feedback on the previous prompt's answer
+        // never stays under it, nor lands under it later (talkmedia-10-6).
+        .onChange(of: promptIndex) { _, _ in
+            if recorder.isRecording { recorder.cancel() }
+            clearRound()
+        }
+        .onChange(of: categoryIndex) { _, _ in
+            if recorder.isRecording { recorder.cancel() }
+            clearRound()
+        }
         .alert(MicAvailability.permissionDenied.title, isPresented: $showSettingsAlert) {
             Button("Open Settings") { openSettings() }
             Button("Not now", role: .cancel) {}
@@ -110,8 +132,13 @@ struct SpeakView: View {
     /// Write drops the transcript, the feedback and outcome cards, any failure,
     /// and the repeat-request guard, so the new tab never shows a fluency score
     /// for something said in another one — nor greys out "Get feedback" because
-    /// the text matches a request made elsewhere (talkmedia-5-2).
+    /// the text matches a request made elsewhere (talkmedia-5-2). A recording
+    /// still transcribing is part of the round and is dropped with it, so its
+    /// feedback never lands in the new tab (talkmedia-10-6).
     private func clearRound() {
+        roundToken &+= 1
+        transcribeTask?.cancel()
+        transcribeTask = nil
         feedbackTask?.cancel()
         feedbackTask = nil
         feedbackLoading = false
@@ -388,9 +415,11 @@ struct SpeakView: View {
                     .accessibilityHidden(true)
                 Text(outcomeHeadline(outcome)).font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.text)
             }
-            if !outcome.surfacedMissedConceptIds.isEmpty || !outcome.strongConceptIds.isEmpty {
+            // Only concepts with material behind them are named, the strengths
+            // as much as the misses (store-6-3, talkmedia-10-7).
+            if !outcome.surfacedMissedConceptIds.isEmpty || !outcome.surfacedStrongConceptIds.isEmpty {
                 FlowChips(items: outcome.surfacedMissedConceptIds.compactMap { store.concept($0)?.name }.map { "Work on: \($0)" }
-                          + outcome.strongConceptIds.compactMap { store.concept($0)?.name }.map { "Solid: \($0)" },
+                          + outcome.surfacedStrongConceptIds.compactMap { store.concept($0)?.name }.map { "Solid: \($0)" },
                           color: Theme.secondary)
             }
         }
@@ -455,9 +484,17 @@ struct SpeakView: View {
 
     /// Stop (or pick up the cap's stop), transcribe, and ask for feedback.
     private func finishRecording() {
+        // A clip already on its way to the transcriber is the answer: a second
+        // stop (the cap firing as the learner taps) has nothing new to send.
+        if !recorder.isRecording && recorder.isTranscribing { return }
         let promptText = currentPromptText
-        Task {
+        let round = roundToken
+        transcribeTask = Task {
             let outcome = await recorder.stopAndTranscribe(language: "fra")
+            // The round this answer belonged to was left while it transcribed
+            // (talkmedia-10-6).
+            guard !Task.isCancelled, round == roundToken else { return }
+            transcribeTask = nil
             switch outcome {
             case .text(let text):
                 withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) { spokenText = text }

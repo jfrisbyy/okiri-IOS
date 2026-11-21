@@ -93,6 +93,9 @@ final class VoiceRecorder {
             let rec = try AVAudioRecorder(url: url, settings: settings)
             rec.prepareToRecord()
             guard rec.record() else { return .failure(.audioSessionFailed) }
+            // From here until the recorder stops, nothing may switch the shared
+            // session back to playback (talkmedia-10-8).
+            NaturalVoice.shared.beginCapture(by: self)
             recorder = rec
             fileURL = url
             isRecording = true

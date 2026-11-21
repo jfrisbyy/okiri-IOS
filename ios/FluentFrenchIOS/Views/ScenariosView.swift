@@ -635,7 +635,7 @@ struct ScenariosView: View {
                     translateResult = nil
                     translateNotice = TranslationFailure.serviceError.message
                 } else {
-                    translateResult = ScenarioPhrase(french: french, english: text, context: "Added from translator")
+                    translateResult = ScenarioPhrase(french: french, english: text, context: ScenarioPhrase.translatorContext)
                 }
             case .unavailable(let failure):
                 translateResult = nil

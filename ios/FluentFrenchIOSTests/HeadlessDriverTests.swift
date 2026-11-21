@@ -184,7 +184,10 @@ struct HeadlessDriverTests {
         // is scheduled far out, so only falling recall (Tuning.checkInRetrievability)
         // can pull it back into a smart lesson — and only as a check-in (B7).
         var concept = EngineFixtures.mastered("solo")
-        concept.nextCheckInAt = now.addingTimeInterval(30 * EngineFixtures.day)
+        // (A year: earning the badge at each due date now takes about a month, since
+        // the first answer is scheduled by its grade — engine-10-8 — so a 30-day
+        // ladder would fall due first and the premise would not hold.)
+        concept.nextCheckInAt = now.addingTimeInterval(365 * EngineFixtures.day)
         concept.checkInIntervalDays = Tuning.checkInInitialDays
         var gap = EngineFixtures.gap("solo-0", concept: "solo")
         gap.fsrs = EngineFixtures.freshFsrs(at: now)
@@ -315,9 +318,14 @@ struct HeadlessDriverTests {
 
     // MARK: Synthetic learner against the real engine
 
+    /// Cards only for the concepts the shipped content covers: one with no authored
+    /// content has no cards in the app either (EngineFixtures.authoredConceptIds) —
+    /// fabricating them for all 181 concepts simulated a curriculum the product does
+    /// not ship (engine-10-4).
     private func realTaxonomyStore() -> AppStore {
         let concepts = ConceptTaxonomy.seed()
-        let gaps = EngineFixtures.foundationGaps(for: concepts, perConcept: 6, at: EngineFixtures.now)
+        let gaps = EngineFixtures.foundationGaps(for: EngineFixtures.authoredConcepts(concepts), perConcept: 6,
+                                                 at: EngineFixtures.now)
         let store = EngineFixtures.store(concepts: concepts, gaps: gaps, theta: -0.8)   // placed A1
         return store
     }
@@ -372,7 +380,16 @@ struct HeadlessDriverTests {
     /// the estimator has seen almost nothing (measured peak ≈ 0.28).
     private static let dailyCalibrationCeiling = 0.35
     /// Ceiling on calibration error once a run has settled, at day 60 (measured ≈ 0.10).
-    private static let settledCalibrationCeiling = 0.15
+    private nonisolated static let settledCalibrationCeiling = 0.15
+    /// The same ceiling for the two STRESS scenarios — a learner who forgets 5 % a day,
+    /// and the one-lesson-a-day capacity run — re-measured once the runs seeded the
+    /// curriculum the app ships (engine-10-4): 0.18 and 0.15 at day 60. Under the old
+    /// fixture every authored A2/B1 concept had cards from day 0, so the forgetful
+    /// learner never left Foundation and its estimator was only ever judged on the
+    /// 28 base skills. On the real curriculum it opens reading on day 18 and the
+    /// estimator trails a learner whose truth decays daily on every skill a lesson
+    /// does not reach; that lag is printed in the trace, and bounded here.
+    private static let stressSettledCalibrationCeiling = 0.22
     /// How far the engine's mastered COUNT may sit from the truth at day 60 for a
     /// learner who does every lesson the plan asks for (measured ≤ 3 of 49 concepts).
     private static let masteredCountBand = 6
@@ -404,7 +421,8 @@ struct HeadlessDriverTests {
     }
 
     private func expectLoopInvariants(_ run: SimulatedRun, label: String,
-                                      lessonsAfterUnlock: Int = Tuning.foundationLessonsPerDay) {
+                                      lessonsAfterUnlock: Int = Tuning.foundationLessonsPerDay,
+                                      settledCeiling: Double = Self.settledCalibrationCeiling) {
         let store = run.driver.store
         #expect(run.reports.count == 60)
         for report in run.reports {
@@ -451,12 +469,18 @@ struct HeadlessDriverTests {
         #expect(run.aboveBandLockedTargets.isEmpty,
                 "\(label): targets above the learner's band while reading was locked: \(run.aboveBandLockedTargets.prefix(8).joined(separator: "; "))")
 
+        // engine-10-4: the run now seeds through the real placement, first-run slice,
+        // probe and bridge paths, so blind-spot probes really fire — the path that
+        // used to seed B1 curricula inside Foundation (engine-10-1) is exercised.
+        let probes = store.selectionLog.entries.reduce(0) { $0 + $1.count(of: .probe) }
+        #expect(probes > 0, "\(label): no blind-spot probe fired in sixty days")
+
         // The estimator has to be RIGHT by the end, not merely inside [0, 1]: sixty
         // days of check-ins must have pulled the engine's belief close to the
         // learner's truth (engine-8-3).
         let last = run.reports.last
         #expect(last?.day == 60)
-        #expect((last?.calibrationError ?? 1) <= Self.settledCalibrationCeiling,
+        #expect((last?.calibrationError ?? 1) <= settledCeiling,
                 "\(label): calibration error \(last?.calibrationError ?? -1) at day 60")
     }
 
@@ -480,7 +504,8 @@ struct HeadlessDriverTests {
     /// not asserted — the fix is throughput (more lessons), not the estimator.
     @Test func falseBeginnerOneLessonADayAfterUnlockKeepsTheInvariants() {
         let run = sixtyDays(.falseBeginner, seed: 3, declaredBeginner: false, label: "false beginner", lessonsAfterUnlock: 1)
-        expectLoopInvariants(run, label: "false beginner ×1", lessonsAfterUnlock: 1)
+        expectLoopInvariants(run, label: "false beginner ×1", lessonsAfterUnlock: 1,
+                             settledCeiling: Self.stressSettledCalibrationCeiling)
         #expect(run.reports.contains { $0.readingUnlockedAtStart && $0.lessons == 1 })
         #expect(run.reports.reduce(0) { $0 + $1.checkIns } > 0)
         #expect(run.reports.first?.readingUnlocked == false, "day 1: provisional seeds open nothing")
@@ -497,9 +522,22 @@ struct HeadlessDriverTests {
         }
     }
 
+    /// engine-10-1: for a declared beginner the locked phase is A1 in ABSOLUTE terms —
+    /// the relative engine-9-2 check compares targets with a band the probe leak
+    /// itself inflated. No target above A1, and the reported level never past A2.
+    private func expectAnA1LockedPhase(_ run: SimulatedRun, label: String) {
+        let foundation = run.lockedTargets.filter { $0.beforeFirstOpen }
+        #expect(!foundation.isEmpty)
+        let above = foundation.filter { $0.band.order > CEFRLevel.A1.order }
+        #expect(above.isEmpty, "\(label): \(above.count) locked-phase targets above A1: \(above.prefix(8).map { "day \($0.day) \($0.conceptId) (\($0.band.rawValue))" })")
+        let inflated = foundation.filter { $0.learnerBand.order > CEFRLevel.A2.order }
+        #expect(inflated.isEmpty, "\(label): read as \(inflated.first?.learnerBand.rawValue ?? "") on day \(inflated.first?.day ?? 0) while locked in Foundation")
+    }
+
     @Test func trueBeginnerSixtyDays() {
         let run = sixtyDays(.trueBeginner, seed: 11, declaredBeginner: true, label: "true beginner")
         expectLoopInvariants(run, label: "true beginner")
+        expectAnA1LockedPhase(run, label: "true beginner")
         #expect(run.placement?.result.isTrueBeginner == true)
         #expect(run.placement?.seededConceptIds.isEmpty == true, "a declared beginner is seeded nothing")
         #expect(run.placement?.inferredConceptIds.isEmpty == true)
@@ -541,6 +579,7 @@ struct HeadlessDriverTests {
     @Test func fastLearnerSixtyDays() {
         let run = sixtyDays(.fast, seed: 7, declaredBeginner: true, label: "fast learner")
         expectLoopInvariants(run, label: "fast")
+        expectAnA1LockedPhase(run, label: "fast")
         expectNoGhostsInTheFinalWeek(run, label: "fast")
         expectMasteredCountTracksTruth(run, label: "fast")
         #expect(run.unlockDay != nil, "a fast learner unlocks reading inside 60 days")
@@ -623,7 +662,8 @@ struct HeadlessDriverTests {
 
     @Test func forgetfulLearnerSixtyDays() {
         let run = sixtyDays(.forgetful, seed: 5, declaredBeginner: true, label: "forgetful learner")
-        expectLoopInvariants(run, label: "forgetful")
+        expectLoopInvariants(run, label: "forgetful", settledCeiling: Self.stressSettledCalibrationCeiling)
+        expectAnA1LockedPhase(run, label: "forgetful")
         #expect(run.governorDays >= 1, "the retention governor engages at least once for a forgetter")
         #expect(run.reports.contains { $0.checkInMisses > 0 }, "check-ins catch the forgetting")
     }

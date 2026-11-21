@@ -60,13 +60,43 @@ nonisolated enum FoundationSeeder {
                       excludedHeadwords: Set<String> = [], existingIds: Set<String> = []) -> [GapItem] {
         let byConcept = Dictionary(grouping: content.filter { $0.conceptId != nil }, by: { $0.conceptId! })
         var result: [GapItem] = []
+        var taken = existingIds
         for cid in conceptIds {
             for gap in byConcept[cid] ?? [] {
-                guard !existingIds.contains(gap.id), !excludedHeadwords.contains(headwordKey(gap.frenchWord)) else { continue }
-                result.append(gap)
+                guard !excludedHeadwords.contains(headwordKey(gap.frenchWord)) else { continue }
+                // An id already on the record under a headword that is NOT excluded is a
+                // different item: content ids are array positions, so an item inserted
+                // into a skill takes the id of the item it displaced. It used to be
+                // skipped as "already present" and never delivered (engine-10-6).
+                var copy = gap
+                copy.id = availableId(for: gap, taken: taken)
+                guard !taken.contains(copy.id) else { continue }
+                taken.insert(copy.id)
+                result.append(copy)
             }
         }
         return result
+    }
+
+    /// The gap's own id when it is free, else one derived from its headword — stable
+    /// across launches, so the same item always lands under the same fallback id
+    /// (engine-10-6).
+    static func availableId(for gap: GapItem, taken: Set<String>) -> String {
+        guard taken.contains(gap.id) else { return gap.id }
+        return "\(gap.id)-\(stableHash(headwordKey(gap.frenchWord)))"
+    }
+
+    /// FNV-1a (64-bit) of a string, in hex: the same in every process, unlike Swift's
+    /// per-run-seeded `Hasher`, so ids and fingerprints built from it persist safely.
+    static func stableHash(_ text: String) -> String {
+        let offsetBasis: UInt64 = 0xcbf2_9ce4_8422_2325   // FNV-1a 64-bit offset basis (algorithm constant)
+        let prime: UInt64 = 0x0000_0100_0000_01B3          // FNV-1a 64-bit prime (algorithm constant)
+        var hash = offsetBasis
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* prime
+        }
+        return String(hash, radix: 16)
     }
 
     /// Stagger `gaps` (already in concept order) so roughly `batch` items come due

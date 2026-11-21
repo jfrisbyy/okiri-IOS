@@ -81,6 +81,12 @@ final class AuthManager {
         switch event {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated:
             if let session {
+                // An EXPIRED stored session counts too: the client emits the
+                // Keychain session as the initial session and refreshes it in the
+                // background, so an offline launch opens the learner's record
+                // instead of the sign-in screen. Never gate this on
+                // `session.isExpired` — a revoked session ends with `.signedOut`
+                // once the refresh reaches the server (store-10-1).
                 user = Self.mapUser(session.user)
                 didSignOutExplicitly = false
             } else {

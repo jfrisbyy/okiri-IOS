@@ -110,7 +110,12 @@ nonisolated enum SpeakGapPlan {
         // The natural phrasing says the same thing, so the corrected line's
         // English is a faithful meaning for it when the model gave none of its own.
         let naturalEnglish = feedback.naturalEnglish.trimmingCharacters(in: .whitespacesAndNewlines)
-        let concept = feedback.mistakeConceptIds.first
+        // A card is linked to a concept only when the feedback named exactly one:
+        // with several, nothing says which slip each corrected phrase shows, and
+        // filing every card under the first would book the second concept's slip
+        // on the wrong one (talkmedia-10-2).
+        let named = Set(feedback.mistakeConceptIds)
+        let concept = named.count == 1 ? feedback.mistakeConceptIds.first : nil
         var plan = Plan()
         if !corrected.isEmpty, !PhraseKey.same(corrected, learner) {
             let card = CorrectionCard.from(original: learner, corrected: corrected)

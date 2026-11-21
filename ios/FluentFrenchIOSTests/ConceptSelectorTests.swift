@@ -951,4 +951,182 @@ struct ConceptSelectorTests {
         let output = ConceptSelector(store: store).select(.capstone(now: EngineFixtures.now))
         #expect(output.isEmpty)
     }
+
+    // MARK: Round 10
+
+    /// A real-taxonomy store in which every authored A1/A2 skill already holds a card,
+    /// so the only frontier concepts a probe could still open are the B1 skills whose
+    /// prerequisites the learner has mastered — the state a declared beginner reaches
+    /// inside Foundation once the A1 basics are seeded.
+    private func storeWithOnlyB1ProbeCandidates(masterAllBase: Bool) -> AppStore {
+        let store = EngineFixtures.store()
+        let lower = store.concepts.filter {
+            EngineFixtures.authoredConceptIds.contains($0.id) && $0.cefrLevel.order < CEFRLevel.B1.order
+        }
+        store.gaps = EngineFixtures.foundationGaps(for: lower, perConcept: 1)
+        let masterIds: Set<String> = masterAllBase ? ConceptTaxonomy.baseConceptIds : ["present-irregular", "everyday-vocab"]
+        for i in store.concepts.indices where masterIds.contains(store.concepts[i].id) {
+            let c = store.concepts[i]
+            store.concepts[i] = EngineFixtures.mastered(c.id, category: c.category, level: c.cefrLevel,
+                                                        prerequisites: c.prerequisites)
+        }
+        store.abilityTheta = -0.8
+        store.sessionIndex = 0   // a probe session
+        return store
+    }
+
+    /// engine-10-1: probes had no band or Foundation guard, so a beginner still locked
+    /// in Foundation was probed — and, through the probe answer, seeded with the whole
+    /// curriculum of — B1 skills whose prerequisites are A1 basics.
+    @Test func blindSpotProbesStayAtA1WhileReadingIsLocked() throws {
+        let locked = storeWithOnlyB1ProbeCandidates(masterAllBase: false)
+        #expect(locked.isInFoundation)
+        let selector = ConceptSelector(store: locked)
+        let b1Frontier = locked.concepts.filter {
+            $0.cefrLevel == .B1 && selector.isFrontier($0) && locked.hasProbeContent(for: $0.id)
+                && locked.gaps(forConcept: $0.id).isEmpty
+        }
+        #expect(!b1Frontier.isEmpty, "the B1 skills are on the frontier with probes and no cards")
+        #expect(selector.probeConcept() == nil,
+                "no probe above \(Tuning.foundationProbeMaxLevel.rawValue) inside Foundation, got \(selector.probeConcept()?.id ?? "nil")")
+        let output = selector.select(.smart(now: EngineFixtures.now))
+        #expect(!output.items.contains { $0.role == .probe })
+
+        // An A1 skill with no card is still probed while locked.
+        let a1 = try #require(locked.concepts.first { $0.cefrLevel == .A1 && $0.state == .neverObserved
+            && EngineFixtures.authoredConceptIds.contains($0.id) && locked.arePrerequisitesMet($0) })
+        locked.gaps.removeAll { $0.conceptId == a1.id }
+        #expect(ConceptSelector(store: locked).probeConcept()?.cefrLevel == .A1)
+
+        // Once reading opens, B1 probes are back.
+        let open = storeWithOnlyB1ProbeCandidates(masterAllBase: true)
+        #expect(!open.isInFoundation)
+        #expect(ConceptSelector(store: open).probeConcept()?.cefrLevel == .B1)
+    }
+
+    /// engine-10-2: θ settles near a band edge for a learner of steady ability, and
+    /// the bare threshold flipped the reported level on every small move across it.
+    @Test func reportedLevelHasHysteresisAroundBandEdges() {
+        let store = EngineFixtures.store()
+        let selector = ConceptSelector(store: store)
+        let edge = Tuning.levelThetaFloor(for: .B1)
+        let h = Tuning.levelHysteresis
+        #expect(h > 0)
+        store.abilityTheta = 0.0
+        #expect(store.learnerLevel == .A2)
+        store.abilityTheta = edge + h / 2
+        #expect(store.learnerLevel == .A2, "just over the edge is not enough to move up")
+        #expect(ConceptSelector.level(forTheta: store.abilityTheta) == .B1, "the bare map would have said B1")
+        store.abilityTheta = edge + h
+        #expect(store.learnerLevel == .B1)
+        store.abilityTheta = edge - h / 2
+        #expect(store.learnerLevel == .B1, "a dip just under the edge does not move it back down")
+        #expect(selector.learnerLevel() == .B1, "the ranker reads the same latched band")
+        store.abilityTheta = edge - h * 1.01
+        #expect(store.learnerLevel == .A2)
+        // Big moves are never held back: placement-sized jumps land on the bare band.
+        store.abilityTheta = 2.2
+        #expect(store.learnerLevel == .C1)
+        store.abilityTheta = -1.0
+        #expect(store.learnerLevel == .A1)
+        // The edges come from Tuning.
+        for level in CEFRLevel.allCases where level != .A1 {
+            #expect(ConceptSelector.level(forTheta: Tuning.levelThetaFloor(for: level)) == level)
+            #expect(ConceptSelector.level(forTheta: Tuning.levelThetaFloor(for: level) - 0.001).order == level.order - 1)
+        }
+    }
+
+    /// engine-10-2: the latch survives a relaunch, or a θ sitting inside the margin
+    /// would be re-read bare every launch and the badge would flip day to day.
+    @Test func latchedLevelSurvivesARelaunch() {
+        let scratch = ScratchDefaults()
+        let edge = Tuning.levelThetaFloor(for: .B1)
+        do {
+            let store = AppStore(persistence: scratch.defaults)
+            store.abilityTheta = edge + Tuning.levelHysteresis * 2
+            store.abilityTheta = edge - Tuning.levelHysteresis / 2
+            #expect(store.learnerLevel == .B1)
+            store.save()
+            store.flush()
+        }
+        let relaunched = AppStore(persistence: scratch.defaults)
+        #expect(relaunched.abilityTheta < edge)
+        #expect(relaunched.learnerLevel == .B1, "the reported band is remembered, not re-derived from a θ near the edge")
+    }
+
+    /// engine-10-3: a single wrong pick left a permanent "you keep confusing" label and
+    /// rank boost on the word, however often it was answered right afterwards.
+    @Test func aResolvedOrSingleMixUpIsNotCalledAPattern() throws {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let confusedAt = now.addingTimeInterval(-10 * day)
+        func link(_ picks: Int) -> ConfusionLink {
+            ConfusionLink(partnerGapId: "c-1", wrongPicks: picks, lastConfusedAt: confusedAt, strength: 0.4)
+        }
+        func reason(_ gap: GapItem) throws -> String {
+            let partner = EngineFixtures.gap("c-1", concept: "c")
+            let store = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.5)], gaps: [gap, partner])
+            store.sessionIndex = 1
+            let output = ConceptSelector(store: store).select(.scoped([gap.id], name: "x", now: now))
+            return try #require(output.items.first?.reason)
+        }
+        let once = EngineFixtures.gap("c-0", concept: "c", confusion: [link(1)])
+        #expect(try reason(once) == "You've mixed this up with “c-1-fr” before.")
+        let twice = EngineFixtures.gap("c-0", concept: "c", confusion: [link(2)])
+        #expect(try reason(twice) == "You keep confusing this with “c-1-fr”.")
+
+        // Answered right `confusionClearStreak` times since the last mix-up: retired.
+        var resolved = EngineFixtures.gap("c-0", concept: "c", due: now.addingTimeInterval(-day),
+                                          consecutiveCorrect: Tuning.confusionClearStreak, reviewCount: 6,
+                                          lastReviewed: now.addingTimeInterval(-2 * day), confusion: [link(2)])
+        #expect(resolved.activeConfusionLinks.isEmpty)
+        let resolvedReason = try reason(resolved)
+        #expect(!resolvedReason.contains("confus") && !resolvedReason.contains("mixed"), "\(resolvedReason)")
+        // ...but a streak that predates the mix-up retires nothing.
+        resolved.lastReviewedAt = confusedAt.addingTimeInterval(-day)
+        #expect(resolved.activeConfusionLinks.count == 1)
+        resolved.lastReviewedAt = now.addingTimeInterval(-2 * day)
+        resolved.consecutiveCorrect = Tuning.confusionClearStreak - 1
+        #expect(resolved.activeConfusionLinks.count == 1, "one answer short of the streak")
+
+        // The rank boost goes with it.
+        func score(_ gap: GapItem) -> Double {
+            let store = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.5)],
+                                             gaps: [gap, EngineFixtures.gap("c-1", concept: "c", due: now.addingTimeInterval(9 * day))])
+            return ConceptSelector(store: store).score(store.concept("c")!, now: now)
+        }
+        var clean = resolved
+        clean.consecutiveCorrect = Tuning.confusionClearStreak
+        let retired = score(clean)
+        clean.confusionLinks = []
+        #expect(abs(retired - score(clean)) < 1e-9, "a retired link no longer ranks the concept")
+        clean.confusionLinks = [link(2)]
+        clean.consecutiveCorrect = 0
+        #expect(score(clean) > retired, "a live one still does")
+    }
+
+    /// engine-10-5: `expandFrontier` announced B1 skills to a beginner the day their
+    /// A1 prerequisites were mastered, while the ranker gives them no level fit.
+    @Test func newlyUnlockedSkillsAreAnnouncedOnlyWithinTheLearnersBand() throws {
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.syntheticContent(for: Array(EngineFixtures.authoredConceptIds))
+        store.abilityTheta = -0.8
+        #expect(store.learnerLevel == .A1)
+        let idx = try #require(store.concepts.firstIndex { $0.id == "present-irregular" })
+        let c = store.concepts[idx]
+        store.concepts[idx] = EngineFixtures.mastered(c.id, category: c.category, level: c.cefrLevel, prerequisites: c.prerequisites)
+        let subjunctive = try #require(store.concept("subjunctive-intro"))
+        #expect(subjunctive.cefrLevel == .B1 && store.arePrerequisitesMet(subjunctive) && store.isTeachable(subjunctive.id))
+
+        let first = store.expandFrontier()
+        #expect(!first.contains(subjunctive.name), "a B1 skill is not 'unlocked' for an A1 learner: \(first)")
+        #expect(store.concept("subjunctive-intro")?.newlyUnlocked == false)
+        #expect(store.concepts.filter { $0.newlyUnlocked }.allSatisfy { $0.cefrLevel.order <= CEFRLevel.A1.order })
+
+        // Announced once, when the learner's band reaches it.
+        store.abilityTheta = 1.0
+        #expect(store.learnerLevel == .B1)
+        #expect(store.expandFrontier().contains(subjunctive.name))
+        #expect(!store.expandFrontier().contains(subjunctive.name), "and only once")
+    }
 }

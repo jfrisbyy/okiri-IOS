@@ -389,8 +389,11 @@ struct ConceptSelector {
         return max(0, 1 - Double(abs(delta)) / span)
     }
 
+    /// Pressure from the mix-ups the learner has not yet put behind them. A retired
+    /// link (`GapItem.activeConfusionLinks`) no longer ranks the concept: a single
+    /// mix-up used to boost it for ever (engine-10-3).
     private func confusionScore(_ gaps: [GapItem]) -> Double {
-        let total = gaps.flatMap { $0.confusionLinks }.map { $0.strength }.reduce(0, +)
+        let total = gaps.flatMap { $0.activeConfusionLinks }.map { $0.strength }.reduce(0, +)
         return min(1, total)
     }
 
@@ -404,9 +407,11 @@ struct ConceptSelector {
 
     /// The learner's IRT ability mapped to an approximate CEFR band. This is the
     /// one notion of "level" the engine has: frontier fit uses it, and surfaces
-    /// that gate by level (e.g. conversation scenarios) read it from here.
+    /// that gate by level (e.g. conversation scenarios) read it from here. It is the
+    /// store's LATCHED band, so the ranker and the badge can never disagree and
+    /// neither flips on θ noise around a band edge (engine-10-2).
     func learnerLevel() -> CEFRLevel {
-        Self.level(forTheta: store.abilityTheta)
+        store.learnerLevel
     }
 
     /// The band an ability maps to, with no selector to build. The mapping reads
@@ -414,15 +419,24 @@ struct ConceptSelector {
     /// work that `AppStore.learnerLevel` was paying on every read, including once
     /// per row in list bodies, and which made every level badge re-render on any
     /// concept mutation (store-8-4).
+    /// The edges live in Tuning (`levelThetaFloor`), not here (engine-10-2).
     nonisolated static func level(forTheta theta: Double) -> CEFRLevel {
-        switch theta {
-        case ..<(-0.4): return .A1
-        case ..<0.4: return .A2
-        case ..<1.2: return .B1
-        case ..<2.0: return .B2
-        case ..<2.6: return .C1
-        default: return .C2
-        }
+        CEFRLevel.allCases.last { theta >= Tuning.levelThetaFloor(for: $0) } ?? .A1
+    }
+
+    /// The band to REPORT for θ given the band last reported: it moves only once θ
+    /// clears the new band's edge by `Tuning.levelHysteresis`. θ for a learner of
+    /// steady ability settles close to a band edge — the per-item evidence ceiling
+    /// sits right on it — and a bare threshold flipped the badge, the ranking and
+    /// every level-gated surface between A2 and B1 every few days (engine-10-2).
+    /// With no previous band this is the bare mapping.
+    nonisolated static func level(forTheta theta: Double, previous: CEFRLevel?) -> CEFRLevel {
+        guard let previous else { return level(forTheta: theta) }
+        let up = level(forTheta: theta - Tuning.levelHysteresis)
+        if up.order > previous.order { return up }
+        let down = level(forTheta: theta + Tuning.levelHysteresis)
+        if down.order < previous.order { return down }
+        return previous
     }
 
     // MARK: Ranking
@@ -608,10 +622,22 @@ struct ConceptSelector {
 
     /// Every N sessions, the lowest-level frontier concept with no gap yet — and
     /// with probe content to carry it (a concept without probes is skipped, B13).
+    ///
+    /// While reading is still locked, only concepts at or below
+    /// `Tuning.foundationProbeMaxLevel` (A1) may be probed (engine-10-1). A probe
+    /// answer seeds the probed skill's whole curriculum, due now, so probing the B1
+    /// skills whose prerequisites are A1 basics (the subjunctive, savoir/connaître,
+    /// idioms) taught B1 grammar inside Foundation, pushed θ into B1 on that material
+    /// while most of the basics were unverified, and spent the lessons that open
+    /// reading — contrary to FoundationSeeder's "nothing above A1 before reading
+    /// opens". A2 skills arrive with the bridge slice at unlock; higher ones by probe
+    /// after it.
     func probeConcept() -> Concept? {
         guard config.probeEveryNSessions > 0,
               store.sessionIndex % config.probeEveryNSessions == 0 else { return nil }
+        let maxOrder = store.isInFoundation ? Tuning.foundationProbeMaxLevel.order : Int.max
         return store.concepts
+            .filter { $0.cefrLevel.order <= maxOrder }
             .filter { isFrontier($0) && store.gaps(forConcept: $0.id).isEmpty && store.hasProbeContent(for: $0.id) }
             .sorted { a, b in
                 if a.cefrLevel.order != b.cefrLevel.order { return a.cefrLevel.order < b.cefrLevel.order }
@@ -774,9 +800,15 @@ struct ConceptSelector {
 
     // MARK: Reasons (legibility)
 
-    private func strongestConfusionPartner(of gap: GapItem) -> GapItem? {
-        guard let link = gap.confusionLinks.max(by: { $0.strength < $1.strength }) else { return nil }
-        return store.gaps.first { $0.id == link.partnerGapId }
+    /// The partner of the strongest mix-up the learner has not yet put behind them
+    /// (engine-10-3: a retired link names no one), and the copy that fits it: only
+    /// a repeated mix-up is "keep confusing" — one wrong pick is not a pattern.
+    private func confusionReason(for gap: GapItem) -> String? {
+        guard let link = gap.activeConfusionLinks.max(by: { $0.strength < $1.strength }),
+              let partner = store.gaps.first(where: { $0.id == link.partnerGapId }) else { return nil }
+        return link.isRepeated
+            ? "You keep confusing this with “\(partner.frenchWord)”."
+            : "You've mixed this up with “\(partner.frenchWord)” before."
     }
 
     /// Times the learner actually got this wrong. `GapItem.reviewCount` counts EVERY
@@ -785,8 +817,8 @@ struct ConceptSelector {
     private func missCount(of gap: GapItem) -> Int { gap.fsrs?.lapses ?? 0 }
 
     private func smartReason(for gap: GapItem, role: SelectedItemRole, target: Concept?, now: Date) -> String {
-        if let partner = strongestConfusionPartner(of: gap) {
-            return "You keep confusing this with “\(partner.frenchWord)”."
+        if let confusion = confusionReason(for: gap) {
+            return confusion
         }
         if let target, role == .target, target.newlyUnlocked {
             return "New skill you're ready for: \(target.name)."
@@ -815,8 +847,8 @@ struct ConceptSelector {
     /// Reasons for a scoped lesson — no target concept, so lean on confusion,
     /// miss-count, due-ness and concept membership.
     private func scopedReason(for gap: GapItem, now: Date) -> String {
-        if let partner = strongestConfusionPartner(of: gap) {
-            return "You keep confusing this with “\(partner.frenchWord)”."
+        if let confusion = confusionReason(for: gap) {
+            return confusion
         }
         let misses = missCount(of: gap)
         if misses >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {

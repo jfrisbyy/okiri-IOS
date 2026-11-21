@@ -73,6 +73,10 @@ struct WatchView: View {
     @State private var searching = false
     @State private var searchText = ""
     @State private var search: SearchState = .idle
+    /// Rises with every search started, so only the newest one may publish: a
+    /// slower earlier request never lands its videos under a newer query
+    /// (talkmedia-10-10, the read-9-3 rule).
+    @State private var searchToken = 0
     @State private var playingVideo: YTVideo? = nil
 
     private enum SearchState: Equatable {
@@ -172,10 +176,15 @@ struct WatchView: View {
     private func runSearch() async {
         let q = searchText.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
+        searchToken &+= 1
+        let token = searchToken
         guard YouTubeService.hasKey else { search = .unavailable(.noKey); return }
         guard reachability.isReachable else { search = .unavailable(.offline); return }
         search = .loading
-        switch await YouTubeService.search(q) {
+        let answer = await YouTubeService.search(q)
+        // A newer search started while this one was in flight: it owns the panel.
+        guard token == searchToken else { return }
+        switch answer {
         case .results(let videos): search = .results(videos)
         case .unavailable(let failure): search = .unavailable(failure)
         }

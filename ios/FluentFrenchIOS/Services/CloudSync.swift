@@ -103,24 +103,24 @@ nonisolated struct SnapshotUndecodable: Error, Sendable {
 @MainActor
 @Observable
 final class CloudSync {
-    // MARK: Tunables (candidates for Tuning.swift — see needsOtherPackage)
+    // MARK: Tunables (values live in Tuning.swift — store-10-4)
 
     /// Skip a foreground reconcile when the last one finished more recently than this.
-    static let foregroundReconcileMinInterval: TimeInterval = 60
+    static let foregroundReconcileMinInterval: TimeInterval = Tuning.cloudForegroundReconcileMinInterval
     /// Quiet period after the last local mutation before the snapshot is uploaded.
     /// Deliberately longer than the gap between two answers: a lesson uploads once
     /// when it ends (`AppStore.flushToCloud`) or when the app backgrounds, not once
     /// per answer (store-2-2).
     static let pushDebounce: Duration = .seconds(Tuning.cloudPushDebounce)
     /// Total attempts for one reconcile read before it is reported as failed.
-    static let fetchAttempts = 3
+    static let fetchAttempts = Tuning.cloudFetchAttempts
     /// How long a reconcile waits for an upload that is already in flight before
     /// reading the row anyway (store-7-1).
     static let pushSettleTimeout: Duration = .seconds(Tuning.cloudPushSettleTimeout)
     /// Poll interval while one cloud operation waits for another to finish.
     static let pushSettlePoll: Duration = .seconds(Tuning.cloudPushSettlePoll)
     /// Delay before the second read attempt; doubles on each further attempt.
-    static let fetchRetryBaseDelay: Duration = .milliseconds(500)
+    static let fetchRetryBaseDelay: Duration = .seconds(Tuning.cloudFetchRetryBaseDelay)
 
     // MARK: Observable state
 
@@ -149,9 +149,8 @@ final class CloudSync {
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private var hasPendingChange = false
     @ObservationIgnored private var pushInFlight = false
-    @ObservationIgnored private var pushRequestedWhileInFlight = false
     /// Callers parked inside `pushNow` waiting for the current upload so they can
-    /// upload once more. Non-zero from the moment a caller queues until its own
+    /// upload once more if anything is still owed (store-10-3). Non-zero from the moment a caller queues until its own
     /// upload has finished, so it spans the handoff window where `pushInFlight`
     /// is momentarily false but a second upload is about to start — the window
     /// `awaitPushInFlight` must not let a reconcile's read slip through
@@ -572,6 +571,23 @@ final class CloudSync {
         return await pushNow(store: store, userId: uid)
     }
 
+    /// True when signing `uid` in would make `AppStore.beginSession` clear a record
+    /// that belongs to ANOTHER account and has not all reached that account
+    /// (store-10-2). After a session ends on its own the device keeps the record
+    /// and promises it is still there; signing back in with a different account
+    /// (Google instead of an Apple "Hide My Email" ID, say) then wiped every answer
+    /// that never got uploaded, without a word. The test is the one `pushForSignOut`
+    /// uses, read against the sync markers kept for the previous account; a record
+    /// the store could not read is never treated as backed up.
+    func switchingAccountWouldDiscardUnsyncedProgress(to uid: String, store: AppStore) -> Bool {
+        guard let previous = store.lastSignedInUserId, previous != uid else { return false }
+        if store.loadError != nil { return true }
+        return !SnapshotReconciler.isFullyBackedUp(
+            hasPendingChange: hasPendingChange,
+            local: localState(store: store, userId: previous)
+        )
+    }
+
     /// Unconditional upload used right before sign-out. Returns false when the
     /// account could not be written (or uploads were never enabled), so the
     /// caller can refuse to wipe local state.
@@ -594,11 +610,17 @@ final class CloudSync {
         return await pushNow(store: store, userId: uid)
     }
 
+    /// Test seam: when set, an upload hands its snapshot here instead of writing
+    /// the row through the Supabase client, and the returned string stands in for
+    /// the row's `updated_at`. Nil in the app.
+    @ObservationIgnored var uploadOverride: (@MainActor (ProgressSnapshot) async throws -> String?)?
+
     /// Upload the current snapshot. Serialised: a second call while one is in
-    /// flight waits for it and then uploads once more.
+    /// flight waits for it, then uploads only if the record is still not fully
+    /// in the row (store-10-3).
     @discardableResult
     func pushNow(store: AppStore, userId uid: String) async -> Bool {
-        guard let client else {
+        guard client != nil || uploadOverride != nil else {
             syncState = .failed(SupabaseManager.configurationMessage)
             return false
         }
@@ -608,7 +630,6 @@ final class CloudSync {
             return false
         }
         if pushInFlight {
-            pushRequestedWhileInFlight = true
             // Held across the wait AND the upload this caller goes on to make,
             // so `awaitPushInFlight` keeps waiting through the handoff instead
             // of reading between the two uploads. The `defer` releases it on
@@ -619,6 +640,21 @@ final class CloudSync {
             while pushInFlight {
                 if Task.isCancelled { return false }
                 try? await Task.sleep(for: Self.pushSettlePoll)
+            }
+            // store-10-3: the upload just waited for may already have written
+            // everything this caller wanted written. Backgrounding the app sends
+            // both `.inactive` and `.background`, so two flushes always overlap;
+            // re-uploading the same record unconditionally cost two or three
+            // uploads per backgrounding, and a failure of the redundant one left
+            // "Backup failed" and a pending change on a device whose row already
+            // held everything. Upload again only when something is still owed —
+            // the same test `pushForSignOut` uses, so a FAILED upload (markers not
+            // moved, record dirty) is still retried here.
+            if SnapshotReconciler.isFullyBackedUp(
+                hasPendingChange: hasPendingChange,
+                local: localState(store: store, userId: uid)
+            ) {
+                return true
             }
             return await pushNow(store: store, userId: uid)
         }
@@ -641,13 +677,20 @@ final class CloudSync {
             let snapshotJSON = try await Self.encodeForUpload(snapshot)
             let isoTimestamp = ISO8601DateFormatter().string(from: snapshot.clientUpdatedAt)
             let row = SnapshotRow(user_id: uid, snapshot: snapshotJSON, client_updated_at: isoTimestamp)
-            let written: UpdatedAtRow = try await client
-                .from(table)
-                .upsert(row, onConflict: "user_id")
-                .select("updated_at")
-                .single()
-                .execute()
-                .value
+            let written: UpdatedAtRow
+            if let uploadOverride {
+                written = UpdatedAtRow(updated_at: try await uploadOverride(snapshot))
+            } else if let client {
+                written = try await client
+                    .from(table)
+                    .upsert(row, onConflict: "user_id")
+                    .select("updated_at")
+                    .single()
+                    .execute()
+                    .value
+            } else {
+                throw SupabaseManager.ConfigurationError()
+            }
             // store-5-2: `snapshot` was taken BEFORE the round trip, so an answer
             // saved while it was in flight is not in the row that was just
             // written. Clearing the flag unconditionally marked that answer as
@@ -662,11 +705,11 @@ final class CloudSync {
                 localUpdatedAt: snapshot.clientUpdatedAt,
                 serverUpdatedAt: PostgresTimestamp.parse(written.updated_at)
             )
+            // No unconditional "a caller queued, so something is pending" here:
+            // that overrode the store-5-2 answer above and forced a redundant
+            // upload of an unchanged record (store-10-3). A queued caller now
+            // decides for itself, from the markers just saved.
             syncState = .synced(Date())
-            if pushRequestedWhileInFlight {
-                pushRequestedWhileInFlight = false
-                hasPendingChange = true
-            }
             return true
         } catch {
             if error is CancellationError {
@@ -734,7 +777,9 @@ final class CloudSync {
         do {
             let rows: [RemoteRow] = try await client
                 .from(table)
-                .select("snapshot, client_updated_at, updated_at")
+                // `client_updated_at` is not read: the reconcile compares the
+                // snapshot JSON's own `clientUpdatedAt` (store-10-5).
+                .select("snapshot, updated_at")
                 .eq("user_id", value: uid)
                 .limit(1)
                 .execute()
@@ -844,12 +889,12 @@ final class CloudSync {
 private nonisolated struct SnapshotRow: Encodable, Sendable {
     let user_id: String
     let snapshot: AnyJSON
+    /// Informational column only; nothing reads it back (store-10-5).
     let client_updated_at: String
 }
 
 private nonisolated struct RemoteRow: Decodable, Sendable {
     let snapshot: AnyJSON
-    let client_updated_at: String?
     let updated_at: String?
 }
 

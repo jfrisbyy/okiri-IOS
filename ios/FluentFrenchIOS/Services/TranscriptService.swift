@@ -9,7 +9,10 @@
 //
 //  Each stage tries the direct path first, then the backend, and the whole
 //  waterfall is retried once if the first pass finds nothing (transient
-//  rate-limits used to surface as a false "no transcript"). The chain is:
+//  rate-limits used to surface as a false "no transcript"). Every caption
+//  reply is checked against the language it was asked for, because both
+//  transports fall back to another language on their own (talkmedia-10-1).
+//  The chain is:
 //   • native French captions
 //   • provider auto-translated French captions
 //   • English captions → AI translation to French
@@ -178,14 +181,21 @@ nonisolated enum TranscriptService {
         switch await providerGET(url) {
         case .failure(let f): return .failure(f)
         case .success(let data):
-            guard let decoded = try? JSONDecoder().decode(ProviderResponse.self, from: data) else { return .failure(.serviceError) }
-            // The provider returns its first available track when the requested
-            // language is missing: lines in another language are no lines for
-            // this request (talkmedia-10-1).
-            let segments = CaptionLanguage.matches(decoded.lang, requested: lang)
-                ? mapProvider(decoded.content ?? [], videoId: videoId) : []
-            return .success((segments, decoded.availableLangs ?? []))
+            guard let reply = providerReply(data, requested: lang, videoId: videoId) else { return .failure(.serviceError) }
+            return .success(reply)
         }
+    }
+
+    /// A provider transcript reply, read for the language that was requested.
+    /// The provider returns its first available track when the requested
+    /// language is missing: lines in another language are no lines for this
+    /// request (talkmedia-10-1). nil for an unreadable reply.
+    static func providerReply(_ data: Data, requested lang: String, videoId: String)
+        -> (segments: [TranscriptSegment], availableLangs: [String])? {
+        guard let decoded = try? JSONDecoder().decode(ProviderResponse.self, from: data) else { return nil }
+        let segments = CaptionLanguage.matches(decoded.lang, requested: lang)
+            ? mapProvider(decoded.content ?? [], videoId: videoId) : []
+        return (segments, decoded.availableLangs ?? [])
     }
 
     private static func providerTranslate(videoId: String, lang: String) async -> Result<[TranscriptSegment], MediaServiceFailure> {
@@ -259,19 +269,28 @@ nonisolated enum TranscriptService {
             guard let http = response as? HTTPURLResponse else { return .failure(.serviceError) }
             if http.statusCode == 404 { return .success([]) }
             if let failure = MediaServiceFailure.classify(statusCode: http.statusCode) { return .failure(failure) }
-            let decoded = try JSONDecoder().decode(BackendTranscriptResponse.self, from: data)
-            if let requiredLanguage,
-               !CaptionLanguage.matches(CaptionLanguage.fromBackendSource(decoded.source), requested: requiredLanguage) {
-                return .success([])
-            }
-            return .success(decoded.segments.compactMap { seg in
-                let text = TranscriptText.cleanHTML(seg.text)
-                guard !text.isEmpty else { return nil }
-                return TranscriptSegment(id: seg.id, text: text, start: seg.start, duration: seg.duration)
-            })
+            return .success(try backendReply(data, requiredLanguage: requiredLanguage))
         } catch {
             // A decoding error is not a URLError, so it classifies as the service's fault.
             return .failure(MediaServiceFailure.classify(error))
+        }
+    }
+
+    /// A backend transcript reply's lines. With `requiredLanguage` set they
+    /// count only when the reply's `source` names that language: the endpoint
+    /// retries with the first available language on its own, so a French
+    /// request for an English-only video answers with English lines
+    /// (talkmedia-10-1). Throws on an unreadable reply.
+    static func backendReply(_ data: Data, requiredLanguage: String?) throws -> [TranscriptSegment] {
+        let decoded = try JSONDecoder().decode(BackendTranscriptResponse.self, from: data)
+        if let requiredLanguage,
+           !CaptionLanguage.matches(CaptionLanguage.fromBackendSource(decoded.source), requested: requiredLanguage) {
+            return []
+        }
+        return decoded.segments.compactMap { seg in
+            let text = TranscriptText.cleanHTML(seg.text)
+            guard !text.isEmpty else { return nil }
+            return TranscriptSegment(id: seg.id, text: text, start: seg.start, duration: seg.duration)
         }
     }
 

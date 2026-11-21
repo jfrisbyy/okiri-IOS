@@ -23,6 +23,11 @@ struct ContentView: View {
     /// The session ended on its own (revoked or expired refresh token). The local
     /// record is kept untouched and the learner is asked to sign back in.
     @State private var sessionEnded = false
+    /// A different account signed in while this device still holds the previous
+    /// account's record, part of which never reached that account. The wipe
+    /// `AppStore.beginSession` would make is held until the learner chooses
+    /// (store-10-2). Holds the id of the account that just signed in.
+    @State private var pendingAccountSwitch: String?
 
     var body: some View {
         Group {
@@ -60,7 +65,17 @@ struct ContentView: View {
     /// screen; otherwise the app.
     @ViewBuilder
     private func signedIn(_ user: AuthManager.AppUser) -> some View {
-        if store.loadError != nil {
+        if pendingAccountSwitch == user.id {
+            // Asked before anything else: whose record this device holds decides
+            // what every later screen reads (store-10-2).
+            AccountSwitchView(
+                signedInAs: user.email ?? user.name,
+                eraseAndContinue: {
+                    pendingAccountSwitch = nil
+                    await startSession(userId: user.id)
+                }
+            )
+        } else if store.loadError != nil {
             LocalDataRecoveryView(
                 restore: { discardUnreadableCopy in
                     await cloud.restoreFromAccount(
@@ -101,16 +116,25 @@ struct ContentView: View {
 
     private func reconcileForCurrentUser() async {
         if let uid = auth.user?.id {
-            hadUser = true
             sessionEnded = false
-            // A different learner on this device starts from a clean record; the
-            // same learner keeps everything that has not been uploaded yet.
-            store.beginSession(userId: uid)
-            store.cloud = cloud
-            // Uploads stay disabled until the reconcile has applied or pushed:
-            // `cloud.setUser` is effectively called by the reconcile on success.
-            await cloud.reconcile(store: store, userId: uid, initial: true)
+            // store-10-2: `beginSession` wipes the device for a different account.
+            // When the previous account's record has not all been uploaded — the
+            // session ended on its own, and the learner then signed in with the
+            // other provider — that wipe is held and the learner is asked. Nothing
+            // is enabled for the new account meanwhile, and `hadUser` stays false,
+            // so signing out from the prompt leaves the record and its sync markers
+            // exactly as they were.
+            if cloud.switchingAccountWouldDiscardUnsyncedProgress(to: uid, store: store) {
+                hadUser = false
+                store.cloud = nil
+                cloud.setUser(nil, keepMarkers: true)
+                pendingAccountSwitch = uid
+                return
+            }
+            pendingAccountSwitch = nil
+            await startSession(userId: uid)
         } else {
+            pendingAccountSwitch = nil
             // Pre-login on a cold launch is NOT a sign-out: the saved session is
             // still restoring (`auth.isLoading`), and clearing the sync markers
             // here would disable the server-timestamp reconcile rule for the whole
@@ -129,6 +153,18 @@ struct ContentView: View {
                 sessionEnded = true
             }
         }
+    }
+
+    /// Bind the device to `uid` and run the sign-in reconcile.
+    private func startSession(userId uid: String) async {
+        hadUser = true
+        // A different learner on this device starts from a clean record; the
+        // same learner keeps everything that has not been uploaded yet.
+        store.beginSession(userId: uid)
+        store.cloud = cloud
+        // Uploads stay disabled until the reconcile has applied or pushed:
+        // `cloud.setUser` is effectively called by the reconcile on success.
+        await cloud.reconcile(store: store, userId: uid, initial: true)
     }
 
     // MARK: - Lifecycle
@@ -347,6 +383,80 @@ struct SessionEndedView: View {
             .tint(Theme.primary)
         }
     }
+}
+
+/// A different account signed in while this device holds another account's
+/// progress that never fully reached it — typically after a session ended on its
+/// own and the learner chose the other sign-in provider. Erasing is never silent
+/// (store-10-2): the safe choice signs out so the learner can sign back in with
+/// the account the progress belongs to; erasing needs a second, explicit tap.
+struct AccountSwitchView: View {
+    @Environment(AuthManager.self) private var auth
+    /// Email (or name) of the account that just signed in, when known.
+    let signedInAs: String?
+    /// Clear the device record and start this account's session.
+    let eraseAndContinue: () async -> Void
+    @State private var showEraseConfirm = false
+    @State private var isErasing = false
+
+    private var message: String {
+        let who = signedInAs.map { "You're signed in as \($0), which" } ?? "The account you just signed in with"
+        return "\(who) isn't the account the progress on this device belongs to, and some of that progress hasn't been backed up yet. To keep it, sign out and sign back in the way you did before — with Apple or with Google."
+    }
+
+    var body: some View {
+        StatusScreen(
+            icon: "person.2.badge.gearshape",
+            tint: Theme.warning,
+            title: "This device has another account's progress",
+            message: message
+        ) {
+            Button {
+                Task { try? await auth.signOut(force: true) }
+            } label: {
+                Text("Sign out")
+                    .scaledFont(16, weight: .semibold)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 52)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.primary)
+            .disabled(isBusy)
+            .accessibilityHint("Keeps the progress on this device so you can sign back in with the account it belongs to")
+
+            Button {
+                showEraseConfirm = true
+            } label: {
+                HStack(spacing: 8) {
+                    if isErasing { ProgressView().tint(Theme.textSecondary) }
+                    Text("Erase it and use this account")
+                }
+                .scaledFont(15, weight: .medium)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: Theme.minimumHitTarget)
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.textSecondary)
+            .disabled(isBusy)
+            .accessibilityHint("Erases the progress on this device that hasn't been backed up. Asks you to confirm first.")
+        }
+        .confirmationDialog("Erase the progress on this device?", isPresented: $showEraseConfirm,
+                            titleVisibility: .visible) {
+            Button("Erase and continue", role: .destructive) {
+                guard !isBusy else { return }
+                isErasing = true
+                Task {
+                    await eraseAndContinue()
+                    isErasing = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Progress that hasn't reached the other account will be lost for good. Whatever that account already backed up stays in it.")
+        }
+    }
+
+    private var isBusy: Bool { isErasing || auth.isSigningOut }
 }
 
 /// Non-blocking notice for a low-stakes blob that could not be read (plan

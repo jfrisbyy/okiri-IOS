@@ -48,8 +48,21 @@ enum SupabaseManager {
             }
             return nil
         }
-        return SupabaseClient(supabaseURL: url, supabaseKey: key)
+        return SupabaseClient(supabaseURL: url, supabaseKey: key, options: clientOptions)
     }()
+
+    /// Options the client is built with. `emitLocalSessionAsInitialSession` makes
+    /// the launch emit the session stored in the Keychain as it is, expired or not,
+    /// and refresh it afterwards. The library's legacy default refreshes FIRST and,
+    /// when that refresh cannot reach the network, emits NO session: an offline
+    /// cold launch more than about an hour after the last refresh then showed the
+    /// sign-in screen, and a learner whose whole record is on the device could not
+    /// study until a network came back (store-10-1). A real revocation still
+    /// arrives as `.signedOut` once the background refresh reaches the server.
+    /// The option exists from supabase-swift 2.37.0 (absent from 2.36.0).
+    static var clientOptions: SupabaseClientOptions {
+        SupabaseClientOptions(auth: .init(emitLocalSessionAsInitialSession: true))
+    }
 
     /// Custom URL scheme used as the OAuth redirect target for the Google web
     /// flow. ASWebAuthenticationSession intercepts this scheme directly, so it

@@ -353,6 +353,8 @@ private struct ConverseCallView: View {
                             .frame(minWidth: 44, minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    // Playback would end a reply being recorded (talkmedia-10-8).
+                    .disabled(recorder.isRecording)
                     .accessibilityLabel("Hear this line")
                     if !turn.english.isEmpty {
                         Button {
@@ -974,7 +976,12 @@ private struct ConverseCallView: View {
                 .accessibilityLabel("Hear the corrected line")
             }
             HStack(spacing: 8) {
-                if let name = store.concept(correction.conceptId)?.name {
+                // A concept is named only when the app has material behind it: a
+                // B1–C1 label on a slip with no lesson, card or probe to open is a
+                // diagnosis the learner cannot act on (store-6-3, talkmedia-10-7).
+                // The evidence itself is recorded either way.
+                if let id = correction.conceptId, store.hasTeachableMaterial(id),
+                   let name = store.concept(id)?.name {
                     Pill(text: name, color: accent)
                 }
                 Spacer(minLength: 0)

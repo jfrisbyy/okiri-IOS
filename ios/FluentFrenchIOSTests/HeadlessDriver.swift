@@ -237,6 +237,8 @@ struct SimulatedRun {
         let readingUnlocked: Bool
         /// The ghosts by id, with the learner's true mastery, for diagnosis.
         let ghostConceptIds: [String]
+        /// The level the app reported at the end of the day (`AppStore.learnerLevel`).
+        let learnerBand: CEFRLevel
         let violations: [String]
     }
 
@@ -263,6 +265,8 @@ struct SimulatedRun {
     private(set) var reports: [DayReport] = []
     /// First day reading read as unlocked, if it ever did.
     private(set) var unlockDay: Int? = nil
+    /// Reading has read as unlocked at some point before the current lesson.
+    private(set) var readingEverOpened = false
     /// First day any base concept held VERIFIED mastery (a seed that passed its
     /// verification check-ins, or mastery earned through practice) — the earliest
     /// day the coverage gate could possibly move (B8).
@@ -277,6 +281,14 @@ struct SimulatedRun {
         }
         return toggles
     }
+    /// How many times the reported level changed from one day's end to the next —
+    /// a learner of steady ability should see it move rarely, and only upward or
+    /// after a real slide (engine-10-2).
+    var bandChanges: Int {
+        zip(reports, reports.dropFirst()).filter { $0.learnerBand != $1.learnerBand }.count
+    }
+    /// The reported level, day by day, for the log.
+    var bandTrace: String { reports.map { $0.learnerBand.rawValue }.joined(separator: " ") }
     /// Days on which the governor was active at the end of the day.
     private(set) var governorDays: Int = 0
     private(set) var placement: PlacementOutcome? = nil
@@ -284,7 +296,11 @@ struct SimulatedRun {
     private(set) var checkInsByConcept: [String: (asked: Int, missed: Int)] = [:]
     /// Every lesson target chosen while reading was still LOCKED, with the day, the
     /// concept's band and the band the learner read as at the time (engine-9-2).
-    private(set) var lockedTargets: [(day: Int, conceptId: String, band: CEFRLevel, learnerBand: CEFRLevel)] = []
+    /// `beforeFirstOpen` is true while reading has never yet opened: a later re-lock
+    /// (coverage falling back below the bridge) keeps the bridge material the unlock
+    /// seeded, so only the first locked phase is Foundation proper.
+    private(set) var lockedTargets: [(day: Int, conceptId: String, band: CEFRLevel, learnerBand: CEFRLevel,
+                                      beforeFirstOpen: Bool)] = []
 
     /// Locked-phase targets above the learner's own band, formatted for a failure
     /// message. A learner still working through Foundation must not be taught a
@@ -303,14 +319,21 @@ struct SimulatedRun {
 
     /// Run the adaptive placement against the learner's truth and apply it. A
     /// learner with a declared-beginner truth (nothing above the guess floor) is
-    /// routed as a true beginner; anyone else answers the staircase. The store's
-    /// gaps are then replaced with the synthetic Foundation seed so the run never
-    /// depends on bundled content.
+    /// routed as a true beginner; anyone else answers the staircase.
+    ///
+    /// The store reads content shaped like the shipped file
+    /// (`EngineFixtures.shippedShapeContent`), and the gaps the REAL `applyPlacement`
+    /// seeds are kept: the staggered base slice, the provisional seeds' items and the
+    /// placement misses — with everything above A1 left to the probe and bridge paths,
+    /// exactly as in the app. The run used to overwrite them with six due-now cards for
+    /// every authored concept, A2 and B1 included: no blind-spot probe could ever fire
+    /// (a probe needs a concept with no cards), so the probe-seeding path that inflated
+    /// a beginner's level to B1 inside Foundation had no coverage (engine-10-4).
     /// `seed` fixes the staircase's own randomness (item choice among equals, option
     /// order) so a run replays exactly; the learner's answers are seeded separately.
-    mutating func place(declaredBeginner: Bool, gapsPerConcept: Int = 6, bank: [AssessmentQuestion]? = nil,
-                        seed: UInt64? = nil) {
+    mutating func place(declaredBeginner: Bool, bank: [AssessmentQuestion]? = nil, seed: UInt64? = nil) {
         let store = driver.store
+        store.foundationContent = EngineFixtures.shippedShapeContent()
         var engine = PlacementEngine(bank: bank ?? Self.placementBank(for: store), seed: seed)
         if declaredBeginner {
             engine.declareBeginner()
@@ -322,12 +345,6 @@ struct SimulatedRun {
         }
         let result = engine.result()
         store.applyPlacement(result, isFirstRun: true, now: driver.now)
-        // Only the bands Foundation actually has content for (EngineFixtures.authoredLevels):
-        // a concept with no authored content has no gaps in the app either, so
-        // fabricating cards for the whole A1–C1 map would simulate a curriculum the
-        // product does not ship (D6.5 widens this band by band).
-        store.gaps = EngineFixtures.foundationGaps(for: EngineFixtures.authoredConcepts(store.concepts),
-                                                   perConcept: gapsPerConcept, at: driver.now)
         placement = PlacementOutcome(result: result, seededConceptIds: result.masteredConceptIds,
                                      inferredConceptIds: result.inferredConceptIds)
     }
@@ -358,6 +375,7 @@ struct SimulatedRun {
             let planned = DailyPlanEngine(store: store).makePlan(now: driver.now).lessonItem?.target ?? 0
             let count = (foundationPacing && !unlockedAtStart) ? planned : lessonsPerDay
             for _ in 0..<count {
+                if store.readiness(for: .reading) == .unlocked { readingEverOpened = true }
                 let selector = driver.pipeline.selector
                 let output = driver.select(.smart)
                 // Invariant: nothing prerequisite-blocked may be selected.
@@ -370,7 +388,7 @@ struct SimulatedRun {
                     learner.teach(target)
                     if !unlockedAtStart, let concept = store.concept(target) {
                         lockedTargets.append((day: day, conceptId: target, band: concept.cefrLevel,
-                                              learnerBand: output.learnerLevel))
+                                              learnerBand: output.learnerLevel, beforeFirstOpen: !readingEverOpened))
                     }
                 }
                 var lessonCheckIns: [(String, Bool)] = []
@@ -423,7 +441,7 @@ struct SimulatedRun {
                          checkIns: checkIns, checkInMisses: checkInMisses,
                          governorActive: store.isGovernorActive,
                          readingUnlockedAtStart: unlockedAtStart, readingUnlocked: unlocked,
-                         ghostConceptIds: ghostIds, violations: violations)
+                         ghostConceptIds: ghostIds, learnerBand: store.learnerLevel, violations: violations)
     }
 
     /// A compact, human-readable trace for the test log.
@@ -459,6 +477,7 @@ struct SimulatedRun {
             let reviewConcepts = Set(entries.flatMap { $0.items.filter { $0.role == .review }.compactMap { $0.conceptId } })
             footer += "\nrole mix over \(entries.count) lessons / \(itemCount) items: target \(tally(.target)), check-in \(tally(.checkIn)), review \(tally(.review)), probe \(tally(.probe)) — review spanned \(reviewConcepts.count) concepts"
         }
+        footer += "\nlevel changes: \(bandChanges) — \(bandTrace)"
         if let placement {
             footer += "  placement: level \(placement.result.estimatedLevel.rawValue), seeds \(placement.seededConceptIds.count), inferred \(placement.inferredConceptIds.count), asked \(placement.result.askedCount)"
         }

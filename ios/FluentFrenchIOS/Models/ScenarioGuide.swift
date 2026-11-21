@@ -25,6 +25,13 @@ nonisolated struct ScenarioPhrase: Codable, Hashable, Identifiable {
 
     private enum CodingKeys: String, CodingKey { case id, french, english, context }
 
+    /// The context a phrase the learner added through the translator carries —
+    /// what marks it as theirs rather than the tutor's (talkmedia-10-5).
+    static let translatorContext = "Added from translator"
+
+    /// True for a phrase the learner added themselves.
+    var isLearnerAdded: Bool { context == Self.translatorContext }
+
     init(id: UUID = UUID(), french: String, english: String, context: String) {
         self.id = id
         self.french = french
@@ -167,13 +174,21 @@ nonisolated enum ScenarioLibrary {
     /// Keep the guide on screen (plus any phrases the learner added through the
     /// translator) at the top of the list. A guide kept earlier for the same
     /// situation is REPLACED, so "Saved Scenarios" never shows two rows with the
-    /// same name and the newer guide is the one that opens. Returns the new list
-    /// and the id the surface should treat as "the saved guide on screen".
+    /// same name and the newer guide is the one that opens — but the phrases the
+    /// learner added to the older guide are THEIRS, not the tutor's, so they
+    /// move into the newer one rather than vanish with it (talkmedia-10-5).
+    /// Returns the new list and the id the surface should treat as "the saved
+    /// guide on screen".
     static func save(_ guide: ScenarioGuide, query: String, customPhrases: [ScenarioPhrase] = [],
                      into saved: [SavedScenario], id: String = UUID().uuidString,
                      now: Date = Date()) -> (saved: [SavedScenario], id: String) {
         var merged = guide
         merged.keyPhrases.append(contentsOf: customPhrases)
+        let replaced = saved.filter { sameSituation($0.query, query) }
+        for phrase in replaced.flatMap(\.guide.keyPhrases) where phrase.isLearnerAdded {
+            guard !merged.keyPhrases.contains(where: { PhraseKey.same($0.french, phrase.french) }) else { continue }
+            merged.keyPhrases.append(phrase)
+        }
         var result = saved.filter { !sameSituation($0.query, query) }
         result.insert(SavedScenario(id: id, query: query, guide: merged, savedAt: now), at: 0)
         return (result, id)

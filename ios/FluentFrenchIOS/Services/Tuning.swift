@@ -53,6 +53,39 @@ nonisolated enum Tuning {
     /// were never a lesson target in sixty days).
     static let frontierLevelSpanAbove: Double = 1.0
 
+    // MARK: Engine — level, probes, confusion (round 10)
+    /// Highest CEFR band a blind-spot probe may open while reading is still locked.
+    /// A probe answer seeds the probed skill's whole curriculum, so probing above A1
+    /// inside Foundation taught B1 grammar to a declared beginner and inflated θ to
+    /// B1 on that material (engine-10-1). A2 arrives through the bridge at unlock.
+    static let foundationProbeMaxLevel: CEFRLevel = .A1
+    /// Lowest ability θ that reads as each CEFR band (A1 has no floor). The θ → band
+    /// map lived as literals in `ConceptSelector.level(forTheta:)` (engine-10-2 / engine-10-7).
+    static func levelThetaFloor(for level: CEFRLevel) -> Double {
+        switch level {
+        case .A1: return -.infinity
+        case .A2: return -0.4
+        case .B1: return 0.4
+        case .B2: return 1.2
+        case .C1: return 2.0
+        case .C2: return 2.6
+        }
+    }
+    /// How far θ must clear a band edge before the REPORTED band moves across it, in
+    /// either direction. θ settles near an edge for a steady learner, and a bare
+    /// threshold flipped the level badge between A2 and B1 every few days (engine-10-2).
+    static let levelHysteresis: Double = 0.1
+    /// Correct answers in a row, all given after the last mix-up, that retire a
+    /// confusion link: it stops ranking its concept and stops naming the partner (engine-10-3).
+    static let confusionClearStreak: Int = 3
+    /// Mix-ups with the same partner before the reason may say "you keep confusing";
+    /// a single one reads as having mixed them up before (engine-10-3).
+    static let confusionRepeatPicksFloor: Int = 2
+    /// Share of a skill's content items a learner must already hold before items
+    /// added to that skill later are delivered to them at launch; below it (one
+    /// placement-miss item, say) the skill waits for its own seeding path (engine-10-6).
+    static let foundationTopUpSeededShare: Double = 0.5
+
     // MARK: Lesson shape (Pass 2 — request-level sizes)
     /// Items in a smart (Home "Learn") lesson.
     static let lessonSize: Int = 7
@@ -107,6 +140,31 @@ nonisolated enum Tuning {
     /// `UserDefaults`, which loses ~1e-7 s; a millisecond absorbs that while staying
     /// far below the gap between two real learner actions (store-8-1).
     static let markerInstantTolerance: TimeInterval = 0.001
+    /// Seconds a foreground reconcile is skipped for after the last one finished (store-10-4).
+    static let cloudForegroundReconcileMinInterval: TimeInterval = 60
+    /// Total attempts for one reconcile read of the cloud row before it is reported as failed (store-10-4).
+    static let cloudFetchAttempts: Int = 3
+    /// Seconds before the second cloud read attempt; doubles on each further attempt (store-10-4).
+    static let cloudFetchRetryBaseDelay: TimeInterval = 0.5
+    /// Lowest IRT ability a missed answer can push the learner's estimate down to (store-10-4).
+    static let abilityThetaFloor: Double = -3
+    /// Highest IRT ability a correct answer can raise the learner's estimate to (store-10-4).
+    static let abilityThetaCeiling: Double = 3
+    /// Starting IRT ability a placement result sets for each CEFR band (store-10-4).
+    static func placementTheta(for level: CEFRLevel) -> Double {
+        switch level {
+        case .A1: return -0.8
+        case .A2: return 0.0
+        case .B1: return 0.8
+        case .B2: return 1.5
+        case .C1: return 2.2
+        case .C2: return 2.8
+        }
+    }
+    /// Fewest multiple-choice options, shown to a learner below the first threshold (store-10-4).
+    static let mcOptionCountMin: Int = 3
+    /// Ability thresholds, ascending; each one crossed adds one multiple-choice option (store-10-4).
+    static let mcOptionCountThresholds: [Double] = [-0.5, 0.8, 1.6]
 
     // MARK: XP (Package A16 / C25)
     /// XP awarded per correct answer.
@@ -146,15 +204,35 @@ nonisolated enum Tuning {
     static let irtHardBump: Double = 0.4
     /// IRT difficulty bump (negative) for an `.easy` capture tag.
     static let irtEasyBump: Double = -0.3
+    /// IRT difficulty of a Foundation content item of each band (`diff: okay`), before
+    /// the `irtHardBump` / `irtEasyBump` tag. Teaching items sit below a capture of the
+    /// same band (`irtDifficulty(for:)`), 0.6 θ apart per band. Every non-A1 skill
+    /// used to get the A2 value, so B1 grammar was scored easier than an A2 capture
+    /// while the same concept's probe was scored as B1 (engine-10-7). B1's `okay`
+    /// ceiling (b + `thetaEvidenceCeiling`) stays inside B1; only `hard` B1 items
+    /// can carry ability past it.
+    static func foundationIrtDifficulty(for level: CEFRLevel) -> Double {
+        switch level {
+        case .A1: return -1.1
+        case .A2: return -0.5
+        case .B1: return 0.1
+        case .B2: return 0.7
+        case .C1: return 1.3
+        case .C2: return 1.9
+        }
+    }
 
     // MARK: FSRS memory model (Package B1 / B2)
     /// Difficulty a card starts at after a `.good` first answer (the neutral point; 1…10 scale).
     static let fsrsNeutralDifficulty: Double = 5.0
-    /// Difficulty moved per grade step away from `.good` on the FIRST answer (again +2 steps, hard +1, easy −1).
+    /// Difficulty moved per grade step away from `.good` in `FSRS.makeInitialState` (again +2 steps,
+    /// hard +1, easy −1). Every real gap starts from the `.again` value (`makeUnseenState`, difficulty 7);
+    /// its first answer then steps by `fsrsDifficultyStep` like any review (engine-10-8).
     static let fsrsInitialDifficultyStep: Double = 1.0
     /// Difficulty moved per grade step away from `.good` (again +2 steps, hard +1, easy −1).
     static let fsrsDifficultyStep: Double = 0.1
-    /// Stability (days) a card starts with after its first answer, by grade.
+    /// Stability (days) a card starts with after its first answer, by grade — the
+    /// first answer on an unseen gap (`FSRS.review` with zero reps, engine-10-8).
     static func fsrsInitialStability(for grade: ReviewGrade) -> Double {
         switch grade {
         case .again: return 0.4

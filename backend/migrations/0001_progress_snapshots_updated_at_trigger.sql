@@ -3,8 +3,9 @@
 -- FOR REVIEW ONLY — not applied by any automation. Apply manually after review.
 --
 -- Why: the iOS app reconciles its local progress against the single
--- `ios_progress_snapshots` row per user. Device clocks (the snapshot's
--- `client_updated_at` / `clientUpdatedAt`) are only a fallback tiebreak; the
+-- `ios_progress_snapshots` row per user. Device clocks (the snapshot JSON's
+-- `clientUpdatedAt`; the `client_updated_at` column is informational only and
+-- the app never reads it — store-10-5) are only a fallback tiebreak; the
 -- primary "which side is newer" signal is the server-side `updated_at`, which
 -- must therefore be set by the database on EVERY insert and update — never by
 -- the client, and never left stale after an upsert.

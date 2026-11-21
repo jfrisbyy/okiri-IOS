@@ -68,7 +68,16 @@ final class AppStore {
     var gaps: [GapItem] = []
     var concepts: [Concept] = []
     var errors: [ErrorRecord] = []
-    var abilityTheta: Double = Tuning.defaultAbilityTheta
+    var abilityTheta: Double = Tuning.defaultAbilityTheta {
+        // The REPORTED band moves only once θ clears an edge by
+        // `Tuning.levelHysteresis` (engine-10-2); see `learnerLevel`.
+        didSet { latchedLevel = ConceptSelector.level(forTheta: abilityTheta, previous: latchedLevel) }
+    }
+    /// The band last reported for `abilityTheta`, latched with hysteresis and
+    /// persisted, so a steady learner's level does not flip on θ noise around a
+    /// band edge — from one answer to the next or from one launch to the next
+    /// (engine-10-2). Read it through `learnerLevel`.
+    private(set) var latchedLevel: CEFRLevel = ConceptSelector.level(forTheta: Tuning.defaultAbilityTheta)
     /// ISO "yyyy-MM-dd" days the learner answered at least one item correctly — a
     /// PRACTICE record, not a mastery one (a gap is mastered by `Tuning.gapMasteryStreak`
     /// correct answers in a row, which this never checks). The streak surfaces say so.
@@ -226,6 +235,8 @@ final class AppStore {
     private let conceptsKey = "ff.concepts.v1"
     private let errorsKey = "ff.errors.v1"
     private let thetaKey = "ff.theta.v1"
+    /// The latched level band (engine-10-2).
+    private let latchedLevelKey = "ff.latchedLevel.v1"
     private let masteryKey = "ff.masteryDays.v1"
     private let assessmentKey = "ff.assessmentDone.v1"
     private let levelKey = "ff.assessedLevel.v1"
@@ -489,8 +500,12 @@ final class AppStore {
     /// ranker's mapping directly rather than building a selector: the mapping reads
     /// only θ, so a view that shows the level badge no longer indexes the taxonomy
     /// per read nor re-renders on every concept mutation (store-8-4).
+    ///
+    /// It is the LATCHED band (engine-10-2): θ for a learner of steady ability
+    /// settles near a band edge, and the bare threshold flipped the badge, the
+    /// ranking and every level-gated surface between A2 and B1 every few days.
     var learnerLevel: CEFRLevel {
-        ConceptSelector.level(forTheta: abilityTheta)
+        latchedLevel
     }
 
     /// Resolve a declared intent into the candidate gap ids of a scoped request.
@@ -887,7 +902,12 @@ final class AppStore {
                 }
                 continue
             }
-            if arePrerequisitesMet(concept) && !concept.newlyUnlocked {
+            // ...and only within the learner's band (engine-10-5): a B1 skill whose
+            // prerequisites are A1 basics was announced to a beginner as unlocked on
+            // day two, while the ranker gives it no level fit at all. It stays
+            // unflagged until the learner's band reaches it, and is announced then.
+            if arePrerequisitesMet(concept) && !concept.newlyUnlocked
+                && concept.cefrLevel.order <= learnerLevel.order {
                 concepts[i].newlyUnlocked = true
                 unlocked.append(concept.name)
                 changed = true
@@ -1344,14 +1364,14 @@ final class AppStore {
             let evidenceCeiling = gap.irtDifficulty + Tuning.thetaEvidenceCeiling
             if abilityTheta < evidenceCeiling {
                 let gain = Tuning.thetaGainOnCorrect * (1 - successProbability(theta: abilityTheta, b: gap.irtDifficulty))
-                abilityTheta = min(evidenceCeiling, min(3, abilityTheta + gain))
+                abilityTheta = min(evidenceCeiling, min(Tuning.abilityThetaCeiling, abilityTheta + gain))
             }
             if gap.consecutiveCorrect >= Tuning.gapMasteryStreak && gap.masteredAt == nil {
                 gap.masteredAt = now
             }
         } else {
             gap.consecutiveCorrect = 0
-            abilityTheta = max(-3, abilityTheta - Tuning.thetaLossOnMiss * successProbability(theta: abilityTheta, b: gap.irtDifficulty))
+            abilityTheta = max(Tuning.abilityThetaFloor, abilityTheta - Tuning.thetaLossOnMiss * successProbability(theta: abilityTheta, b: gap.irtDifficulty))
         }
         if g == .again {
             // A lapse un-masters: the badge is earned again with a fresh streak.
@@ -1440,7 +1460,9 @@ final class AppStore {
                                          now: Date) -> CaptureOutcome {
         let corrected = correctedFrench.trimmingCharacters(in: .whitespacesAndNewlines)
         let original = originalFrench.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !corrected.isEmpty, Self.captureKey(corrected) != Self.captureKey(original) else { return .rejected }
+        // Punctuation and apostrophe style are not a correction; an accent is
+        // (talkmedia-10-3) — the same rule as the recap and Speak.
+        guard !corrected.isEmpty, !PhraseKey.same(corrected, original) else { return .rejected }
         // A card holds a word or a short phrase, so a rewritten paragraph is cut
         // down to the part the tutor changed. A shortened card cannot keep the
         // tutor's English — that described the whole line — so it waits for a lookup.
@@ -1718,14 +1740,10 @@ final class AppStore {
         1.0 / (1.0 + exp(-(theta - b)))
     }
 
-    /// Number of multiple-choice options to present, flexed off ability.
+    /// Number of multiple-choice options to present, flexed off ability: the
+    /// minimum, plus one for every threshold the ability has reached (store-10-4).
     var optionCount: Int {
-        switch abilityTheta {
-        case ..<(-0.5): return 3
-        case ..<0.8: return 4
-        case ..<1.6: return 5
-        default: return 6
-        }
+        Tuning.mcOptionCountMin + Tuning.mcOptionCountThresholds.filter { abilityTheta >= $0 }.count
     }
 
     // MARK: - Persistence
@@ -1804,7 +1822,16 @@ final class AppStore {
 
         switch decodeArray(GapItem.self, key: gapsKey, defaults: defaults, decoder: decoder) {
         case .absent: gaps = []
-        case .decoded(let items): gaps = items
+        case .decoded(let items):
+            // Content corrections reach gaps already seeded from the bundled
+            // curriculum (engine-10-6). Only against the real content file: the
+            // inline fallback must never overwrite what the learner was seeded with.
+            if let file = FoundationContentLoader.file {
+                gaps = FoundationContentLoader.refreshSeeded(items, content: FoundationContentLoader.gaps(from: file),
+                                                             now: Date())
+            } else {
+                gaps = items
+            }
         case .corrupt: gaps = []; fail(.corruptGaps)
         }
 
@@ -1826,6 +1853,10 @@ final class AppStore {
         }
 
         abilityTheta = defaults.object(forKey: thetaKey) as? Double ?? Tuning.defaultAbilityTheta
+        // The band reported last session, re-latched against the stored θ, so a
+        // relaunch never re-reads a θ near an edge with no memory (engine-10-2).
+        let storedLevel = defaults.string(forKey: latchedLevelKey).flatMap { CEFRLevel(rawValue: $0) }
+        latchedLevel = ConceptSelector.level(forTheta: abilityTheta, previous: storedLevel)
         masteryDays = Set((defaults.array(forKey: masteryKey) as? [String]) ?? [])
         hasCompletedAssessment = defaults.bool(forKey: assessmentKey)
         if let raw = defaults.string(forKey: levelKey), let level = CEFRLevel(rawValue: raw) {
@@ -2108,6 +2139,10 @@ final class AppStore {
     /// it belongs to a different learner; the same learner signing back in (after an
     /// expired token, say) keeps everything that had not been uploaded yet, and a
     /// first-ever sign-in keeps the pre-login record so it can be migrated up.
+    /// The wipe itself never asks: the coordinator must not call this for a
+    /// different account while the record is not fully backed up until the learner
+    /// has confirmed (`CloudSync.switchingAccountWouldDiscardUnsyncedProgress`,
+    /// store-10-2).
     /// Returns true when another learner's record was cleared.
     @discardableResult
     func beginSession(userId: String) -> Bool {
@@ -2139,16 +2174,10 @@ final class AppStore {
 
     // MARK: - Placement assessment
 
-    /// Map a CEFR level to a starting IRT ability estimate.
+    /// Map a CEFR level to a starting IRT ability estimate. The table lives in
+    /// Tuning with every other learning parameter (store-10-4).
     private func theta(for level: CEFRLevel) -> Double {
-        switch level {
-        case .A1: return -0.8
-        case .A2: return 0.0
-        case .B1: return 0.8
-        case .B2: return 1.5
-        case .C1: return 2.2
-        case .C2: return 2.8
-        }
+        Tuning.placementTheta(for: level)
     }
 
     /// Mark a base concept as known from placement (Pass 3 F5 / B9): the learner
@@ -2437,6 +2466,7 @@ final class AppStore {
         defaults.set(lessonsSinceCapstone, forKey: lessonsSinceCapstoneKey)
         defaults.set(sessionIndex, forKey: sessionKey)
         defaults.set(abilityTheta, forKey: thetaKey)
+        defaults.set(latchedLevel.rawValue, forKey: latchedLevelKey)
         defaults.set(Array(masteryDays), forKey: masteryKey)
         defaults.set(hasCompletedAssessment, forKey: assessmentKey)
         defaults.set(assessedLevel.rawValue, forKey: levelKey)
@@ -3216,6 +3246,9 @@ extension AppStore {
         var surfacedMissedConceptIds: [String] = []
         /// Concepts that received a hit.
         var strongConceptIds: [String] = []
+        /// The hits the result may name ("Solid:"), filtered like the misses: a
+        /// concept with no material is never announced (talkmedia-10-7).
+        var surfacedStrongConceptIds: [String] = []
         /// True when what was saved is the part of the correction that changed,
         /// not the whole corrected line (it was too long for a card).
         var shortened: Bool = false
@@ -3262,15 +3295,30 @@ extension AppStore {
         }
         lastSpeakFeedbackKey = key
         lastSpeakFeedbackAt = now
-        let plan = SpeakGapPlan.plan(original: original, feedback: feedback)
+        // The plan links a card to a concept only when the feedback named exactly
+        // one, so it reads the concepts the taxonomy knows (talkmedia-10-2).
+        var known = feedback
+        known.mistakeConceptIds = feedback.mistakeConceptIds.filter { concept($0) != nil }
+        let plan = SpeakGapPlan.plan(original: original, feedback: known)
         let specs = plan.specs
         outcome.shortened = plan.shortened
         outcome.tooLongToSave = plan.tooLongToSave
+        // One slip is one miss on its concept (talkmedia-10-2). Each corrected
+        // card still records its lapse, but only the first booking on a concept
+        // carries concept evidence; the direct evidence below skips a concept a
+        // card already booked. Converse books the same slip once, too.
+        var bookedConcepts = Set<String>()
+        func bookMiss(onGap gapId: String) {
+            let conceptId = gaps.first(where: { $0.id == gapId })?.conceptId
+            let firstForConcept = conceptId.map { bookedConcepts.insert($0).inserted } ?? true
+            recordAnswer(gapId: gapId, correct: false, format: .speaking, firstTry: true,
+                         conceptWeight: firstForConcept ? 1 : 0, now: now)
+        }
         for spec in specs {
             if let existing = existingGap(forWord: spec.french) {
                 outcome.duplicateCount += 1
                 if spec.kind == .corrected {
-                    recordAnswer(gapId: existing.id, correct: false, format: .speaking, firstTry: true, now: now)
+                    bookMiss(onGap: existing.id)
                 }
                 continue
             }
@@ -3294,12 +3342,14 @@ extension AppStore {
             gap.needsTranslation = english.isEmpty
             guard captureGap(gap) else { outcome.duplicateCount += 1; continue }
             if spec.kind == .corrected {
-                recordAnswer(gapId: gap.id, correct: false, format: .speaking, firstTry: true, now: now)
+                bookMiss(onGap: gap.id)
             }
             if let saved = gaps.first(where: { $0.id == gap.id }) { outcome.savedGaps.append(saved) }
         }
-        for id in feedback.mistakeConceptIds where concept(id) != nil {
-            recordSpeakingEvidence(conceptId: id, correct: false, now: now)
+        for id in known.mistakeConceptIds {
+            if !bookedConcepts.contains(id) {
+                recordSpeakingEvidence(conceptId: id, correct: false, now: now)
+            }
             outcome.missedConceptIds.append(id)
             // Recorded either way; only announced when there is something behind it
             // (store-6-3).
@@ -3308,6 +3358,9 @@ extension AppStore {
         for id in feedback.strongConceptIds where concept(id) != nil && !outcome.missedConceptIds.contains(id) {
             recordSpeakingEvidence(conceptId: id, correct: true, now: now)
             outcome.strongConceptIds.append(id)
+            // A strength is announced on the same terms as a miss: only when the
+            // app has material behind it (store-6-3, talkmedia-10-7).
+            if hasTeachableMaterial(id, now: now) { outcome.surfacedStrongConceptIds.append(id) }
         }
         if !specs.isEmpty || outcome.recordedEvidence { save() }
         return outcome

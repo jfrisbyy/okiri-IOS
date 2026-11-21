@@ -1675,3 +1675,174 @@ struct StoreSessionSafetyTests {
         #expect(store.gaps.first { $0.id == "a" }?.confusionLinks.count == 1, "one link per partner")
     }
 }
+
+// MARK: - Cloud sync coordination (audit round 10)
+
+/// Records every upload `CloudSync` makes through its test seam, holding each one
+/// open long enough for a second caller to queue behind it.
+@MainActor
+final class UploadRecorder {
+    private(set) var count = 0
+    /// 1-based upload numbers that fail.
+    var failing: Set<Int> = []
+    /// Runs inside the given upload, before it returns (an answer saved mid-upload).
+    var during: [Int: () -> Void] = [:]
+
+    struct Refused: Error {}
+
+    func install(on cloud: CloudSync) {
+        cloud.uploadOverride = { [self] _ in
+            count += 1
+            let n = count
+            during[n]?()
+            try await Task.sleep(for: .milliseconds(100))
+            if failing.contains(n) { throw Refused() }
+            return nil
+        }
+    }
+}
+
+@MainActor
+struct CloudSyncCoordinationTests {
+    /// A signed-in device holding one unsynced change for `user-1`.
+    private func signedInWithAPendingChange() -> (ScratchDefaults, AppStore, CloudSync, UploadRecorder) {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        store.gaps = [EngineFixtures.gap("answered", concept: nil)]
+        store.save()
+        let cloud = CloudSync(defaults: scratch.defaults)
+        let recorder = UploadRecorder()
+        recorder.install(on: cloud)
+        cloud.setUser("user-1")
+        cloud.progressDidChange(store)
+        return (scratch, store, cloud, recorder)
+    }
+
+    // MARK: store-10-3 — overlapping flushes upload the record once
+
+    @Test func backgroundingUploadsAnUnchangedRecordOnce() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        // Going home sends `.inactive` then `.background`; both flush.
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        #expect(await inactive.value)
+        #expect(await background.value, "the queued flush is satisfied by the upload it waited for")
+        #expect(recorder.count == 1, "the same record is not uploaded twice")
+    }
+
+    @Test func aFailedRedundantUploadCannotReportABackupFailure() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        recorder.failing = [2, 3]
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        _ = await inactive.value
+        _ = await background.value
+        if case .synced = cloud.syncState {} else {
+            Issue.record("the row holds everything, so the card must not say the backup failed: \(cloud.syncState)")
+        }
+        #expect(await cloud.pushForSignOut(store: store),
+                "an offline sign-out of a backed-up device is not blocked (store-3-2)")
+        #expect(recorder.count == 1)
+    }
+
+    @Test func aQueuedFlushStillUploadsAnAnswerSavedMidUpload() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        recorder.during[1] = { store.localUpdatedAt = store.localUpdatedAt?.addingTimeInterval(60) }
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        _ = await inactive.value
+        #expect(await background.value)
+        #expect(recorder.count == 2, "the answer saved during the first upload is still owed (store-5-2)")
+    }
+
+    @Test func aQueuedFlushRetriesWhenTheUploadItWaitedForFailed() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        recorder.failing = [1]
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        #expect(await inactive.value == false)
+        #expect(await background.value, "nothing reached the row, so the queued caller uploads")
+        #expect(recorder.count == 2)
+    }
+
+    // MARK: store-10-2 — another account never silently erases unsynced progress
+
+    @Test func anotherAccountIsHeldWhileThePreviousRecordIsNotBackedUp() {
+        let (_, store, cloud, _) = signedInWithAPendingChange()
+        // The session ends on its own: uploads stop, the record and markers stay.
+        cloud.setUser(nil, keepMarkers: true)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store),
+                "nothing of this record ever reached user-1's account")
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-1", store: store) == false,
+                "the same account keeps the record, so there is nothing to ask")
+    }
+
+    @Test func aFullyBackedUpRecordSwitchesAccountsWithoutAsking() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        #expect(await cloud.flushPending(store: store))
+        #expect(recorder.count == 1)
+        cloud.setUser(nil, keepMarkers: true)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store) == false,
+                "everything is in user-1's account, so clearing the device loses nothing")
+
+        // One more answer after the last upload, then the session ends.
+        store.localUpdatedAt = store.localUpdatedAt?.addingTimeInterval(60)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store),
+                "that answer exists only on this device")
+    }
+
+    @Test func aFirstSignInIsNeverHeld() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.gaps = [EngineFixtures.gap("pre-login", concept: nil)]
+        store.save()
+        let cloud = CloudSync(defaults: scratch.defaults)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-1", store: store) == false,
+                "a first sign-in migrates the record; it is never wiped")
+    }
+
+    @Test func anUnreadableRecordIsNeverTreatedAsBackedUp() {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.beginSession(userId: "user-1")
+        scratch.defaults.set(Data("this is not json".utf8), forKey: "ff.gaps.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        let cloud = CloudSync(defaults: scratch.defaults)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store))
+    }
+
+    // MARK: store-10-1 — an offline launch keeps the stored session
+
+    @Test func theClientEmitsTheStoredSessionAtLaunch() {
+        #expect(SupabaseManager.clientOptions.auth.emitLocalSessionAsInitialSession,
+                "the legacy mode refreshes first and, offline, emits no session at all")
+    }
+
+    // MARK: store-10-4 — ability parameters read from Tuning
+
+    @Test func optionCountWidensAtEachTuningThreshold() {
+        let store = AppStore(persistence: nil)
+        let thresholds = Tuning.mcOptionCountThresholds
+        #expect(thresholds == thresholds.sorted(), "thresholds ascend")
+        store.abilityTheta = thresholds[0] - 0.01
+        #expect(store.optionCount == Tuning.mcOptionCountMin)
+        for (i, t) in thresholds.enumerated() {
+            store.abilityTheta = t
+            #expect(store.optionCount == Tuning.mcOptionCountMin + i + 1)
+        }
+        // The values were moved, not changed: 3 / 4 / 5 / 6 options.
+        store.abilityTheta = -1
+        #expect(store.optionCount == 3)
+        store.abilityTheta = 2
+        #expect(store.optionCount == 6)
+    }
+
+    @Test func placementThetaAscendsWithTheBand() {
+        let levels: [CEFRLevel] = [.A1, .A2, .B1, .B2, .C1, .C2]
+        let thetas = levels.map { Tuning.placementTheta(for: $0) }
+        #expect(thetas == thetas.sorted() && Set(thetas).count == thetas.count)
+        #expect(thetas.allSatisfy { $0 > Tuning.abilityThetaFloor && $0 < Tuning.abilityThetaCeiling })
+    }
+}

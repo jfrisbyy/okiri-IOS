@@ -75,7 +75,18 @@ nonisolated enum FSRS {
         difficulty = min(10, max(1, difficulty))
 
         let newStability: Double
-        if grade == .again {
+        if state.reps == 0 {
+            // The FIRST answer on a card nobody has answered yet (every gap the app
+            // creates starts from `makeUnseenState`). It used to be scored as a second
+            // review of a failed card — stability 0.4 grown by the success term — so a
+            // first-try production answer came back in 16 hours, barely later than a
+            // true/false, and `Tuning.fsrsInitialStability` reached no real gap
+            // (engine-10-8). The first interval is now ordered by grade, as the format
+            // mapping intends. Difficulty still steps from the unseen state rather than
+            // jumping to the grade's initial difficulty: from that lower difficulty the
+            // growth term compounds an easy chain to years within five reviews.
+            newStability = initialStability(grade: grade)
+        } else if grade == .again {
             newStability = lapseStability(difficulty: difficulty, stability: state.stability, retrievability: r)
         } else {
             newStability = successStability(difficulty: difficulty, stability: state.stability, retrievability: r, grade: grade)

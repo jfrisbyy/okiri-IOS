@@ -30,8 +30,11 @@ nonisolated struct PlaybackState: Equatable {
 
     var hasTurns: Bool { turnCount > 0 }
 
+    /// Lines heard out of all of them. A finished dialogue is full: the last
+    /// line has been heard, though `currentIndex` stays on it (talkmedia-10-9).
     var progress: Double {
         guard turnCount > 0 else { return 0 }
+        if didFinish { return 1 }
         return Double(currentIndex) / Double(turnCount)
     }
 

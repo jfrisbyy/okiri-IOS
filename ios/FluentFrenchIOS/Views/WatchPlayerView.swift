@@ -1008,16 +1008,21 @@ private struct FlowWords: View {
     var activeColor: Color = .white
     var alignment: HorizontalAlignment = .leading
     var lookupEnabled: Bool = true
+    /// Called with the tapped word's headword (`TranscriptCapture.headword`).
     let onWordTap: (String) -> Void
 
     private var tokens: [String] {
-        text.split(separator: " ").map(String.init)
+        TranscriptCapture.tokens(of: text)
     }
 
     var body: some View {
         FlowLayout(spacing: 4, lineSpacing: 6) {
-            ForEach(Array(tokens.enumerated()), id: \.offset) { _, token in
-                let bare = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-")).lowercased()
+            ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
+                // The word as the deck keeps it — elision and a sentence-opening
+                // capital off, the reader's rule — so a tap saves "école", never
+                // "l'école", and the highlight finds it either way (talkmedia-10-4).
+                let headword = TranscriptCapture.headword(tokenAt: index, in: text)
+                let bare = headword.lowercased()
                 let saved = lookupEnabled && !bare.isEmpty && savedWords.contains(bare)
                 Text(token)
                     .scaledFont(fontSize, weight: isActive ? .semibold : .regular)
@@ -1025,7 +1030,7 @@ private struct FlowWords: View {
                     .padding(.horizontal, saved ? 5 : 0).padding(.vertical, saved ? 1 : 0)
                     .background(saved ? Theme.primary.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
                     .contentShape(Rectangle())
-                    .onTapGesture { if lookupEnabled { onWordTap(token) } }
+                    .onTapGesture { if lookupEnabled { onWordTap(headword) } }
                     .accessibilityAddTraits(lookupEnabled ? .isButton : [])
                     .accessibilityHint(lookupEnabled ? (saved ? "Saved to your deck" : "Look up this word") : "")
             }

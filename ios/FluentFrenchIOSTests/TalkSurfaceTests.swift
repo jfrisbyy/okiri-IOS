@@ -717,4 +717,143 @@ struct TalkSurfaceTests {
         #expect(ScenarioLibrary.sameSituation("Train Station", "train station"))
         #expect(!ScenarioLibrary.sameSituation("Hotel", "Doctor"))
     }
+
+    // MARK: talkmedia-10-5 — replacing a guide keeps the learner's own phrases
+
+    @Test func replacingAGuideCarriesThePhrasesTheLearnerAddedToIt() {
+        let early = ScenarioPhrase(french: "l'addition", english: "the bill", context: ScenarioPhrase.translatorContext)
+        let first = ScenarioLibrary.save(namedGuide("first"), query: "Restaurant", customPhrases: [early], into: [], id: "one")
+        let later = ScenarioPhrase(french: "sur place", english: "eat in", context: ScenarioPhrase.translatorContext)
+        let kept = ScenarioLibrary.appendPhrase(later, toGuideWith: "one", in: first.saved)
+
+        // Weeks later: a fresh guide for the same situation, with one phrase of this session.
+        let today = ScenarioPhrase(french: "une carafe d'eau", english: "a jug of water", context: ScenarioPhrase.translatorContext)
+        let again = ScenarioPhrase(french: "L'addition", english: "the bill", context: ScenarioPhrase.translatorContext)
+        let second = ScenarioLibrary.save(namedGuide("second"), query: "restaurant", customPhrases: [today, again],
+                                          into: kept, id: "two")
+        #expect(second.saved.count == 1, "still one row per situation (talkmedia-5-3)")
+        let phrases = second.saved[0].guide.keyPhrases.map(\.french)
+        #expect(phrases == ["fr-second", "une carafe d'eau", "L'addition", "sur place"],
+                "the learner's phrases survive; the old tutor phrases do not; nothing is doubled")
+        #expect(!phrases.contains("fr-first"))
+    }
+
+    // MARK: talkmedia-10-2 — one slip is one miss on its concept
+
+    private func betaGain(_ store: AppStore, _ id: String, _ action: () -> Void) -> (beta: Double, observations: Double) {
+        let before = store.concept(id)!
+        action()
+        let after = store.concept(id)!
+        return (after.beta - before.beta, after.observationCount - before.observationCount)
+    }
+
+    private func cardWeight(_ gap: GapItem) -> Double {
+        switch gap.difficulty {
+        case .hard: return Tuning.hardItemEvidenceWeight
+        case .easy: return Tuning.easyItemEvidenceWeight
+        case .okay: return 1.0
+        }
+    }
+
+    @Test func aSpeakSlipWithACorrectedCardIsOneMissOnTheConcept() throws {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1")], gaps: [])
+        let feedback = SpeakFeedback(corrected: "fixed", note: "", natural: "", score: 50, mistakeConceptIds: ["c1"])
+        let gain = betaGain(store, "c1") {
+            _ = store.recordSpeakFeedback(original: "slip", feedback: feedback, promptText: "", now: now)
+        }
+        let card = try #require(store.gaps.first)
+        #expect(card.conceptId == "c1")
+        #expect(card.reviewCount == 1, "the card still records its lapse")
+        #expect(abs(gain.observations - Tuning.formatEvidenceWeight(.speaking) * cardWeight(card)) < 1e-9,
+                "one observation, not the card's miss plus a direct one (\(gain.observations))")
+    }
+
+    @Test func twoCorrectedSentencesOnOneConceptAreStillOneMiss() throws {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1")], gaps: [])
+        let feedback = SpeakFeedback(corrected: "Hier je suis allé au marché. J'ai acheté du pain.",
+                                     note: "n", natural: "", score: 60, mistakeConceptIds: ["c1"])
+        let gain = betaGain(store, "c1") {
+            _ = store.recordSpeakFeedback(original: "Hier je vais au marché. Je achète du pain.",
+                                          feedback: feedback, promptText: "", now: now)
+        }
+        #expect(store.gaps.count == 2)
+        #expect(store.gaps.allSatisfy { $0.reviewCount == 1 }, "each corrected card records its own lapse")
+        let first = try #require(store.gaps.first { $0.frenchWord == "Hier je suis allé au marché." })
+        #expect(abs(gain.observations - Tuning.formatEvidenceWeight(.speaking) * cardWeight(first)) < 1e-9,
+                "one answer's slip on c1 is booked once (\(gain.observations))")
+    }
+
+    @Test func cardsAreNotFiledUnderTheFirstOfSeveralNamedConcepts() {
+        let feedback = SpeakFeedback(corrected: "fixed", note: "", natural: "", score: 50, mistakeConceptIds: ["c1", "c2"])
+        #expect(SpeakGapPlan.specs(original: "slip", feedback: feedback).allSatisfy { $0.conceptId == nil },
+                "nothing says which named concept a phrase shows")
+
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1"), EngineFixtures.concept("c2")], gaps: [])
+        let c1 = store.concept("c1")!.observationCount
+        let c2 = store.concept("c2")!.observationCount
+        let outcome = store.recordSpeakFeedback(original: "slip", feedback: feedback, promptText: "", now: now)
+        #expect(outcome.missedConceptIds == ["c1", "c2"])
+        #expect(store.concept("c1")!.observationCount - c1 == Tuning.formatEvidenceWeight(.speaking), "one miss each")
+        #expect(store.concept("c2")!.observationCount - c2 == Tuning.formatEvidenceWeight(.speaking))
+        #expect(store.gaps.first?.reviewCount == 1, "the card still starts with the lapse")
+    }
+
+    // MARK: talkmedia-10-3 — punctuation is not a correction; an accent is
+
+    @Test func punctuationAndApostropheStyleAreNotACorrection() {
+        #expect(PhraseKey.same("Bonjour je voudrais un café s'il vous plaît",
+                               "Bonjour, je voudrais un café, s'il vous plaît."))
+        #expect(PhraseKey.same("J’habite à Paris", "J'habite à Paris."))
+        #expect(PhraseKey.same("« Oui »  dit-il", "oui dit-il"))
+        #expect(!PhraseKey.same("je vais a la plage", "je vais à la plage"), "an accent is a real correction")
+        #expect(!PhraseKey.same("ou est la gare", "où est la gare"))
+        #expect(!PhraseKey.same("peut-être", "peut être"), "a hyphen belongs to the word")
+        #expect(!PhraseKey.same("j'ai", "je ai"))
+    }
+
+    @Test func aPunctuationOnlyCorrectionSavesNothingAndBooksNoLapse() {
+        let commas = SpeakFeedback(corrected: "Bonjour, je voudrais un café, s'il vous plaît.", note: "", natural: "",
+                                   score: 95)
+        let plan = SpeakGapPlan.plan(original: "Bonjour je voudrais un café s'il vous plaît", feedback: commas)
+        #expect(plan.specs.isEmpty)
+        #expect(!plan.tooLongToSave)
+
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let outcome = store.recordSpeakFeedback(original: "J’habite à Paris",
+                                                feedback: SpeakFeedback(corrected: "J'habite à Paris.", note: "", natural: "", score: 95),
+                                                promptText: "", now: now)
+        #expect(outcome.savedCount == 0 && !outcome.tooLongToSave)
+        #expect(store.gaps.isEmpty, "the learner's own correct line is never a slip card")
+
+        #expect(store.recordConverseCorrection(originalFrench: "J’habite à Paris", correctedFrench: "J'habite à Paris.",
+                                               explanation: "", conceptId: nil, now: now) == nil)
+        #expect(store.gaps.isEmpty, "nor in Converse")
+        let transcript = [learner("Bonjour je voudrais un café s'il vous plaît"),
+                          tutor("t", corrected: "Bonjour, je voudrais un café, s'il vous plaît.")]
+        #expect(ConverseRecap.corrections(in: transcript).isEmpty)
+    }
+
+    @Test func anAccentFixInALongAnswerIsSavedNotCalledTooLong() throws {
+        let original = "Le week-end je vais souvent a la plage avec ma famille quand il fait beau"
+        let corrected = "Le week-end je vais souvent à la plage avec ma famille quand il fait beau."
+        let phrase = try #require(CorrectionCard.changedPhrase(from: original, to: corrected))
+        #expect(phrase.contains("à la"))
+        let plan = SpeakGapPlan.plan(original: original,
+                                     feedback: SpeakFeedback(corrected: corrected, note: "", natural: "", score: 80))
+        #expect(!plan.tooLongToSave, "the correction is an accent, not too long to save")
+        #expect(plan.specs.map(\.french) == [phrase])
+    }
+
+    // MARK: talkmedia-10-7 — a strength is named only when there is material behind it
+
+    @Test func speakNamesOnlyTheStrengthsTheAppCanTeach() {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("taught"), EngineFixtures.concept("untaught")],
+                                         gaps: [])
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["taught"])
+        let feedback = SpeakFeedback(corrected: "", note: "", natural: "", score: 90,
+                                     strongConceptIds: ["taught", "untaught"])
+        let outcome = store.recordSpeakFeedback(original: "line", feedback: feedback, promptText: "", now: now)
+        #expect(outcome.strongConceptIds == ["taught", "untaught"], "the evidence is recorded for both")
+        #expect(outcome.surfacedStrongConceptIds == ["taught"], "only the teachable one is announced")
+    }
 }

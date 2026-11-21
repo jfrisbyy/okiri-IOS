@@ -761,6 +761,100 @@ struct MediaSurfaceTests {
         #expect(TranscriptCoverage.of(resumed.segments, finished: false, stop: nil) == .french,
                 "nothing is left to translate, so the panel shows no footnote")
     }
+
+    // MARK: talkmedia-10-1 — a caption reply counts only in the language asked for
+
+    @Test func captionLanguagesMatchOnThePrimarySubtagOnly() {
+        #expect(CaptionLanguage.matches("fr", requested: "fr"))
+        #expect(CaptionLanguage.matches("fr-CA", requested: "fr"))
+        #expect(CaptionLanguage.matches("FR_fr", requested: "fr-FR"))
+        #expect(!CaptionLanguage.matches("en", requested: "fr"))
+        #expect(!CaptionLanguage.matches("en-US", requested: "fr"))
+        #expect(!CaptionLanguage.matches(nil, requested: "fr"), "an unreported language is unverified")
+        #expect(!CaptionLanguage.matches("", requested: "fr"))
+        #expect(CaptionLanguage.fromBackendSource("supadata:fr") == "fr")
+        #expect(CaptionLanguage.fromBackendSource("supadata:en") == "en")
+        #expect(CaptionLanguage.fromBackendSource("supadata_translate:fr-FR") == "fr-FR")
+        #expect(!CaptionLanguage.matches(CaptionLanguage.fromBackendSource("supadata:empty"), requested: "fr"))
+        #expect(CaptionLanguage.fromBackendSource("none") == nil)
+        #expect(CaptionLanguage.fromBackendSource(nil) == nil)
+    }
+
+    @Test func aProviderFallbackToEnglishIsNoFrenchTranscript() throws {
+        let english = Data(#"{"content":[{"text":"Hello everyone","offset":0,"duration":1500}],"lang":"en","availableLangs":["en"]}"#.utf8)
+        let asFrench = try #require(TranscriptService.providerReply(english, requested: "fr", videoId: "v"))
+        #expect(asFrench.segments.isEmpty, "English captions returned for a French request are not the video's French")
+        #expect(asFrench.availableLangs == ["en"])
+        let asEnglish = try #require(TranscriptService.providerReply(english, requested: "en", videoId: "v"))
+        #expect(asEnglish.segments.map(\.text) == ["Hello everyone"], "the same lines are the English stage's")
+
+        let french = Data(#"{"content":[{"text":"Bonjour à tous","offset":0,"duration":1500}],"lang":"fr","availableLangs":["fr","en"]}"#.utf8)
+        let native = try #require(TranscriptService.providerReply(french, requested: "fr", videoId: "v"))
+        #expect(native.segments.count == 1)
+
+        let unlabelled = Data(#"{"content":[{"text":"Hello","offset":0,"duration":1500}]}"#.utf8)
+        #expect(try #require(TranscriptService.providerReply(unlabelled, requested: "fr", videoId: "v")).segments.isEmpty)
+        #expect(TranscriptService.providerReply(Data("not json".utf8), requested: "fr", videoId: "v") == nil)
+    }
+
+    @Test func aBackendFallbackToEnglishIsNoFrenchTranscript() throws {
+        // The backend retries an empty French request with the first available
+        // language and says so only in `source`.
+        let fallback = Data(#"{"segments":[{"id":"s0","text":"Hello everyone","start":0,"duration":1.5}],"source":"supadata:en"}"#.utf8)
+        #expect(try TranscriptService.backendReply(fallback, requiredLanguage: "fr").isEmpty)
+        #expect(try TranscriptService.backendReply(fallback, requiredLanguage: "en").map(\.text) == ["Hello everyone"])
+
+        let french = Data(#"{"segments":[{"id":"s0","text":"Bonjour à tous","start":0,"duration":1.5}],"source":"supadata:fr"}"#.utf8)
+        #expect(try TranscriptService.backendReply(french, requiredLanguage: "fr").count == 1)
+
+        let translated = Data(#"{"segments":[{"id":"s0","text":"Bonjour à tous","start":0,"duration":1.5}],"source":"supadata_translate:fr"}"#.utf8)
+        #expect(try TranscriptService.backendReply(translated, requiredLanguage: nil).count == 1,
+                "the translate endpoint has no language fallback to check")
+        let unlabelled = Data(#"{"segments":[{"id":"s0","text":"Hello","start":0,"duration":1.5}]}"#.utf8)
+        #expect(try TranscriptService.backendReply(unlabelled, requiredLanguage: "fr").isEmpty)
+    }
+
+    // MARK: talkmedia-10-4 — a Watch tap saves the reader's headword
+
+    @Test func aWatchTapSavesTheHeadwordNotTheElidedOrCapitalisedForm() {
+        let line = "Alors je vois l'homme. Qu'il parte avant Paris"
+        #expect(TranscriptCapture.tokens(of: line).count == 8)
+        #expect(TranscriptCapture.headword(tokenAt: 0, in: line) == "alors", "a line-opening capital comes off")
+        #expect(TranscriptCapture.headword(tokenAt: 3, in: line) == "homme", "the elision comes off")
+        #expect(TranscriptCapture.headword(tokenAt: 4, in: line) == "il", "after a full stop the word opens a sentence")
+        #expect(TranscriptCapture.headword(tokenAt: 7, in: line) == "Paris", "a capital inside a sentence is a name")
+        #expect(TranscriptCapture.headword(tokenAt: 0, in: "J’ai faim") == "ai")
+        #expect(TranscriptCapture.headword(tokenAt: 9, in: line) == "", "out of range is nothing")
+        // The reader's rule, so the same word from a video and an article is one card.
+        #expect(TranscriptCapture.headword(tokenAt: 3, in: line) == KeyVocabulary.headword(for: "l'homme."))
+    }
+
+    @Test func aWordTappedInAVideoAndInAnArticleIsOneCard() {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let fromArticle = CaptureDraft(untranslated: KeyVocabulary.headword(for: "école"), sourceType: .reading, sourceTab: "read")
+        _ = store.capture(fromArticle, now: now)
+        let tapped = TranscriptCapture.headword(tokenAt: 3, in: "on va à l'école demain")
+        #expect(tapped == "école")
+        #expect(store.hasGap(forWord: tapped), "\"l'école\" in a video is the card the article already saved")
+        let draft = TranscriptCapture.draft(word: tapped, context: "on va à l'école demain", origin: .nativeFrench)
+        if case .saved = store.capture(draft, now: now) { Issue.record("the same word became a second card") }
+        #expect(store.gaps.count == 1)
+    }
+
+    // MARK: talkmedia-10-9 — a finished dialogue's bar is full
+
+    @Test func aFinishedDialogueShowsAFullProgressBar() {
+        var s = PlaybackState()
+        s.load(turnCount: 4)
+        _ = s.play()
+        for _ in 0..<3 { _ = s.turnFinished() }
+        #expect(s.progress == 0.75, "on the last line, three of four lines are behind the learner")
+        #expect(s.turnFinished() == .finished)
+        #expect(s.didFinish)
+        #expect(s.progress == 1, "\"Finished\" never sits over a bar that is not full")
+        _ = s.replay()
+        #expect(s.progress == 0.75, "replaying the last line reopens it")
+    }
 }
 
 /// A clock the translator advances by hand, so the budget check is deterministic.

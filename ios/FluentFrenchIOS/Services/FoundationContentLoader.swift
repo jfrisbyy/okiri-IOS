@@ -312,20 +312,113 @@ nonisolated enum FoundationContentLoader {
         gap.blankForm = item.verifiedBlank
         gap.acceptedAnswers = item.alts
         gap.isTestable = item.isTestable
+        gap.contentFingerprint = contentFingerprint(of: gap)
         gap.fsrs = FSRS.makeUnseenState(now: now)
         return gap
     }
 
-    /// Map a skill's level + an item's difficulty tag onto an IRT difficulty.
-    /// Foundation items sit at the easy end of the scale (negative b).
-    private static func irtDifficulty(level: CEFRLevel, difficulty: GapDifficulty) -> Double {
-        let base: Double = level == .A1 ? -1.1 : -0.5   // A1 vs early-A2 bridge
+    // MARK: Content corrections (engine-10-6)
+
+    /// A stable fingerprint of a gap's content-owned fields: the meaning, note,
+    /// example pair, blank, accepted answers and the testable flag — a stable hash, so
+    /// it is the same in every process (Swift's `Hasher` is seeded per run).
+    static func contentFingerprint(of gap: GapItem) -> String {
+        let fields: [String] = [
+            gap.englishTranslation, gap.explanation, gap.exampleSentence, gap.exampleTranslation,
+            gap.blankForm ?? "\u{0}", (gap.acceptedAnswers ?? []).joined(separator: "\u{1F}"),
+            gap.isTestable ? "1" : "0",
+        ]
+        return FoundationSeeder.stableHash(fields.joined(separator: "\u{1E}"))
+    }
+
+    /// The learner's gaps with the CURRENT curriculum applied to everything seeded
+    /// from it (engine-10-6). A seeded gap used to be a frozen copy: no path re-read
+    /// content for a gap already on the record, so a corrected blank, a fixed
+    /// "also accepted" answer or a rewritten note never reached a learner who had
+    /// been seeded, and an item added to a skill they already had never arrived.
+    ///
+    /// - A seeded gap is matched to its content item by concept and headword — the
+    ///   key the content keeps unique — never by the array-index id, which an
+    ///   inserted item shifts. Its content-owned fields are replaced; its schedule,
+    ///   evidence, difficulty tag and id are untouched.
+    /// - A gap whose fields no longer match the fingerprint it was seeded with has
+    ///   been extended by the learner (a second reading folded into the card): its
+    ///   meaning, note and accepted answers are theirs and are kept; only the fields
+    ///   no learner path writes (example, blank, testable) follow the content.
+    /// - A gap seeded before fingerprints existed is taken to be unedited.
+    /// - A skill the learner was seeded with (at least
+    ///   `Tuning.foundationTopUpSeededShare` of its content present) gains the
+    ///   items added to it since, due at `now`. A skill they only met through one
+    ///   placement miss is left for its own seeding path.
+    static func refreshSeeded(_ gaps: [GapItem], content: [GapItem], now: Date) -> [GapItem] {
+        func key(_ conceptId: String, _ word: String) -> String { conceptId + "\u{1F}" + FoundationSeeder.headwordKey(word) }
+        var byKey: [String: GapItem] = [:]
+        for item in content {
+            guard let cid = item.conceptId else { continue }
+            let k = key(cid, item.frenchWord)
+            if byKey[k] == nil { byKey[k] = item }
+        }
+        var result = gaps
+        var present = Set<String>()
+        for i in result.indices {
+            let gap = result[i]
+            guard gap.sourceType == .foundation, !gap.isProbe, let cid = gap.conceptId else { continue }
+            let k = key(cid, gap.frenchWord)
+            present.insert(k)
+            guard let item = byKey[k] else { continue }
+            let target = contentFingerprint(of: item)
+            if gap.contentFingerprint == target { continue }
+            let edited = gap.contentFingerprint.map { contentFingerprint(of: gap) != $0 } ?? false
+            var updated = gap
+            if !edited {
+                updated.englishTranslation = item.englishTranslation
+                updated.explanation = item.explanation
+                updated.acceptedAnswers = item.acceptedAnswers
+            }
+            updated.exampleSentence = item.exampleSentence
+            updated.exampleTranslation = item.exampleTranslation
+            updated.blankForm = item.blankForm
+            updated.isTestable = item.isTestable
+            updated.contentFingerprint = target
+            result[i] = updated
+        }
+
+        // Items added to a skill the learner already has. A headword already on the
+        // record from ANY source (a word they captured while reading, say) is skipped,
+        // exactly as every seeding path skips it.
+        let contentByConcept = Dictionary(grouping: content.filter { $0.conceptId != nil }, by: { $0.conceptId! })
+        var ids = Set(result.map { $0.id })
+        var headwords = Set(result.map { FoundationSeeder.headwordKey($0.frenchWord) })
+        for (cid, items) in contentByConcept.sorted(by: { $0.key < $1.key }) {
+            let have = items.filter { present.contains(key(cid, $0.frenchWord)) }.count
+            guard have > 0, Double(have) >= Double(items.count) * Tuning.foundationTopUpSeededShare else { continue }
+            for item in items where !headwords.contains(FoundationSeeder.headwordKey(item.frenchWord)) {
+                var fresh = item
+                fresh.id = FoundationSeeder.availableId(for: item, taken: ids)
+                fresh.nextReviewAt = now
+                fresh.createdAt = now
+                fresh.fsrs = FSRS.makeUnseenState(now: now)
+                ids.insert(fresh.id)
+                headwords.insert(FoundationSeeder.headwordKey(item.frenchWord))
+                result.append(fresh)
+            }
+        }
+        return result
+    }
+
+    /// Map a skill's level + an item's difficulty tag onto an IRT difficulty. Every
+    /// number lives in Tuning, and each band has its own base: the old literal
+    /// mapping gave every non-A1 skill the "early-A2 bridge" value, so B1 grammar
+    /// was scored easier than an A2 capture and θ could not tell B1 content from A2
+    /// (engine-10-7). Clamped to the range ability itself can take.
+    static func irtDifficulty(level: CEFRLevel, difficulty: GapDifficulty) -> Double {
         let bump: Double
         switch difficulty {
-        case .easy: bump = -0.3
+        case .easy: bump = Tuning.irtEasyBump
         case .okay: bump = 0
-        case .hard: bump = 0.4
+        case .hard: bump = Tuning.irtHardBump
         }
-        return max(-1.6, min(0.2, base + bump))
+        let b = Tuning.foundationIrtDifficulty(for: level) + bump
+        return max(Tuning.abilityThetaFloor, min(Tuning.abilityThetaCeiling, b))
     }
 }

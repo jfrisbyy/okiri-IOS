@@ -121,18 +121,25 @@ Each skill block in `FoundationContent.json` has these parts.
   - `contrast`: at least 1 pair, each with `fr`, `en` and `note`.
   - `commonMistake`: required.
 - **`probes`**: exactly 3.
-  - Each has `fr`, `en`, `ex`, `exEn` and 3 distinct `options`, none equal to the
-    answer.
+  - Each has `id`, `fr`, `en`, `ex`, `exEn` and 3 distinct `options`, none equal to
+    the answer.
   - It also takes an `ask` stem whenever the answer is a claim about `fr` rather than
     its meaning.
 - **`items`**: at least 10.
-  - Each has `fr`, `en`, `note`, `ex`, `exEn`, `diff` (`easy`, `okay` or `hard`),
-    `blank`, `alts` and `testable`.
+  - Each has `id`, `fr`, `en`, `note`, `ex`, `exEn`, `diff` (`easy`, `okay` or
+    `hard`), `blank`, `alts` and `testable`.
   - `blank` must occur in `ex` verbatim, as a whole word, and exactly once.
 
-Two rules apply across skills:
+- **`id`** on items and probes is the stable content id (engine-10-6): `<skillId>.<n>`
+  for an item, `<skillId>.p<n>` for a probe, unique across the file. Assigned once and
+  never recomputed or reused; a new item takes 1 + the highest `n` of its kind its skill
+  has ever used. Learner gaps follow it (`GapItem.contentItemId`), so a corrected `fr`
+  updates the card in place.
+
+Three rules apply across skills:
 
 - No `fr` may be duplicated across skills.
+- No content `id` may be duplicated anywhere in the file.
 - No `en` may be duplicated within one concept, because duplicates collide as
   multiple-choice distractors.
 

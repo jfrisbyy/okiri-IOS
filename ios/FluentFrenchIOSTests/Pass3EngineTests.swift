@@ -538,7 +538,7 @@ struct Pass3EngineTests {
         let output = selector.select(.smart(now: at))
         let verify = output.checkInItems.first { $0.conceptId == "everyday-vocab" }
         #expect(verify != nil)
-        #expect(verify?.reason == "Verifying what placement said you know: Everyday vocabulary.")
+        #expect(verify?.reason == "Checking what your level check found: Everyday vocabulary.")
         // A learning concept is ranked only once the app has something to teach it
         // from (store-6-3). possessive-adjectives is authored in the shipped file,
         // but this fixture carries no content, so supply it here — the assertion is
@@ -1152,6 +1152,150 @@ struct Pass3EngineTests {
         #expect(slice.map { $0.frenchWord } == ["new"])
         #expect(!old.map { $0.id }.contains(slice[0].id))
         #expect(FoundationSeeder.availableId(for: content[0], taken: Set(old.map { $0.id })) == slice[0].id, "stable")
+    }
+
+    // MARK: Stable content ids (engine-10-6 close-out)
+
+    private func idItem(_ id: String, _ fr: String, en: String = "e", note: String = "n") -> FoundationItemContent {
+        FoundationItemContent(id: id, fr: fr, en: en, note: note, ex: "x \(fr) y", exEn: "t", blank: fr)
+    }
+
+    /// engine-10-6: a correction to an item's headword was not delivered — the card
+    /// was matched by concept + headword, so the old card stayed as an orphan and the
+    /// corrected one arrived as a new, evidence-less duplicate. Content ids close it:
+    /// a gap persisted before ids is stamped once by headword, then followed by id.
+    @Test func aHeadwordCorrectionUpdatesTheCardInPlaceAfterALegacyGapIsStamped() throws {
+        let ids = (0..<3).map { "present-irregular.\($0 + 1)" }
+        let v1 = contentFile([idItem(ids[0], "w0"), idItem(ids[1], "w1"), idItem(ids[2], "w2")])
+        var seeded = FoundationContentLoader.gaps(from: v1, now: now)
+        #expect(seeded.map { $0.contentItemId } == ids, "seeding carries each item's content id")
+        // Persisted by a build that had no content ids; the learner has practised w0.
+        for i in seeded.indices { seeded[i].contentItemId = nil }
+        seeded[0].reviewCount = 4
+        seeded[0].consecutiveCorrect = 2
+        seeded[0].lastReviewedAt = now
+        seeded[0].nextReviewAt = now.addingTimeInterval(3 * day)
+        seeded[0].fsrs = FSRS.review(state: seeded[0].fsrs, grade: .good, now: now)
+        let before = seeded[0]
+
+        // The next refresh (same content) stamps each legacy gap once, by headword.
+        let stamped = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v1, now: now),
+                                                            now: now)
+        #expect(stamped.map { $0.contentItemId } == ids && stamped.map { $0.id } == seeded.map { $0.id })
+        #expect(stamped.count == 3)
+
+        // A later release corrects w0's headword (and its meaning and example).
+        let v2 = contentFile([idItem(ids[0], "w0-fixed", en: "e2", note: "n2"), idItem(ids[1], "w1"), idItem(ids[2], "w2")])
+        let later = now.addingTimeInterval(day)
+        let content = FoundationContentLoader.gaps(from: v2, now: later)
+        let refreshed = FoundationContentLoader.refreshSeeded(stamped, content: content, now: later)
+        #expect(refreshed.count == 3, "no orphan and no duplicate: the corrected item is not seeded a second time")
+        #expect(!refreshed.contains { $0.frenchWord == "w0" })
+        #expect(refreshed.filter { $0.frenchWord == "w0-fixed" }.count == 1)
+        let card = try #require(refreshed.first { $0.contentItemId == ids[0] })
+        #expect(card.frenchWord == "w0-fixed" && card.englishTranslation == "e2" && card.explanation == "n2")
+        #expect(card.exampleSentence == "x w0-fixed y" && card.blankForm == "w0-fixed")
+        #expect(card.id == before.id && card.reviewCount == before.reviewCount
+                && card.consecutiveCorrect == before.consecutiveCorrect && card.nextReviewAt == before.nextReviewAt
+                && card.lastReviewedAt == before.lastReviewedAt && card.fsrs == before.fsrs,
+                "the gap id, schedule and evidence survive the correction")
+        // Idempotent: a second launch changes nothing.
+        #expect(FoundationContentLoader.refreshSeeded(refreshed, content: content, now: later) == refreshed)
+    }
+
+    /// engine-10-6: once stamped, a gap follows its id only. A headword that happens
+    /// to match a different item no longer re-points the card, and an item removed
+    /// from the content leaves the card as it was.
+    @Test func aStampedGapIsMatchedByContentIdOnly() throws {
+        let v1 = contentFile([idItem("present-irregular.1", "w0"), idItem("present-irregular.2", "w1")])
+        let seeded = FoundationContentLoader.gaps(from: v1, now: now)
+        // Item 1 is retired; item 3 reuses its old headword with a new meaning.
+        let v2 = contentFile([idItem("present-irregular.2", "w1"), idItem("present-irregular.3", "w0", en: "other")])
+        let refreshed = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v2, now: now),
+                                                              now: now)
+        let old = try #require(refreshed.first { $0.id == seeded[0].id })
+        #expect(old.contentItemId == "present-irregular.1" && old.englishTranslation == "e", "not re-pointed by headword")
+        #expect(refreshed.filter { $0.frenchWord == "w0" }.count == 1, "a headword already on the record is not seeded twice")
+    }
+
+    /// engine-10-6: gaps persisted before `contentItemId` existed — on device and in
+    /// cloud snapshots from older builds — still decode, with no content id.
+    @Test func gapsPersistedWithoutAContentIdStillDecode() throws {
+        let gap = FoundationContentLoader.gaps(from: contentFile([idItem("present-irregular.1", "w0")]), now: now)[0]
+        #expect(gap.contentItemId == "present-irregular.1")
+        let roundTrip = try JSONDecoder().decode(GapItem.self, from: JSONEncoder().encode(gap))
+        #expect(roundTrip.contentItemId == "present-irregular.1", "the id persists")
+
+        func strip(_ object: Any) -> Any {
+            if var dict = object as? [String: Any] {
+                dict.removeValue(forKey: "contentItemId")
+                return dict.mapValues(strip)
+            }
+            if let array = object as? [Any] { return array.map(strip) }
+            return object
+        }
+        let legacyGap = try JSONSerialization.data(withJSONObject: strip(JSONSerialization.jsonObject(with: JSONEncoder().encode(gap))))
+        #expect(try JSONDecoder().decode(GapItem.self, from: legacyGap).contentItemId == nil)
+
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("present-irregular")], gaps: [gap])
+        let blob = try JSONEncoder().encode(store.makeSnapshot())
+        let legacyBlob = try JSONSerialization.data(withJSONObject: strip(JSONSerialization.jsonObject(with: blob)))
+        let snapshot = try JSONDecoder().decode(ProgressSnapshot.self, from: legacyBlob)
+        #expect(snapshot.gaps.map { $0.id } == [gap.id] && snapshot.gaps[0].contentItemId == nil)
+    }
+
+    /// The content loader decodes the item and probe ids, and tolerates their absence
+    /// in hand-written content.
+    @Test func theLoaderDecodesContentIds() throws {
+        let json = """
+        {"version":2,"skills":[{"id":"definite-articles","category":"grammar",
+          "probes":[{"id":"definite-articles.p1","fr":"p","en":"a","options":["b","c","d"]}],
+          "items":[{"id":"definite-articles.1","fr":"w","en":"e","note":"n","ex":"w","exEn":"t"},
+                   {"fr":"v","en":"f","note":"n","ex":"v","exEn":"t"}]}]}
+        """
+        let file = try FoundationContentLoader.decode(Data(json.utf8))
+        #expect(FoundationContentLoader.probes(for: "definite-articles", in: file).map { $0.id } == ["definite-articles.p1"])
+        #expect(FoundationContentLoader.items(for: "definite-articles", in: file).map { $0.id } == ["definite-articles.1", nil])
+        #expect(FoundationContentLoader.gaps(from: file, now: now).map { $0.contentItemId } == ["definite-articles.1", nil])
+    }
+
+    /// Every shipped item and probe carries a stable id: present, in the
+    /// "<skillId>.<n>" / "<skillId>.p<n>" format, and unique across the whole file.
+    @Test func shippedContentIdsArePresentWellFormedAndUnique() throws {
+        let here = URL(fileURLWithPath: #filePath)
+        let candidates = [
+            here.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("FluentFrenchIOS/Resources/FoundationContent.json"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/FoundationContent.json"),
+        ]
+        let data = try #require(candidates.lazy.compactMap { try? Data(contentsOf: $0) }.first,
+                                "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        var seen = Set<String>()
+        var count = 0
+        func wellFormed(_ id: String, skill: String, probe: Bool) -> Bool {
+            let prefix = skill + (probe ? ".p" : ".")
+            guard id.hasPrefix(prefix) else { return false }
+            let n = id.dropFirst(prefix.count)
+            return !n.isEmpty && !n.hasPrefix("0") && n.allSatisfy { $0.isASCII && $0.isNumber }
+        }
+        for skill in file.skills {
+            for probe in skill.probes {
+                let id = try #require(probe.id, "\(skill.id): a probe has no id")
+                #expect(wellFormed(id, skill: skill.id, probe: true), "\(id)")
+                seen.insert(id)
+                count += 1
+            }
+            for item in skill.items {
+                let id = try #require(item.id, "\(skill.id): an item has no id")
+                #expect(wellFormed(id, skill: skill.id, probe: false), "\(id)")
+                seen.insert(id)
+                count += 1
+            }
+        }
+        #expect(count > 0 && seen.count == count, "content ids are unique across the file")
+        let gaps = FoundationContentLoader.gaps(from: file, now: now)
+        #expect(gaps.allSatisfy { $0.contentItemId != nil } && Set(gaps.compactMap { $0.contentItemId }).count == gaps.count)
     }
 
     /// engine-10-7: every non-A1 skill was scored at the A2 bridge value, so B1 grammar

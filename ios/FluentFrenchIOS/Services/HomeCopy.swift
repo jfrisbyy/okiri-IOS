@@ -354,3 +354,25 @@ nonisolated enum HomeCopy {
         "Adds this \(kind) to \(myWordsTitle)"
     }
 }
+
+// MARK: - App version (UX-26)
+
+/// The version line at the foot of Profile, read from the app bundle so a beta
+/// tester can quote exactly which build they are on. Holds no personal data.
+nonisolated enum AppVersion {
+    /// "Version 1.2 (34)" from the bundle's marketing version and build number;
+    /// "Version 1.2" without a build; nil when the bundle names no version.
+    static func line(info: [String: Any]?) -> String? {
+        func value(_ key: String) -> String? {
+            guard let raw = info?[key] as? String else { return nil }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let version = value("CFBundleShortVersionString") else { return nil }
+        guard let build = value("CFBundleVersion") else { return "Version \(version)" }
+        return "Version \(version) (\(build))"
+    }
+
+    /// This app's own version line.
+    static var current: String? { line(info: Bundle.main.infoDictionary) }
+}

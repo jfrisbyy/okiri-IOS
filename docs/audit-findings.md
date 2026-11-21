@@ -18,7 +18,7 @@ never as a refutation.
 | 9 | 18 | 0 | `4bd041a` |
 | 10 | 52 | 5 | `e37f0a2`, `5f37b9b`, `de8d29e` |
 
-**Total confirmed: 260; fixed: 259 (engine-10-6 partial, see round 10).**
+**Total confirmed: 260; fixed: 260.**
 
 > **Rounds 1–4:** the per-finding entries were in the ledger file that was lost with the session
 > scratch directory (November 2026). Each round's commit message describes its findings in full;
@@ -197,10 +197,7 @@ The recheck caught one fix-introduced problem: store-10-1 raised the supabase-sw
 2.36.0, but `AuthOptions(emitLocalSessionAsInitialSession:)` first appears in 2.37.0. The floor
 is 2.37.0 in the committed tree (`de8d29e`'s message says 2.36.0; the tree is correct).
 
-**engine-10-6 is partial.** Content corrections now reach seeded gaps (matched by concept +
-headword, never array index), but a correction to an item's headword (`fr`) is still not
-delivered: the old card stays as an orphan. Closing it needs a stable `id` on every content
-item (schema v2), which touches `FoundationContent.json` and the validator.
+**engine-10-6, closed after round 10.** Every content item and probe now carries a stable `id` (`<skillId>.<n>`, probes `<skillId>.p<n>`), seeded gaps carry it as `contentItemId`, and `refreshSeeded` matches by that id, so a headword correction updates the card in place with its evidence kept. Gaps saved before the change are matched once by concept + headword and stamped. The validator enforces presence, format and uniqueness.
 
 - [medium/learning] lesson-10-1 LessonScheduler.swift:648 — A correct meaning is offered as a wrong option, and true statements are marked False, when one item's gloss is the untagged form of another's ('on' means 'we' graded False).
 - [medium/learning] lesson-10-2 LessonScheduler.swift:443 — The reversed multiple choice ('Which one means X?') picks its French options with no check on what they mean, so two options are often both correct (donc and alors for 'so / therefore').
@@ -248,7 +245,7 @@ item (schema v2), which touches `FoundationContent.json` and the validator.
 - [medium/honesty] engine-10-3 ConceptSelector.swift:777 — A single mix-up makes every later lesson tell the learner 'You keep confusing this with X', forever, however many times they have answered it right since
 - [low/functionality] engine-10-4 HeadlessDriver.swift:329 — The headless calibration simulations do not model the shipped curriculum: they never fire a single blind-spot probe and they discard the real seeding, so engine-10-1 is invisible to every 60-day assertion (reported medium)
 - [low/honesty] engine-10-5 AppStore.swift:882 — On day 2 a declared beginner is told 'New skills unlocked: Subjunctive after il faut que, Savoir vs connaître, Common idioms', B1 skills the app's own ranker gives zero level fit
-- [low/data] engine-10-6 FoundationContentLoader.swift:287 — A content correction never reaches a learner whose gaps are already seeded: seeded gaps are frozen copies keyed by array index, with no refresh path — PARTIAL
+- [low/data] engine-10-6 FoundationContentLoader.swift:287 — A content correction never reaches a learner whose gaps are already seeded: seeded gaps are frozen copies keyed by array index, with no refresh path — fixed after the round (stable content ids)
 - [low/data] engine-10-7 FoundationContentLoader.swift:322 — The loader scores all eight B1 skills as 'early-A2 bridge' material using magic numbers outside Tuning, while the same concept's probe is scored as B1
 - [low/learning] engine-10-8 FSRS.swift:71 — No shipped gap ever gets the grade-ordered first interval the FSRS tests certify: a first-try production answer returns in 16 hours, barely later than a true/false
 - [low/compile] compile-10-1 VoiceRecorder.swift:138 — VoiceRecorder's interruption observer reads its weakly captured `self` inside a Task from a @Sendable block, which produces a concurrency warning in the Xcode build

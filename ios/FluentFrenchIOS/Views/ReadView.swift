@@ -457,7 +457,9 @@ struct ReadView: View {
                 Spacer(minLength: 0)
                 if failure.isRetryable {
                     Button { Haptics.tap(); Task { await model.load(level: level) } } label: {
-                        Text("Retry").font(.footnote.weight(.semibold)).foregroundStyle(Theme.primary)
+                        // Text-safe on the warning tint (UX-08): bright orange measured
+                        // 2.7:1 on warningLight; warningText is 4.8:1, as Converse's retry.
+                        Text("Retry").font(.footnote.weight(.semibold)).foregroundStyle(Theme.warningText)
                             .frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
                     }
                     .buttonStyle(.plain)

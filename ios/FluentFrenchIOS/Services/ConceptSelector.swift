@@ -648,7 +648,7 @@ struct ConceptSelector {
 
     private func checkInReason(for concept: Concept) -> String {
         if concept.isProvisional {
-            return "Verifying what placement said you know: \(concept.name)."
+            return LessonCopy.placementCheckReason(conceptName: concept.name)
         }
         return LessonCopy.quickCheckReason(conceptName: concept.name)
     }

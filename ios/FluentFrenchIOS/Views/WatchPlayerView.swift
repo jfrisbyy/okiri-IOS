@@ -339,6 +339,9 @@ struct WatchPlayerView: View {
             Spacer(minLength: 0)
             if coverage.isRetryable {
                 Button { retryTranslation() } label: {
+                    // Bright orange on purpose (UX-08 re-check): this row sits on the
+                    // player's near-black, where Theme.primary measures 6.2:1 and the
+                    // light-surface token Theme.primaryText only 3.4:1.
                     Text(TranscriptCopy.retryTranslation).font(.caption.weight(.semibold)).foregroundStyle(Theme.primary)
                         .padding(.horizontal, 8).frame(minWidth: 44, minHeight: 44)
                 }

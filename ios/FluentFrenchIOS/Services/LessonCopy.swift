@@ -47,8 +47,10 @@ nonisolated enum LessonCopy {
     /// in this lesson. Not "Mastered!": that word is kept for real mastery.
     static let solidFlashTitle = "Got it!"
 
-    /// The completion row counting the items that went solid this lesson.
-    static let solidSummaryLabel = "Nailed this lesson"
+    /// The completion row counting the items that went solid this lesson. Worded
+    /// with the practice bar's own "solid", not a boast: "Nailed" read as praise
+    /// under a low-accuracy "Keep going" title (UX re-review 3).
+    static let solidSummaryLabel = "Solid this lesson"
 
     /// The practice bar's counter: "3/7 solid", or "3 solid" when the schedule has
     /// nothing left that could still go solid.
@@ -72,6 +74,16 @@ nonisolated enum LessonCopy {
         // lesson does not keep.
         return "\(items) · answer an item right \(Tuning.masteryTarget)× to make it solid."
     }
+
+    /// The intro's hearts note, in two short sentences (UX-20). True to
+    /// `LessonSession`: a miss costs a heart, a missed retry (the remedial) does
+    /// not, and at zero the lesson ends on the recap of what slipped.
+    static func heartsNote(hearts: Int) -> String {
+        "\(hearts) hearts: a miss costs one, a retry is free. At zero, you'll see what slipped."
+    }
+
+    /// The capstone's note in the hearts note's place: it runs without hearts.
+    static let capstoneHeartsNote = "No hearts and no retries: a capstone is a check, not a drill."
 
     // MARK: Status pill (UX-13)
 
@@ -97,9 +109,30 @@ nonisolated enum LessonCopy {
     /// check-ins, the learner only ever reads "quick check".
     static let quickCheckHeadline = "Today: quick checks — making sure what you've learned still holds."
 
+    /// How a check-in's reason opens. The practice header drops a reason that
+    /// opens this way: its "Quick check" pill already says it (UX re-review 3).
+    static let quickCheckReasonLead = "Quick check: does "
+
     /// The reason a quick-check item carries onto the intro and the teaching card.
     static func quickCheckReason(conceptName: String) -> String {
-        "Quick check: does \(conceptName) still hold?"
+        "\(quickCheckReasonLead)\(conceptName) still hold?"
+    }
+
+    /// The reason a check-in on a placement-seeded (provisional) skill carries:
+    /// learner words for "placement said you know this, and we are confirming it".
+    /// Was "Verifying what placement said you know: X." (UX re-review 3).
+    static func placementCheckReason(conceptName: String) -> String {
+        "Checking what your level check found: \(conceptName)."
+    }
+
+    /// The reason line under a question's header, or nil when the status pill
+    /// already says it: a "Quick check" pill over "Quick check: does X still
+    /// hold?" said the same thing twice. A reason that adds something (a
+    /// placement check, a skill not met yet) stays.
+    static func questionReasonLine(_ reason: String?, pill: LessonPill?) -> String? {
+        guard let reason else { return nil }
+        if pill == .quickCheck && reason.hasPrefix(quickCheckReasonLead) { return nil }
+        return reason
     }
 
     // MARK: The answer run (combo)
@@ -172,8 +205,17 @@ nonisolated enum LessonCopy {
 /// - Otherwise "Next lesson" leads while the day has lessons to go.
 /// - An action that already came back empty is not offered again (a tap that does
 ///   nothing must not stay on screen); "Next lesson" leaves a line saying why.
+/// - "Done" never looks like a second "Next lesson": under the out-of-hearts lead
+///   it is a plain text action, so the recap's two ways forward and its way out
+///   read as three different things (UX re-review 3).
+/// - When the out-of-hearts lead "Practice these now" comes back empty, its notice
+///   shows by the bottom buttons where the learner tapped, instead of in the card.
 nonisolated struct LessonCompletionActions: Hashable {
     enum Lead: Hashable { case practiceMissed, nextLesson, done }
+
+    /// How "Done" is drawn: the filled lead, the tinted secondary button, or a
+    /// plain text action below the others.
+    enum DoneStyle: Hashable { case primary, secondary, plain }
 
     /// The primary button.
     var lead: Lead
@@ -183,6 +225,11 @@ nonisolated struct LessonCompletionActions: Hashable {
     var practiceInMissedCard: Bool
     /// The line shown where "Next lesson" was, once it came back empty.
     var nextLessonNote: String?
+    /// How "Done" is drawn.
+    var doneStyle: DoneStyle
+    /// "Practice these now" led the recap and came back empty: its notice goes
+    /// next to the bottom buttons instead of the missed card (never printed twice).
+    var practiceNoticeByButtons: Bool
 
     /// - Parameters:
     ///   - outOfHearts: the lesson ended at zero hearts.
@@ -202,8 +249,16 @@ nonisolated struct LessonCompletionActions: Hashable {
         } else {
             lead = .done
         }
+        let doneStyle: DoneStyle
+        switch lead {
+        case .done: doneStyle = .primary
+        case .nextLesson: doneStyle = .secondary
+        case .practiceMissed: doneStyle = .plain
+        }
         return LessonCompletionActions(lead: lead, offersNextLesson: offersNext,
                                        practiceInMissedCard: canPractice && lead != .practiceMissed,
-                                       nextLessonNote: nextExhausted ? LessonCopy.nextLessonExhausted : nil)
+                                       nextLessonNote: nextExhausted ? LessonCopy.nextLessonExhausted : nil,
+                                       doneStyle: doneStyle,
+                                       practiceNoticeByButtons: outOfHearts && hasMissed && practiceExhausted)
     }
 }

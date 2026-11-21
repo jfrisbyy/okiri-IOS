@@ -26,7 +26,7 @@ struct LessonCopyTests {
 
     @Test func inSessionProgressNeverSaysMastered() {
         #expect(LessonCopy.solidFlashTitle == "Got it!")
-        #expect(LessonCopy.solidSummaryLabel == "Nailed this lesson")
+        #expect(LessonCopy.solidSummaryLabel == "Solid this lesson")
         #expect(LessonCopy.solidProgress(solid: 3, of: 7) == "3/7 solid")
         #expect(LessonCopy.solidProgress(solid: 2, of: 0) == "2 solid")
         #expect(LessonCopy.solidProgressSpoken(solid: 3, of: 7) == "3 of 7 solid")
@@ -42,6 +42,20 @@ struct LessonCopyTests {
         }
         #expect(LessonCopy.introSubtitle(itemCount: 1, isCapstone: false)
                 == "1 item · answer an item right \(Tuning.masteryTarget)× to make it solid.")
+    }
+
+    // MARK: UX-20 — a short hearts note that stays true to the session
+
+    @Test func heartsNoteIsShortAndTrueToTheSession() {
+        let note = LessonCopy.heartsNote(hearts: Tuning.lessonHearts)
+        #expect(note == "\(Tuning.lessonHearts) hearts: a miss costs one, a retry is free. At zero, you'll see what slipped.")
+        #expect(note.split(separator: ".").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count <= 2,
+                "one or two sentences")
+        // The claims it makes are the engine's.
+        #expect(Tuning.lessonHearts > 0)
+        #expect(!Tuning.remedialMissCostsHeart, "a retry is free")
+        #expect(!Tuning.capstoneHasHearts, "the capstone note says it runs without hearts")
+        #expect(LessonCopy.capstoneHeartsNote.hasPrefix("No hearts"))
     }
 
     // MARK: UX-13 — at most one learner-facing pill
@@ -167,6 +181,32 @@ struct LessonCopyTests {
         #expect(actions(outOfHearts: true, missed: false, next: false).lead == .done)
     }
 
+    /// The out-of-hearts recap's way out is plain text, never a second tinted
+    /// button identical to "Next lesson" (UX re-review 3).
+    @Test func doneIsDrawnSoItNeverLooksLikeNextLesson() {
+        let hearts = actions(outOfHearts: true)
+        #expect(hearts.lead == .practiceMissed && hearts.offersNextLesson)
+        #expect(hearts.doneStyle == .plain, "two filled buttons lead: Done is a plain text action")
+        #expect(actions(outOfHearts: true, next: false).doneStyle == .plain)
+        #expect(actions().doneStyle == .secondary, "under Next lesson, Done is the tinted secondary")
+        #expect(actions(next: false).doneStyle == .primary, "nothing else leads: Done is the lead")
+        #expect(actions(outOfHearts: true, missed: false, next: false).doneStyle == .primary)
+    }
+
+    /// An empty out-of-hearts "Practice these now" says why next to the bottom
+    /// buttons, where the learner tapped; a finished lesson's card button keeps its
+    /// notice in the card (UX re-review 3).
+    @Test func anEmptyPracticeLeadLeavesItsNoticeByTheButtons() {
+        #expect(!actions(outOfHearts: true).practiceNoticeByButtons, "nothing came back empty yet")
+        let emptied = actions(outOfHearts: true, practiceExhausted: true)
+        #expect(emptied.practiceNoticeByButtons)
+        #expect(emptied.lead == .nextLesson, "the emptied lead hands over to Next lesson")
+        #expect(emptied.doneStyle == .secondary)
+        #expect(!actions(practiceExhausted: true).practiceNoticeByButtons,
+                "a finished lesson's practice button lives in the missed card, and so does its notice")
+        #expect(!actions(outOfHearts: true, missed: false, practiceExhausted: true).practiceNoticeByButtons)
+    }
+
     @Test func aFinishedLessonKeepsNextLessonInFront() {
         let a = actions()
         #expect(a.lead == .nextLesson)
@@ -218,9 +258,29 @@ struct LessonCopyTests {
     @Test func checkInsReadAsQuickChecks() {
         #expect(LessonCopy.quickCheckHeadline == "Today: quick checks — making sure what you've learned still holds.")
         #expect(LessonCopy.quickCheckReason(conceptName: "Greetings") == "Quick check: does Greetings still hold?")
-        for line in [LessonCopy.quickCheckHeadline, LessonCopy.quickCheckReason(conceptName: "X")] {
+        for line in [LessonCopy.quickCheckHeadline, LessonCopy.quickCheckReason(conceptName: "X"),
+                     LessonCopy.placementCheckReason(conceptName: "X")] {
             #expect(!line.lowercased().contains("check-in"))
+            #expect(!line.lowercased().contains("verif"), "learner copy, not engine words")
+            #expect(!line.lowercased().contains("placement"), "the learner knows it as the level check")
         }
+        #expect(LessonCopy.placementCheckReason(conceptName: "Greetings")
+                == "Checking what your level check found: Greetings.")
+    }
+
+    /// UX re-review 3: a "Quick check" pill over "Quick check: does X still hold?"
+    /// said it twice, so the header drops the line; a reason that adds something
+    /// stays, and a line with no pill above it is never dropped.
+    @Test func theReasonLineIsDroppedWhenThePillAlreadySaysIt() {
+        let checkIn = LessonCopy.quickCheckReason(conceptName: "Greetings")
+        #expect(LessonCopy.questionReasonLine(checkIn, pill: .quickCheck) == nil)
+        #expect(LessonCopy.questionReasonLine(checkIn, pill: nil) == checkIn, "no pill: the line is the only signal")
+        let placement = LessonCopy.placementCheckReason(conceptName: "Greetings")
+        #expect(LessonCopy.questionReasonLine(placement, pill: .quickCheck) == placement)
+        let probe = "Quick check on a skill you haven't met yet: Greetings."
+        #expect(LessonCopy.questionReasonLine(probe, pill: .quickCheck) == probe, "it adds 'not met yet'")
+        #expect(LessonCopy.questionReasonLine(checkIn, pill: .tryAgain) == checkIn)
+        #expect(LessonCopy.questionReasonLine(nil, pill: .quickCheck) == nil)
     }
 
     // MARK: UX-21 — accent keys

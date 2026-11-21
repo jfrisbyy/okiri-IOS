@@ -92,16 +92,20 @@ struct LessonCompleteStage: View {
 
     /// The buttons `LessonCompletionActions` decided on: after running out of hearts
     /// "Practice these now" leads; otherwise "Next lesson" leads while the day has
-    /// lessons to go (UX-05). "Done" is the way out, primary only when nothing else
-    /// leads. A "Next lesson" that came back empty is replaced by a line saying so.
+    /// lessons to go (UX-05). "Done" is the way out, drawn in the style
+    /// `LessonCompletionActions.doneStyle` picked: plain text under the
+    /// out-of-hearts lead, so it never reads as a second "Next lesson". A "Next
+    /// lesson" that came back empty is replaced by a line saying so, and an empty
+    /// out-of-hearts "Practice these now" leaves its notice here, where it was tapped.
     @ViewBuilder
     private var buttons: some View {
         let actions = model.completionActions
         VStack(spacing: 8) {
-            if let note = actions.nextLessonNote {
-                Text(note).font(.footnote).foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+            if actions.practiceNoticeByButtons, let notice = model.followUpNotice {
+                note(notice)
+            }
+            if let line = actions.nextLessonNote {
+                note(line)
             }
             switch actions.lead {
             case .practiceMissed:
@@ -109,14 +113,23 @@ struct LessonCompleteStage: View {
                 if actions.offersNextLesson {
                     LessonSecondaryButton(title: LessonCopy.nextLessonButton, action: startNextLesson)
                 }
-                LessonSecondaryButton(title: LessonCopy.doneButton, action: onDone)
             case .nextLesson:
                 LessonPrimaryButton(title: LessonCopy.nextLessonButton, action: startNextLesson)
-                LessonSecondaryButton(title: LessonCopy.doneButton, action: onDone)
             case .done:
-                LessonPrimaryButton(title: LessonCopy.doneButton, action: onDone)
+                EmptyView()
+            }
+            switch actions.doneStyle {
+            case .primary: LessonPrimaryButton(title: LessonCopy.doneButton, action: onDone)
+            case .secondary: LessonSecondaryButton(title: LessonCopy.doneButton, action: onDone)
+            case .plain: LessonTertiaryButton(title: LessonCopy.doneButton, action: onDone)
             }
         }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.footnote).foregroundStyle(Theme.textSecondary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func startNextLesson() {
@@ -288,7 +301,9 @@ struct LessonCompleteStage: View {
                 LessonSecondaryButton(title: LessonCopy.practiceMissedButton, systemImage: "arrow.clockwise",
                                       action: practiceMissed)
             }
-            if let notice = model.followUpNotice {
+            // Once the out-of-hearts lead came back empty its notice sits by the
+            // bottom buttons, where it was tapped; it is not printed twice.
+            if !model.completionActions.practiceNoticeByButtons, let notice = model.followUpNotice {
                 Text(notice).font(.footnote).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

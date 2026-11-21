@@ -138,9 +138,7 @@ struct LessonIntroStage: View {
             Image(systemName: model.isCapstone ? "flag.checkered" : "heart.fill")
                 .font(.body).foregroundStyle(model.isCapstone ? Theme.secondary : Theme.error)
                 .accessibilityHidden(true)
-            Text(model.isCapstone
-                 ? "No hearts and no retries: a capstone is a check, not a drill."
-                 : "\(Tuning.lessonHearts) hearts — a miss costs one, and the second look at something you missed is free. At zero the lesson stops and shows what slipped.")
+            Text(model.isCapstone ? LessonCopy.capstoneHeartsNote : LessonCopy.heartsNote(hearts: Tuning.lessonHearts))
                 .font(.footnote).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)

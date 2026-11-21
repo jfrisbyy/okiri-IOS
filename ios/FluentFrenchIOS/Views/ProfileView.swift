@@ -40,6 +40,7 @@ struct ProfileView: View {
                     errorPatternsSection
                     accountSection
                     resetButton
+                    versionFooter
                 }
                 .padding(20)
             }
@@ -337,6 +338,19 @@ struct ProfileView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    /// The app version and build, from the bundle (UX-26), so a beta tester can
+    /// say exactly which build a problem was on.
+    @ViewBuilder
+    private var versionFooter: some View {
+        if let line = AppVersion.current {
+            Text(line)
+                .font(.footnote).foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+                .textSelection(.enabled)
         }
     }
 

@@ -101,7 +101,8 @@ struct LessonPracticeStage: View {
             }
         }
 
-        if let reason = model.reasons[q.gap.id] {
+        // Not when the status pill already says it (UX re-review 3).
+        if let reason = LessonCopy.questionReasonLine(model.reasons[q.gap.id], pill: LessonCopy.statusPill(for: q)) {
             LessonReasonLine(text: reason)
         }
 

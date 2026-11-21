@@ -96,6 +96,10 @@ nonisolated struct FoundationExampleContent: Codable, Hashable {
 /// ("the s links as a z: 'vou-za-vé'", "correct: colour adjectives go after the
 /// noun") is unanswerable under that stem, so those items carry their own.
 nonisolated struct FoundationProbeContent: Codable, Hashable {
+    /// Stable content id, "<skillId>.p<n>" (engine-10-6): assigned once, never
+    /// recomputed, unique across the file. The validator requires it on shipped
+    /// content; the decoder tolerates its absence only for hand-written test items.
+    var id: String? = nil
     let fr: String
     let en: String
     var ask: String? = nil
@@ -104,10 +108,12 @@ nonisolated struct FoundationProbeContent: Codable, Hashable {
     var options: [String] = []
 
     enum CodingKeys: String, CodingKey {
-        case fr, en, ask, ex, exEn, options
+        case id, fr, en, ask, ex, exEn, options
     }
 
-    init(fr: String, en: String, ask: String? = nil, ex: String = "", exEn: String = "", options: [String] = []) {
+    init(id: String? = nil, fr: String, en: String, ask: String? = nil, ex: String = "", exEn: String = "",
+         options: [String] = []) {
+        self.id = id
         self.fr = fr
         self.en = en
         self.ask = ask
@@ -118,6 +124,7 @@ nonisolated struct FoundationProbeContent: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
         fr = try c.decode(String.self, forKey: .fr)
         en = try c.decode(String.self, forKey: .en)
         ask = try c.decodeIfPresent(String.self, forKey: .ask)
@@ -137,6 +144,12 @@ nonisolated struct FoundationProbeContent: Codable, Hashable {
 }
 
 nonisolated struct FoundationItemContent: Codable {
+    /// Stable content id, "<skillId>.<n>" (engine-10-6): assigned once, never
+    /// recomputed, unique across the file. A seeded gap carries it
+    /// (`GapItem.contentItemId`), so a corrected `fr` updates the learner's card in
+    /// place instead of orphaning it. The validator requires it on shipped content;
+    /// the decoder tolerates its absence only for v1 files and hand-written test items.
+    var id: String? = nil
     let fr: String      // french word / phrase
     let en: String      // english translation
     let note: String    // plain-language explanation
@@ -151,11 +164,12 @@ nonisolated struct FoundationItemContent: Codable {
     var testable: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case fr, en, note, ex, exEn, diff, blank, alts, testable
+        case id, fr, en, note, ex, exEn, diff, blank, alts, testable
     }
 
-    init(fr: String, en: String, note: String, ex: String, exEn: String, diff: String? = nil,
+    init(id: String? = nil, fr: String, en: String, note: String, ex: String, exEn: String, diff: String? = nil,
          blank: String? = nil, alts: [String]? = nil, testable: Bool? = nil) {
+        self.id = id
         self.fr = fr
         self.en = en
         self.note = note
@@ -167,9 +181,10 @@ nonisolated struct FoundationItemContent: Codable {
         self.testable = testable
     }
 
-    /// Tolerant of v1 files (no `blank` / `alts` / `testable`) and of missing notes.
+    /// Tolerant of v1 files (no `id` / `blank` / `alts` / `testable`) and of missing notes.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
         fr = try c.decode(String.self, forKey: .fr)
         en = try c.decode(String.self, forKey: .en)
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
@@ -277,7 +292,8 @@ nonisolated enum FoundationContentLoader {
     /// Foundation gaps, shared by the full seed above and by a placement miss that
     /// has to seed a REAL headword instead of the probe's cloze stem
     /// (`AssessmentService.gaps(forMissed:)`). `id` matches the full seed's id for
-    /// the same item, so the two can never both land in the record.
+    /// the same item, so the two can never both land in the record. The gap carries
+    /// the item's stable content id (`contentItemId`) for later content refreshes.
     /// `difficulty` overrides the item's own tag (a missed item is seeded `.hard`).
     static func gap(from item: FoundationItemContent, conceptId: String, index: Int,
                     category: GapCategory, level: CEFRLevel,
@@ -312,6 +328,7 @@ nonisolated enum FoundationContentLoader {
         gap.blankForm = item.verifiedBlank
         gap.acceptedAnswers = item.alts
         gap.isTestable = item.isTestable
+        gap.contentItemId = item.id
         gap.contentFingerprint = contentFingerprint(of: gap)
         gap.fsrs = FSRS.makeUnseenState(now: now)
         return gap
@@ -337,14 +354,19 @@ nonisolated enum FoundationContentLoader {
     /// "also accepted" answer or a rewritten note never reached a learner who had
     /// been seeded, and an item added to a skill they already had never arrived.
     ///
-    /// - A seeded gap is matched to its content item by concept and headword — the
-    ///   key the content keeps unique — never by the array-index id, which an
-    ///   inserted item shifts. Its content-owned fields are replaced; its schedule,
-    ///   evidence, difficulty tag and id are untouched.
+    /// - A seeded gap is matched to its content item by the item's stable content id
+    ///   (`GapItem.contentItemId`), never by the array-index gap id, which an
+    ///   inserted item shifts. Its headword and content-owned fields are replaced, so
+    ///   a corrected `fr` updates the card in place instead of leaving an orphan; its
+    ///   schedule, evidence, difficulty tag and gap id are untouched.
+    /// - A gap persisted before content ids existed is matched ONCE by concept and
+    ///   headword (the key the content keeps unique) and stamped with the item's id;
+    ///   from then on it is matched by id alone. (A headword corrected before that
+    ///   first stamp cannot be recognised: that one card stays as it was.)
     /// - A gap whose fields no longer match the fingerprint it was seeded with has
     ///   been extended by the learner (a second reading folded into the card): its
     ///   meaning, note and accepted answers are theirs and are kept; only the fields
-    ///   no learner path writes (example, blank, testable) follow the content.
+    ///   no learner path writes (headword, example, blank, testable) follow the content.
     /// - A gap seeded before fingerprints existed is taken to be unedited.
     /// - A skill the learner was seeded with (at least
     ///   `Tuning.foundationTopUpSeededShare` of its content present) gains the
@@ -352,9 +374,16 @@ nonisolated enum FoundationContentLoader {
     ///   placement miss is left for its own seeding path.
     static func refreshSeeded(_ gaps: [GapItem], content: [GapItem], now: Date) -> [GapItem] {
         func key(_ conceptId: String, _ word: String) -> String { conceptId + "\u{1F}" + FoundationSeeder.headwordKey(word) }
+        /// A content item's identity: its stable id, or concept + headword for content
+        /// that carries none (hand-written test content).
+        func identity(_ item: GapItem, _ conceptId: String) -> String {
+            item.contentItemId ?? key(conceptId, item.frenchWord)
+        }
+        var byId: [String: GapItem] = [:]
         var byKey: [String: GapItem] = [:]
         for item in content {
             guard let cid = item.conceptId else { continue }
+            if let itemId = item.contentItemId, byId[itemId] == nil { byId[itemId] = item }
             let k = key(cid, item.frenchWord)
             if byKey[k] == nil { byKey[k] = item }
         }
@@ -363,11 +392,21 @@ nonisolated enum FoundationContentLoader {
         for i in result.indices {
             let gap = result[i]
             guard gap.sourceType == .foundation, !gap.isProbe, let cid = gap.conceptId else { continue }
-            let k = key(cid, gap.frenchWord)
-            present.insert(k)
-            guard let item = byKey[k] else { continue }
+            // Stamped: by id only. Unstamped (persisted before ids): once, by headword.
+            let match: GapItem?
+            if let itemId = gap.contentItemId {
+                match = byId[itemId]
+            } else {
+                match = byKey[key(cid, gap.frenchWord)]
+            }
+            guard let item = match else {
+                present.insert(gap.contentItemId ?? key(cid, gap.frenchWord))
+                continue
+            }
+            present.insert(identity(item, cid))
             let target = contentFingerprint(of: item)
-            if gap.contentFingerprint == target { continue }
+            let stamp = item.contentItemId ?? gap.contentItemId
+            if gap.contentFingerprint == target, gap.frenchWord == item.frenchWord, gap.contentItemId == stamp { continue }
             let edited = gap.contentFingerprint.map { contentFingerprint(of: gap) != $0 } ?? false
             var updated = gap
             if !edited {
@@ -375,30 +414,35 @@ nonisolated enum FoundationContentLoader {
                 updated.explanation = item.explanation
                 updated.acceptedAnswers = item.acceptedAnswers
             }
+            updated.frenchWord = item.frenchWord
             updated.exampleSentence = item.exampleSentence
             updated.exampleTranslation = item.exampleTranslation
             updated.blankForm = item.blankForm
             updated.isTestable = item.isTestable
             updated.contentFingerprint = target
+            updated.contentItemId = stamp
             result[i] = updated
         }
 
-        // Items added to a skill the learner already has. A headword already on the
-        // record from ANY source (a word they captured while reading, say) is skipped,
-        // exactly as every seeding path skips it.
+        // Items added to a skill the learner already has. An item already on the
+        // record (by content id), or a headword already there from ANY source (a word
+        // they captured while reading, say), is skipped, exactly as every seeding
+        // path skips it.
         let contentByConcept = Dictionary(grouping: content.filter { $0.conceptId != nil }, by: { $0.conceptId! })
         var ids = Set(result.map { $0.id })
         var headwords = Set(result.map { FoundationSeeder.headwordKey($0.frenchWord) })
         for (cid, items) in contentByConcept.sorted(by: { $0.key < $1.key }) {
-            let have = items.filter { present.contains(key(cid, $0.frenchWord)) }.count
+            let have = items.filter { present.contains(identity($0, cid)) }.count
             guard have > 0, Double(have) >= Double(items.count) * Tuning.foundationTopUpSeededShare else { continue }
-            for item in items where !headwords.contains(FoundationSeeder.headwordKey(item.frenchWord)) {
+            for item in items where !present.contains(identity(item, cid))
+                && !headwords.contains(FoundationSeeder.headwordKey(item.frenchWord)) {
                 var fresh = item
                 fresh.id = FoundationSeeder.availableId(for: item, taken: ids)
                 fresh.nextReviewAt = now
                 fresh.createdAt = now
                 fresh.fsrs = FSRS.makeUnseenState(now: now)
                 ids.insert(fresh.id)
+                present.insert(identity(item, cid))
                 headwords.insert(FoundationSeeder.headwordKey(item.frenchWord))
                 result.append(fresh)
             }

@@ -15,6 +15,22 @@ def taxonomy():
         out[m.group(1)] = (m.group(2), m.group(3))
     return out
 def norm(s): return unicodedata.normalize('NFC', s).strip().lower()
+# Stable content ids (engine-10-6): item "<skillId>.<n>", probe "<skillId>.p<n>", n >= 1.
+# Assigned once and never recomputed: learner gaps are matched to content by this id,
+# so a corrected `fr` updates the card in place. A new item takes 1 + the highest n of
+# its kind its skill has ever used (a retired id is never reused); a new skill starts
+# at 1. Unique across the whole file.
+ID_RE = re.compile(r'^([a-z0-9]+(?:-[a-z0-9]+)*)\.(p?)([1-9][0-9]*)$')
+def check_id(errs, ids_seen, sid, where, obj, probe):
+    cid = obj.get('id')
+    if not isinstance(cid, str) or not cid:
+        errs.append(f'{sid}: {where}.id missing'); return
+    m = ID_RE.match(cid)
+    if not m or m.group(1) != sid or (m.group(2) == 'p') != probe:
+        want = f'{sid}.p<n>' if probe else f'{sid}.<n>'
+        errs.append(f'{sid}: {where}.id "{cid}" must look like "{want}"')
+    if cid in ids_seen: errs.append(f'{sid}: {where}.id "{cid}" duplicates {ids_seen[cid]}')
+    else: ids_seen[cid] = f'{sid}: {where}'
 def main():
     path = sys.argv[1]; full = '--full' in sys.argv
     tax = taxonomy(); errs = []
@@ -24,7 +40,7 @@ def main():
         print(f'PARSE ERROR: {e}'); sys.exit(1)
     if d.get('version') != 2: errs.append('version must be 2')
     skills = d.get('skills', [])
-    seen_ids = set(); fr_seen = {}
+    seen_ids = set(); fr_seen = {}; content_ids = {}
     for s in skills:
         sid = s.get('id', '?')
         if sid in seen_ids: errs.append(f'{sid}: duplicate skill block')
@@ -49,6 +65,7 @@ def main():
         probes = s.get('probes', [])
         if len(probes) != 3: errs.append(f'{sid}: needs exactly 3 probes (has {len(probes)})')
         for i, p in enumerate(probes):
+            check_id(errs, content_ids, sid, f'probes[{i}]', p, True)
             for k in ('fr', 'en', 'ex', 'exEn'):
                 if not p.get(k): errs.append(f'{sid}: probes[{i}].{k} empty')
             opts = p.get('options', [])
@@ -62,6 +79,7 @@ def main():
             if e in en_seen: errs.append(f'{sid}: items[{i}] en "{it.get("en")}" duplicates items[{en_seen[e]}] (MC distractor clash)')
             else: en_seen[e] = i
         for i, it in enumerate(items):
+            check_id(errs, content_ids, sid, f'items[{i}]', it, False)
             for k in ('fr', 'en', 'note', 'ex', 'exEn', 'blank'):
                 if not it.get(k): errs.append(f'{sid}: items[{i}].{k} empty')
             if it.get('diff') not in (None, 'hard', 'okay', 'easy'): errs.append(f'{sid}: items[{i}].diff invalid')

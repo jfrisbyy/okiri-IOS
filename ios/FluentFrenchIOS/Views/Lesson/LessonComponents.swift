@@ -64,6 +64,26 @@ struct LessonSecondaryButton: View {
     }
 }
 
+/// A plain text action for the way out when two filled buttons already lead
+/// ("Done" under "Practice these now" and "Next lesson"), so the exit never
+/// looks like a third way forward.
+struct LessonTertiaryButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct LessonCloseButton: View {
     let action: () -> Void
     /// The circular chrome grows with the type ratio so the glyph stays inside

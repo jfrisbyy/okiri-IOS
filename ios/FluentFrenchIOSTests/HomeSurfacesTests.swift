@@ -339,4 +339,17 @@ struct HomeSurfacesTests {
         #expect(line.contains("before Listening opens"))
         #expect(!line.contains("to open"))
     }
+
+    /// UX-26: Profile's foot names the version and build from the bundle, and
+    /// never prints a placeholder when the bundle has none.
+    @Test func theVersionLineComesFromTheBundle() {
+        #expect(AppVersion.line(info: ["CFBundleShortVersionString": "1.2", "CFBundleVersion": "34"])
+                == "Version 1.2 (34)")
+        #expect(AppVersion.line(info: ["CFBundleShortVersionString": "1.2"]) == "Version 1.2")
+        #expect(AppVersion.line(info: ["CFBundleShortVersionString": " 1.2 ", "CFBundleVersion": "  "])
+                == "Version 1.2", "blank build is left out")
+        #expect(AppVersion.line(info: ["CFBundleVersion": "34"]) == nil, "no version: no line")
+        #expect(AppVersion.line(info: ["CFBundleShortVersionString": ""]) == nil)
+        #expect(AppVersion.line(info: nil) == nil)
+    }
 }

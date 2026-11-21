@@ -193,6 +193,13 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// telling the learner's own edits apart from stale content (engine-10-6):
     /// `FoundationContentLoader.refreshSeeded`.
     var contentFingerprint: String? = nil
+    /// The stable id of the Foundation content item this gap was seeded from
+    /// ("<skillId>.<n>", `FoundationItemContent.id`). A content refresh matches the
+    /// gap to its item by this id, so a corrected headword updates the card in place
+    /// (engine-10-6). Nil for anything not seeded from content, and for gaps persisted
+    /// before it existed: the next refresh matches those once by concept + headword
+    /// and stamps it. Never a replacement for `id`, which persisted references use.
+    var contentItemId: String? = nil
 
     /// Explicit keys so the tolerant decoder below and the synthesized encoder agree.
     enum CodingKeys: String, CodingKey {
@@ -202,7 +209,7 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
         case currentInterval, irtDifficulty, fsrs, originalContext, confusionLinks
         case partOfSpeech, gender, article, baseForm, register, relatedWords, conceptId
         case isProbe, blankForm, acceptedAnswers, isTestable, tagConfidence, needsTranslation
-        case probeOptions, probePrompt, contentFingerprint
+        case probeOptions, probePrompt, contentFingerprint, contentItemId
     }
 
     /// The mastery badge (`Tuning.gapMasteryStreak` consecutive correct). A badge,
@@ -313,6 +320,7 @@ nonisolated extension GapItem {
         probeOptions = try c.decodeIfPresent([String].self, forKey: .probeOptions)
         probePrompt = try c.decodeIfPresent(String.self, forKey: .probePrompt)
         contentFingerprint = try c.decodeIfPresent(String.self, forKey: .contentFingerprint)
+        contentItemId = try c.decodeIfPresent(String.self, forKey: .contentItemId)
     }
 }
 

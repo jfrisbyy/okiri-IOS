@@ -493,6 +493,8 @@ final class AppStore {
         // carries its own question stem; the scheduler asks it instead of "What does
         // “<fr>” mean?".
         probe.probePrompt = content.ask
+        // Stable content id (engine-10-6), so the probe card is traceable to its source.
+        probe.contentItemId = content.id
         // Like every gap the store creates, a probe starts with a schedule (B4).
         probe.fsrs = FSRS.makeUnseenState(now: now)
         gaps.insert(probe, at: 0)

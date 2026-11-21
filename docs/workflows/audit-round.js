@@ -34,7 +34,7 @@ cite the finding id in a comment for any defect-driven rule), the evidence-integ
 the owner's decisions and content schema v2.
 
 Tools:
-- Linux harness: ios/tools/linuxbuild/run.sh -- 550 tests in 22 suites today. A clean run is
+- Linux harness: ios/tools/linuxbuild/run.sh -- 687 tests in 27 suites today (about 2 minutes; the 60-day simulations dominate). A clean run is
   0 errors AND 0 warnings. Safe to run concurrently. It CANNOT compile SwiftUI views or
   components, Theme/, the AVFoundation services (VoiceRecorder, DialoguePlayer, ElevenLabsTTS,
   FrenchSpeech) or AuthManager; ios/tools/linuxbuild/engine-files.txt lists what it compiles.
@@ -44,7 +44,7 @@ Tools:
 - Content validator: python3 ios/tools/validate_foundation_content.py ios/FluentFrenchIOS/Resources/FoundationContent.json --full
 
 Known state, which is NOT a finding: the taxonomy has 181 concepts (A1-C1) and authored content
-covers 49 of them; the D6 concept-map surfaces, the band-gating reach rule, the D6.8 link from
+covers 82 of them (all of A1 and A2, 8 of B1); the D6 concept-map surfaces, the band-gating reach rule, the D6.8 link from
 captured words to concepts and every package in docs/roadmap.md are unbuilt by design. Do not
 report an unbuilt roadmap feature or the mere absence of content. DO report anything that
 breaks, crashes, corrupts evidence or tells the learner something false because of that state.

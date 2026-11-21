@@ -286,9 +286,9 @@ struct TensesView: View {
         }
         .buttonStyle(.plain)
         .disabled(alreadySaved)
-        .accessibilityLabel(alreadySaved ? "\(pronoun) \(form) is already in your deck"
-                                         : "Save \(pronoun) \(form) to my deck")
-        .accessibilityHint(alreadySaved ? "" : "Adds this form to your practice deck")
+        .accessibilityLabel(alreadySaved ? HomeCopy.itemAlreadyInMyWords("\(pronoun) \(form)")
+                                         : HomeCopy.saveItemToMyWords("\(pronoun) \(form)"))
+        .accessibilityHint(alreadySaved ? "" : HomeCopy.addsToMyWords("form"))
     }
 
     /// How much of this table is already in the deck, and how to add the rest.
@@ -303,11 +303,11 @@ struct TensesView: View {
         let savedCount = unique.filter { isSaved($0, in: tense, saved: saved) }.count
         let text: String
         if savedCount == 0 {
-            text = "Tap + on a form to save it to your deck"
+            text = "Tap + on a form to save it to \(HomeCopy.myWordsTitle)"
         } else if savedCount >= unique.count {
-            text = "Every form of \(verb.infinitive) in the \(tense.name.lowercased()) is in your deck"
+            text = "Every form of \(verb.infinitive) in the \(tense.name.lowercased()) is in \(HomeCopy.myWordsTitle)"
         } else {
-            text = "\(savedCount) of \(unique.count) forms in your deck"
+            text = "\(savedCount) of \(unique.count) forms in \(HomeCopy.myWordsTitle)"
         }
         return Text(text)
             .font(.footnote)

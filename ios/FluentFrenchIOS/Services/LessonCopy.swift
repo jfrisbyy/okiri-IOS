@@ -13,6 +13,9 @@
 //    learner, not the engine: "Try again" or "Quick check" (UX-13).
 //  - The completion screen continues the day with numbers read off the same data
 //    Home's daily target and streak use (UX-05; see `AppStore.nextLessonOffer`).
+//  - The flame belongs to the DAY streak alone. The in-lesson run of right answers
+//    (the combo) is a "run … in a row" with its own symbol, so the completion
+//    screen never shows two flames that mean two different things.
 //
 
 import Foundation
@@ -88,10 +91,46 @@ nonisolated enum LessonCopy {
                    isCheckIn: question.isCheckIn, isCapstone: question.isCapstone)
     }
 
+    // MARK: Quick checks (UX-13)
+
+    /// The selector's check-in items, in the pill's words: the engine calls them
+    /// check-ins, the learner only ever reads "quick check".
+    static let quickCheckHeadline = "Today: quick checks — making sure what you've learned still holds."
+
+    /// The reason a quick-check item carries onto the intro and the teaching card.
+    static func quickCheckReason(conceptName: String) -> String {
+        "Quick check: does \(conceptName) still hold?"
+    }
+
+    // MARK: The answer run (combo)
+
+    /// The run's symbol, shared by the practice chip, the intro's best card and the
+    /// completion row. Never the flame: that is the day streak's.
+    static let runSymbol = "bolt.fill"
+
+    /// The practice bar's chip label next to the live run: "4 in a row".
+    static let runChipLabel = "in a row"
+
+    /// The completion row's label and value: "Best run" · "4 in a row".
+    static let bestRunLabel = "Best run"
+
+    static func bestRunValue(_ n: Int) -> String { "\(n) in a row" }
+
+    /// The intro's personal-best line: "85% first-try accuracy · best run 6 in a row".
+    static func personalBestLine(accuracyPercent: Int, bestRun: Int) -> String {
+        "\(accuracyPercent)% first-try accuracy · best run \(bestRun) in a row"
+    }
+
     // MARK: Completion: continue the day (UX-05)
 
     static let nextLessonButton = "Next lesson"
     static let doneButton = "Done"
+    static let practiceMissedButton = "Practice these now"
+
+    /// Shown in place of "Next lesson" once it came back `.empty`: the Smart selector
+    /// found nothing practicable right now (everything is resting until its next
+    /// review is due), so a second tap would do nothing — the button goes away.
+    static let nextLessonExhausted = "That's everything for now — come back later for more."
 
     /// Where the day stands. "Lesson 1 of 3 done" when this lesson counted and the
     /// day still has lessons to go; "Today's 3 lessons done" once the target is met.
@@ -119,5 +158,52 @@ nonisolated enum LessonCopy {
     /// VoiceOver reads both lines as one sentence.
     static func spokenSummary(_ offer: NextLessonOffer) -> String {
         [dayLine(offer), streakLine(offer)].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+
+// MARK: - Completion buttons (UX-05)
+
+/// Which buttons the completion screen shows and which one leads, decided here so
+/// the view only renders them.
+///
+/// - A lesson that ran out of hearts leads with "Practice these now": the recap is
+///   about what slipped, so going over it outranks starting something new.
+/// - Otherwise "Next lesson" leads while the day has lessons to go.
+/// - An action that already came back empty is not offered again (a tap that does
+///   nothing must not stay on screen); "Next lesson" leaves a line saying why.
+nonisolated struct LessonCompletionActions: Hashable {
+    enum Lead: Hashable { case practiceMissed, nextLesson, done }
+
+    /// The primary button.
+    var lead: Lead
+    /// "Next lesson" is on screen, as the lead or as a secondary button.
+    var offersNextLesson: Bool
+    /// "Practice these now" sits inside the missed card (it is not the lead).
+    var practiceInMissedCard: Bool
+    /// The line shown where "Next lesson" was, once it came back empty.
+    var nextLessonNote: String?
+
+    /// - Parameters:
+    ///   - outOfHearts: the lesson ended at zero hearts.
+    ///   - hasMissed: the recap lists missed items.
+    ///   - practiceExhausted: "Practice these now" already came back empty.
+    ///   - nextAvailable: `NextLessonOffer.nextAvailable`.
+    ///   - nextExhausted: "Next lesson" already came back empty.
+    static func resolve(outOfHearts: Bool, hasMissed: Bool, practiceExhausted: Bool,
+                        nextAvailable: Bool, nextExhausted: Bool) -> LessonCompletionActions {
+        let canPractice = hasMissed && !practiceExhausted
+        let offersNext = nextAvailable && !nextExhausted
+        let lead: Lead
+        if outOfHearts && canPractice {
+            lead = .practiceMissed
+        } else if offersNext {
+            lead = .nextLesson
+        } else {
+            lead = .done
+        }
+        return LessonCompletionActions(lead: lead, offersNextLesson: offersNext,
+                                       practiceInMissedCard: canPractice && lead != .practiceMissed,
+                                       nextLessonNote: nextExhausted ? LessonCopy.nextLessonExhausted : nil)
     }
 }

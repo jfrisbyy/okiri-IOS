@@ -47,6 +47,10 @@ struct DeckView: View {
 
     private var dueNowCount: Int { store.dueNowCount() }
     private var upcomingCount: Int { store.upcoming.count }
+    /// The one rule Home's chip, the Learn card and the My words card follow
+    /// (UX-15): before any card is reviewed the queue is the freshly seeded batch,
+    /// and nothing here calls it "due".
+    private var showsDueCount: Bool { store.showsDueCount }
 
     var body: some View {
         NavigationStack {
@@ -95,7 +99,8 @@ struct DeckView: View {
             trailing: { SectionCloseButton(action: onClose) },
             bottom: {
                 HStack(spacing: 20) {
-                    HeaderStat(systemImage: "clock.badge.exclamationmark", value: "\(dueNowCount)", label: HomeCopy.dueNowLabel)
+                    HeaderStat(systemImage: showsDueCount ? "clock.badge.exclamationmark" : "square.stack.3d.up",
+                               value: "\(dueNowCount)", label: HomeCopy.deckQueueLabel(showsDueCount: showsDueCount))
                     Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 28)
                     HeaderStat(systemImage: "calendar", value: "\(upcomingCount)", label: HomeCopy.upcomingLabel)
                     Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 28)
@@ -114,6 +119,8 @@ struct DeckView: View {
     private var srsCard: some View {
         let due = dueNowCount
         let soon = upcomingCount
+        let showsDue = showsDueCount
+        let summary = HomeCopy.deckReviewSummary(due: due, upcoming: soon, showsDueCount: showsDue)
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 Image(systemName: "brain.head.profile")
@@ -123,22 +130,24 @@ struct DeckView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Spaced Repetition").scaledFont(17, weight: .bold).foregroundStyle(Color(hex: "E0E7FF"))
-                    Text("\(due) due now · \(soon) coming up").font(.footnote).foregroundStyle(Color(hex: "E0E7FF").opacity(0.9))
+                    Text(summary).font(.footnote).foregroundStyle(Color(hex: "E0E7FF").opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
                 Spacer()
                 Text("\(due)")
                     .scaledFont(13, weight: .heavy).foregroundStyle(.white)
                     .padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(due > 0 ? Theme.error : Color.white.opacity(0.2)).clipShape(.capsule)
-                    .accessibilityLabel("\(due) due now")
+                    // Red only for a real backlog; the seeded batch is not one.
+                    .background(due > 0 && showsDue ? Theme.error : Color.white.opacity(0.2)).clipShape(.capsule)
+                    .accessibilityHidden(true)   // the summary beside it already says the number
             }
             Button {
                 startScoped(due > 0 ? .dueNow : .reviewQueue)
             } label: {
                 HStack {
                     Spacer()
-                    Text(due > 0 ? "Review due now" : "Review what's coming up").scaledFont(16, weight: .bold).foregroundStyle(Color(hex: "312E81"))
+                    Text(HomeCopy.deckReviewButton(due: due, showsDueCount: showsDue)).scaledFont(16, weight: .bold).foregroundStyle(Color(hex: "312E81"))
                         .multilineTextAlignment(.center)
                     Image(systemName: "chevron.right").scaledFont(14, weight: .bold).foregroundStyle(Color(hex: "312E81"))
                         .accessibilityHidden(true)
@@ -151,8 +160,7 @@ struct DeckView: View {
             }
             .buttonStyle(.plain)
             .pressable()
-            .accessibilityHint(due > 0 ? "Starts a review of the cards due today"
-                                       : "Starts an early review of what is coming up")
+            .accessibilityHint(HomeCopy.deckReviewHint(due: due, showsDueCount: showsDue))
         }
         .padding(Space.xl)
         .background(Theme.indigoGradient)
@@ -178,7 +186,7 @@ struct DeckView: View {
                 .clipShape(.rect(cornerRadius: 8))
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Health: \(h.label)")
-                if due > 0 {
+                if due > 0 && showsDueCount {
                     Text("\(due) due now").font(.caption2.weight(.semibold)).foregroundStyle(Color(hex: "DC2626"))
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(Color(hex: "FEE2E2")).clipShape(.rect(cornerRadius: 6))

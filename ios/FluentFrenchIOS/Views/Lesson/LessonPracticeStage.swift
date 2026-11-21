@@ -143,7 +143,8 @@ struct LessonPracticeBar: View {
                 }
             }
             HStack(spacing: 10) {
-                LessonStatChip(icon: "flame.fill", color: Theme.primary, value: "\(model.session.combo)", label: "streak", pop: model.comboPop)
+                LessonStatChip(icon: LessonCopy.runSymbol, color: Theme.primary, value: "\(model.session.combo)",
+                               label: LessonCopy.runChipLabel, pop: model.comboPop)
                 LessonStatChip(icon: "star.fill", color: Theme.warning, value: "\(model.session.xp)", label: "XP")
                 Spacer()
                 Text(trailingLabel)

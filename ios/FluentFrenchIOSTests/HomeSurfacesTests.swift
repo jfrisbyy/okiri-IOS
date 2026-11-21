@@ -40,7 +40,6 @@ struct HomeSurfacesTests {
         let s = EngineFixtures.store()
         #expect(s.readiness(for: .reading) == .locked)
         let surfaces = s.homeSurfaces
-        #expect(surfaces.hidesLockedEntries)
         for m in LearningModality.allCases {
             #expect(!surfaces.shows(m), "\(m) is closed, so it is not on Home")
         }
@@ -59,15 +58,84 @@ struct HomeSurfacesTests {
         #expect(surfaces.nextUnlock == "Next unlock: the rest of Reading — \(done) of \(target) skills")
     }
 
-    @Test func outOfFoundationLockedEntriesShowWithTheirConditionAgain() {
+    /// Reading opening must not bring back a row of padlocks (four locked carousel
+    /// cards and a locked Scenarios at once): what is still locked stays off Home,
+    /// and ONE line names it, as in Foundation.
+    @Test func afterFoundationLockedEntriesStayHiddenBehindOneLine() {
         let s = EngineFixtures.store()
         s.unlockedModalities = [LearningModality.reading.rawValue]
         #expect(!s.isInFoundation)
+        #expect(s.preferences == nil, "the default preferences choose Reading, so the plan has open work")
         let surfaces = s.homeSurfaces
-        #expect(!surfaces.hidesLockedEntries)
-        #expect(!s.canOpen(.listening))
-        #expect(surfaces.shows(.listening), "a placed, reading learner sees what is next, with its condition")
-        #expect(surfaces.nextUnlock == nil)
+        #expect(surfaces.shows(.reading))
+        for m in [LearningModality.listening, .speaking, .watching] {
+            #expect(!s.canOpen(m))
+            #expect(!surfaces.shows(m), "\(m) is still locked, so it stays off Home")
+        }
+        #expect(surfaces.nextUnlock
+                == "Next unlock: Watching, Speaking & Listening — 0 of \(config.higherDemonstratedMinutes) min of Reading")
+        #expect(surfaces.foundationFocusNote == nil, "the governor note belongs to the Foundation card")
+
+        // Everything open: nothing to name.
+        s.unlockedModalities = Set(LearningModality.allCases.map { $0.rawValue })
+        #expect(s.homeSurfaces.nextUnlock == nil)
+        #expect(LearningModality.allCases.allSatisfy { s.homeSurfaces.shows($0) })
+    }
+
+    /// The plan already names the way in when every chosen activity is locked (its
+    /// "Start with Reading … opens X" row) or when the governor holds a chosen one
+    /// (its rationale): a second line would say it twice.
+    @Test func theNextUnlockLineStandsDownWhenThePlanAlreadyNamesIt() {
+        let s = EngineFixtures.store()
+        s.unlockedModalities = [LearningModality.reading.rawValue]
+        s.setPreferences(UserPreferences(modalities: [.listening], timeBudget: .standard, daysPerWeekGoal: nil))
+        #expect(DailyPlanEngine(store: s).makePlan(now: now).unlockItem != nil)
+        #expect(s.homeSurfaces.nextUnlock == nil, "the plan's unlock row names it")
+
+        s.setPreferences(UserPreferences(modalities: [.reading, .listening], timeBudget: .standard, daysPerWeekGoal: nil))
+        #expect(s.homeSurfaces.nextUnlock != nil)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(DailyPlanEngine(store: s).makePlan(now: now).rationale
+                == ReadinessCopy.governorHeadline(for: [.listening]))
+        #expect(s.homeSurfaces.nextUnlock == nil, "the plan's governor headline names it")
+
+        // Nothing locked was chosen: the plan names nothing, so the line does.
+        s.setPreferences(UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil))
+        let line = s.homeSurfaces.nextUnlock ?? ""
+        #expect(line.hasPrefix("Next unlock: "))
+        #expect(line.hasSuffix("review what you've learned before they open."))
+        #expect(!line.contains("to open"), "review is required, not always enough")
+    }
+
+    @Test func theAfterReadingLineCountsMinutesAndAgreesInNumber() {
+        let bar = config.higherDemonstratedMinutes
+        #expect(ReadinessCopy.nextUnlockLine(lockedAfterReading: [], readingMinutes: 3, governorActive: false) == nil)
+        #expect(ReadinessCopy.nextUnlockLine(lockedAfterReading: [.reading], readingMinutes: 3, governorActive: false) == nil,
+                "Reading itself is never the next unlock once it is open")
+        #expect(ReadinessCopy.nextUnlockLine(lockedAfterReading: [.listening, .speaking], readingMinutes: 8,
+                                             governorActive: false)
+                == "Next unlock: Listening & Speaking — 8 of \(bar) min of Reading")
+        #expect(ReadinessCopy.nextUnlockLine(lockedAfterReading: [.watching], readingMinutes: bar + 40,
+                                             governorActive: false)
+                == "Next unlock: Watching — \(bar) of \(bar) min of Reading")
+        #expect(ReadinessCopy.nextUnlockLine(lockedAfterReading: [.watching], readingMinutes: 0, governorActive: true)
+                == "Next unlock: Watching — review what you've learned before it opens.")
+    }
+
+    // MARK: UX-25 — the Foundation card's governor line
+
+    @Test func theFoundationFocusNoteShowsOnlyWhileTheGovernorIsActiveInFoundation() {
+        let s = EngineFixtures.store()
+        #expect(s.isInFoundation)
+        #expect(s.homeSurfaces.foundationFocusNote == nil)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(s.homeSurfaces.foundationFocusNote == ReadinessCopy.governorConsolidating)
+        // True in every governor state: the selector leans on review whenever the
+        // governor is active; it promises nothing about what opens.
+        #expect(!ReadinessCopy.governorConsolidating.contains("open"))
+        #expect(ReadinessCopy.governorConsolidating.count < ReadinessCopy.governorHeadline(for: [.reading]).count)
     }
 
     @Test func theNextUnlockLineClampsAndIsNilOnceReadingIsOpen() {
@@ -127,8 +195,52 @@ struct HomeSurfacesTests {
 
     @Test func theDeckCardNamesNoDueBacklogBeforeAnyReview() {
         #expect(!HomeCopy.deckCardStat(due: 20, showsDueCount: false).contains("due"))
+        #expect(HomeCopy.deckCardStat(due: 20, showsDueCount: false) == "20 words ready for your first lessons")
         #expect(HomeCopy.deckCardStat(due: 4, showsDueCount: true)
                 == "4 \(HomeCopy.dueNowLabel.lowercased())")
+    }
+
+    /// Home's My words card, the deck it opens and the Learn card follow ONE rule:
+    /// the deck says the same thing the card did, and nothing says "due".
+    @Test func theDeckAgreesWithTheHomeCardBeforeAnyReview() {
+        let s = EngineFixtures.store(concepts: [], gaps: [EngineFixtures.gap("fresh", concept: nil)])
+        #expect(!s.showsDueCount)
+        #expect(s.homeSurfaces.showsDueCount == s.showsDueCount)
+        let due = 20
+        let summary = HomeCopy.deckReviewSummary(due: due, upcoming: 3, showsDueCount: false)
+        #expect(summary == HomeCopy.deckCardStat(due: due, showsDueCount: false))
+        for line in [summary,
+                     HomeCopy.deckQueueLabel(showsDueCount: false),
+                     HomeCopy.deckReviewButton(due: due, showsDueCount: false),
+                     HomeCopy.deckReviewHint(due: due, showsDueCount: false)] {
+            #expect(!line.lowercased().contains("due"), "\(line)")
+        }
+        #expect(HomeCopy.firstWordsReady(1) == "1 word ready for your first lessons")
+        #expect(HomeCopy.firstWordsReady(0) == "Nothing to review yet")
+
+        // After a review the backlog wording returns everywhere.
+        #expect(HomeCopy.deckQueueLabel(showsDueCount: true) == HomeCopy.dueNowLabel)
+        #expect(HomeCopy.deckReviewSummary(due: 4, upcoming: 3, showsDueCount: true) == "4 due now · 3 coming up")
+        #expect(HomeCopy.deckReviewButton(due: 4, showsDueCount: true) == "Review due now")
+        #expect(HomeCopy.deckReviewButton(due: 0, showsDueCount: true) == "Review what's coming up")
+    }
+
+    // MARK: UX-15 — the Foundation call to action names a lesson never started as one
+
+    @Test func theFoundationCallToActionSaysStartUntilALessonHasTaughtTheConcept() {
+        #expect(HomeCopy.foundationLessonTitle(conceptName: "Greetings", started: false) == "Start: Greetings")
+        #expect(HomeCopy.foundationLessonTitle(conceptName: "Greetings", started: true) == "Continue: Greetings")
+        #expect(HomeCopy.foundationLessonTitle(conceptName: nil, started: true) == "Review the basics")
+        #expect(HomeCopy.foundationLessonDetail(firstLessonPending: true) == "Tap to start your first lesson")
+
+        let s = EngineFixtures.store()
+        let concept = s.concepts[0]
+        #expect(!s.hasStartedLesson(on: concept), "day one: no lesson has started")
+        s.completeLesson(targetConceptId: concept.id, isCapstone: false, now: now)
+        let taught = s.concepts.first { $0.id == concept.id }!
+        #expect(s.hasStartedLesson(on: taught))
+        let other = s.concepts.first { $0.id != concept.id && $0.lastTaughtSession == nil }!
+        #expect(!s.hasStartedLesson(on: other), "a concept no lesson has taught is started, not continued")
     }
 
     // MARK: UX-06 — preferences asked once, when Reading opens
@@ -152,6 +264,35 @@ struct HomeSurfacesTests {
 
         s.setPreferences(UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil))
         #expect(!s.shouldAskPreferences, "asked once: the saved answer is the persisted record")
+    }
+
+    /// The cover never rises over a sheet or cover Home already has up: the ask
+    /// waits for it to close.
+    @Test func preferencesWaitForHomesOwnPresentationToClose() {
+        let s = EngineFixtures.store()
+        s.hasCompletedAssessment = true
+        s.unlockedModalities = [LearningModality.reading.rawValue]
+        #expect(s.shouldAskPreferences)
+        s.setHomePresenting(true)
+        #expect(!s.shouldAskPreferences, "a profile sheet, section or resource is on screen")
+        s.setHomePresenting(false)
+        #expect(s.shouldAskPreferences)
+    }
+
+    /// "You've unlocked Reading" is only true for a learner who got there through
+    /// lessons; one whose Reading is open before any lesson hears that their level
+    /// opens it.
+    @Test func thePreferencesIntroMatchesHowReadingOpened() {
+        let s = EngineFixtures.store()
+        s.hasCompletedAssessment = true
+        s.unlockedModalities = [LearningModality.reading.rawValue]
+        #expect(s.isFirstLessonPending)
+        #expect(s.preferencesAskIntro == HomeCopy.preferencesPlacedIntro)
+        #expect(!s.preferencesAskIntro.contains("unlocked"))
+        #expect(s.preferencesAskIntro.contains("Reading"))
+
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.preferencesAskIntro == HomeCopy.preferencesAskIntro)
     }
 
     // MARK: UX-14 — the placement is the root screen, decided after the reconcile

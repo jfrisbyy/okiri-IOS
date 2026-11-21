@@ -606,7 +606,7 @@ struct ConceptSelector {
         } else if coreCount == 0, let probe {
             headline = "Today: a quick check on \(probe.name) — a skill you haven't met yet."
         } else if checkIns > 0 && coreCount == checkIns {
-            headline = "Today: check-ins — making sure what you've learned still holds."
+            headline = LessonCopy.quickCheckHeadline
         } else {
             headline = "Today: review — keeping what you've learned fresh."
         }
@@ -650,7 +650,7 @@ struct ConceptSelector {
         if concept.isProvisional {
             return "Verifying what placement said you know: \(concept.name)."
         }
-        return "Check-in: does \(concept.name) still hold?"
+        return LessonCopy.quickCheckReason(conceptName: concept.name)
     }
 
     nonisolated static func probeGapId(for concept: Concept, session: Int) -> String {

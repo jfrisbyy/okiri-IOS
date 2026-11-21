@@ -234,7 +234,7 @@ struct IdiomsView: View {
     private func saveRow(for idiom: FrenchIdiom) -> some View {
         let saved = store.hasGap(forWord: idiom.french)
         let capturable = CaptureBuilder.isAcceptableHeadword(idiom.french)
-        let title = saved ? "In your deck" : (capturable ? "Save to my deck" : "Too long to save as a card")
+        let title = saved ? HomeCopy.inMyWords : (capturable ? HomeCopy.saveToMyWords : "Too long to save as a card")
         let symbol = saved ? "checkmark.circle.fill" : (capturable ? "plus.circle.fill" : "exclamationmark.circle.fill")
         return Button {
             guard !saved, capturable else { return }
@@ -251,7 +251,7 @@ struct IdiomsView: View {
         }
         .buttonStyle(.plain)
         .disabled(saved || !capturable)
-        .accessibilityLabel(saved ? "Already in your deck" : title)
-        .accessibilityHint(saved || !capturable ? "" : "Adds this idiom to your practice deck")
+        .accessibilityLabel(saved ? HomeCopy.alreadyInMyWords : title)
+        .accessibilityHint(saved || !capturable ? "" : HomeCopy.addsToMyWords("idiom"))
     }
 }

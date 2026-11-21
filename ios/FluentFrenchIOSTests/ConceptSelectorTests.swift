@@ -195,7 +195,7 @@ struct ConceptSelectorTests {
         for item in output.items where item.role == .review || item.role == .checkIn {
             #expect(!item.reason.isEmpty)
         }
-        #expect(output.checkInItems.first?.reason == "Check-in: does Concept done still hold?")
+        #expect(output.checkInItems.first?.reason == "Quick check: does Concept done still hold?")
     }
 
     @Test func smartFillerNeverPullsInPrerequisiteBlockedMaterial() {
@@ -235,7 +235,7 @@ struct ConceptSelectorTests {
         #expect(output.items.count == 1)
         #expect(output.items.first?.role == .checkIn)
         #expect(output.items.first?.gapId == "done-2", "weakest first, most overdue on a tie")
-        #expect(output.headline == "Today: check-ins — making sure what you've learned still holds.")
+        #expect(output.headline == "Today: quick checks — making sure what you've learned still holds.")
     }
 
     @Test func smartIsHonestlyEmptyWithNothingToPractice() {
@@ -673,7 +673,7 @@ struct ConceptSelectorTests {
         let output = ConceptSelector(store: store).select(.smart(now: now))
         #expect(output.items.filter { $0.role == .probe }.count == 1)
         #expect(output.checkInItems.count == 1)
-        #expect(output.headline == "Today: check-ins — making sure what you've learned still holds.")
+        #expect(output.headline == "Today: quick checks — making sure what you've learned still holds.")
 
         // A lesson that is ONLY the probe says so, instead of calling a skill the
         // learner has never met "review".

@@ -19,6 +19,14 @@ import SwiftUI
 import UIKit
 
 struct ConverseView: View {
+    /// Closes Converse back to Home (UX-03), drawn in Converse's own header beside the
+    /// title: the section's one way out, as in Read and My words.
+    let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
     @Environment(AppStore.self) private var store
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var active: ConverseScenario? = nil
@@ -82,9 +90,13 @@ struct ConverseView: View {
                 .fill(RadialGradient(colors: [.white.opacity(0.18), .clear], center: .center, startRadius: 0, endRadius: 150))
                 .frame(width: 240, height: 240).offset(x: 130, y: -30)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Converse").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
-                Text("Speak with your AI French tutor").font(.system(.callout)).foregroundStyle(.white.opacity(0.85))
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Converse").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
+                    Text("Speak with your AI French tutor").font(.system(.callout)).foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                SectionCloseButton(action: onClose)
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
@@ -985,7 +997,7 @@ private struct ConverseCallView: View {
                     Pill(text: name, color: accent)
                 }
                 Spacer(minLength: 0)
-                Label(saved ? "Saved to your deck" : (duplicate ? "Already in your deck" : "Nothing to save"),
+                Label(saved ? HomeCopy.savedToMyWords : (duplicate ? HomeCopy.alreadyInMyWords : "Nothing to save"),
                       systemImage: saved || duplicate ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.system(.caption2, weight: .semibold))
                     .foregroundStyle(saved || duplicate ? Theme.successText : Theme.textSecondary)
@@ -1026,7 +1038,7 @@ private struct ConverseCallView: View {
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain).disabled(saved)
-                    .accessibilityLabel(saved ? "Saved to your deck" : "Save this phrase to your deck")
+                    .accessibilityLabel(saved ? HomeCopy.savedToMyWords : HomeCopy.saveItemToMyWords("this phrase"))
                 case .some(.correction(let correction)):
                     let kept = savedCorrectionIds.contains(correction.id) || duplicateCorrectionIds.contains(correction.id)
                     Label(kept ? "Correction saved" : "Corrected above", systemImage: kept ? "checkmark.circle.fill" : "arrow.turn.down.right")

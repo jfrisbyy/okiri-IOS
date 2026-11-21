@@ -138,6 +138,23 @@ nonisolated enum ReadinessCopy {
         return "Next unlock: \(subject) — \(done) of \(target) skill\(target == 1 ? "" : "s")"
     }
 
+    /// Home's ONE "Next unlock" line once Reading is open (UX-07 continued past
+    /// Foundation): the still-locked activities all open on the same bar
+    /// (`AppStore.baseReadiness`), demonstrated Reading minutes, so one line names
+    /// them together with the minutes so far. With the governor active it holds them
+    /// whatever the minutes say, so the line names the review — worded "before …
+    /// open", like `governorCondition`, because the minutes may also still be due.
+    static func nextUnlockLine(lockedAfterReading locked: [LearningModality], readingMinutes: Int,
+                               governorActive: Bool, config: ReadinessConfig = .tuning) -> String? {
+        let locked = locked.filter { $0 != .reading }
+        guard !locked.isEmpty else { return nil }
+        let subject = names(of: locked)
+        if governorActive {
+            return "Next unlock: \(subject) — review what you've learned before \(locked.count == 1 ? "it opens" : "they open")."
+        }
+        return "Next unlock: \(subject) — \(minutesProgress(done: readingMinutes, bar: config.higherDemonstratedMinutes))"
+    }
+
     /// The plan's unlock item headline: "15 min of Reading unlocks Listening & Speaking".
     static func unlockHeadline(for modalities: [LearningModality], config: ReadinessConfig = .tuning) -> String {
         "\(config.higherDemonstratedMinutes) min of Reading unlocks \(names(of: modalities))"

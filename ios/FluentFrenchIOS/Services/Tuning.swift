@@ -794,3 +794,9 @@ nonisolated extension Tuning {
     /// Minutes the header promises a first lesson takes ("about 5 minutes"): `lessonSize` items plus the teaching cards, an estimate to revisit once real lesson-minute data exists.
     static let lessonEstimateMinutes: Int = 5
 }
+
+nonisolated extension Tuning {
+    // MARK: UX-06 — when the onboarding preferences cover may rise
+    /// Seconds the preferences cover waits after it becomes due (a lesson or a Home sheet/cover just closed) so it never presents while another presentation is still animating away.
+    static let preferencesPresentDelay: TimeInterval = 0.6
+}

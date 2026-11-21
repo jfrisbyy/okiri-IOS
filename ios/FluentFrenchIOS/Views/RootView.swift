@@ -13,9 +13,11 @@
 //  reconciled (`AppStore.showsFirstRunPlacement`), so a learner who already
 //  placed on another device is never asked to place again. The daily-practice
 //  preferences are asked once, when Reading opens (`AppStore.shouldAskPreferences`,
-//  UX-06) — never during the Foundation, where they change nothing.
+//  UX-06) — never during the Foundation, where they change nothing, and never on
+//  top of a sheet or cover Home already has up.
 //
 
+import Foundation
 import SwiftUI
 
 struct RootView: View {
@@ -53,8 +55,15 @@ struct RootView: View {
         .onChange(of: showsPlacement, initial: true) { _, showing in
             if showing { placementShown = true }
         }
-        .onChange(of: store.shouldAskPreferences, initial: true) { _, ask in
-            if ask { showPreferences = true }
+        // The store holds the ask while a lesson or any of Home's own sheets and
+        // covers is up (`AppStore.shouldAskPreferences`); once it turns true the
+        // cover still waits out the closing presentation's animation, and checks
+        // again, so it never collides with one (UX-06).
+        .task(id: store.shouldAskPreferences) {
+            guard store.shouldAskPreferences, !showPreferences else { return }
+            try? await Task.sleep(for: .seconds(Tuning.preferencesPresentDelay))
+            guard !Task.isCancelled, store.shouldAskPreferences else { return }
+            showPreferences = true
         }
     }
 }

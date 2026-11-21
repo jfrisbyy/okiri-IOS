@@ -240,7 +240,7 @@ struct HeadlessDriverTests {
         #expect(check.gapIds == ["solo-0"])
         #expect(check.items.first?.role == .checkIn)
         #expect(check.targetConceptId == nil)
-        #expect(check.headline == "Today: check-ins — making sure what you've learned still holds.")
+        #expect(check.headline == "Today: quick checks — making sure what you've learned still holds.")
         #expect(selector.checkInOverdueDays(try solo(), now: driver.now) == 0)
         #expect(selector.checkInOverdueDays(try solo(), now: driver.now.addingTimeInterval(2 * EngineFixtures.day)) == 2)
 

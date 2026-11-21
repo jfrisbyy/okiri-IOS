@@ -235,7 +235,7 @@ struct Pass3EngineTests {
         #expect(consolidation.targetConceptId == nil && consolidation.rankedConcepts.isEmpty)
         #expect(consolidation.checkInItems.map { $0.conceptId } == ["c", "a", "b"])
         #expect(consolidation.items.count == 3, "every due concept, still one item each")
-        #expect(consolidation.headline == "Today: check-ins — making sure what you've learned still holds.")
+        #expect(consolidation.headline == "Today: quick checks — making sure what you've learned still holds.")
     }
 
     @Test func recallBelowTheFloorMakesAMasteredConceptDueOnlyThroughReviewedGaps() {

@@ -140,6 +140,12 @@ final class AppStore {
     /// answer already recorded and make the rest of the lesson no-op (store-1-3).
     private(set) var isLessonInProgress = false
 
+    /// True while Home has a sheet or full-screen cover of its own up (profile,
+    /// CEFR sheet, a section, a resource, a lesson). Transient, never persisted:
+    /// the onboarding preferences cover waits for it (`shouldAskPreferences`), so
+    /// it never collides with a presentation already on screen (UX-06).
+    private(set) var isHomePresenting = false
+
     /// The account whose record is on this device, remembered across launches.
     /// A wipe only happens when a DIFFERENT learner signs in — an involuntary
     /// sign-out (expired/revoked refresh token) must never destroy unsynced
@@ -2172,6 +2178,11 @@ final class AppStore {
         isLessonInProgress = false
     }
 
+    /// Home reports whether it has a presentation of its own on screen. Idempotent.
+    func setHomePresenting(_ presenting: Bool) {
+        if isHomePresenting != presenting { isHomePresenting = presenting }
+    }
+
     // MARK: - Placement assessment
 
     /// Map a CEFR level to a starting IRT ability estimate. The table lives in
@@ -3545,25 +3556,33 @@ extension AppStore {
 // MARK: - Home surfaces and onboarding decisions (UX-06, UX-07, UX-14, UX-15)
 
 /// What Home shows, decided here so the view only renders it (UX-07, UX-15).
+/// Read ONCE per Home render: every field is computed up front.
 nonisolated struct HomeSurfaces: Hashable {
-    /// A Foundation learner sees no padlocks: every entry point that is closed
-    /// right now (Explore cards, the reading card, Resources) is left out, and the
-    /// ONE `nextUnlock` line stands for all of them (UX-07).
-    var hidesLockedEntries: Bool
-    /// The modalities whose entry points are closed right now (`!canOpen`).
+    /// The modalities whose entry points are closed right now (`!canOpen`). Home
+    /// shows no padlocks, in Foundation or after it (UX-07): every closed entry
+    /// point (Explore cards, the reading card, Resources) is left out, and the ONE
+    /// `nextUnlock` line stands for all of them. Reading opening therefore never
+    /// brings back a row of locked cards at once.
     var lockedModalities: Set<LearningModality>
-    /// "Next unlock: Reading — 3 of 12 skills"; nil outside Foundation.
+    /// The one "Next unlock" line: "Next unlock: Reading — 3 of 12 skills" in
+    /// Foundation, "Next unlock: Listening & Speaking — 8 of 15 min of Reading"
+    /// after it. Nil when nothing is locked, or when the plan already names the way
+    /// in (its unlock row or its governor headline).
     var nextUnlock: String?
-    /// The "due now" chip shows only once any card has been reviewed: before that
-    /// the due number is the freshly seeded batch, not a backlog (UX-15).
+    /// The Foundation card's line while the retention governor is active: what
+    /// today's lessons do about it. Nil outside Foundation or without the governor.
+    var foundationFocusNote: String?
+    /// The "due now" framing shows only once any card has been reviewed: before
+    /// that the due number is the freshly seeded batch, not a backlog (UX-15).
+    /// Home, the Learn card and My words all follow this one flag.
     var showsDueCount: Bool
     /// No lesson has been played yet: the header names the first lesson (UX-15).
     var firstLessonPending: Bool
 
     /// Whether an entry point gated on `modality` is on Home at all. Ungated
-    /// entries (nil) always are; a closed one only while padlocks are shown.
+    /// entries (nil) always are; a gated one only while it can be opened.
     func shows(_ modality: LearningModality?) -> Bool {
-        guard let modality, hidesLockedEntries else { return true }
+        guard let modality else { return true }
         return !lockedModalities.contains(modality)
     }
 }
@@ -3575,26 +3594,57 @@ extension AppStore {
         gaps.contains { !$0.isProbe && !$0.isNew }
     }
 
+    /// The ONE rule for calling queued cards "due" (UX-15): only once any card has
+    /// been reviewed. Home's chip, the Learn card, My words and the Progress map read it.
+    var showsDueCount: Bool { hasReviewedAnyCard }
+
     /// No lesson has been played yet — `sessionIndex` counts every lesson that
     /// recorded an answer, and it is monotonic and never pruned.
     var isFirstLessonPending: Bool { sessionIndex == 0 }
+
+    /// Whether `concept` has already been the spine of a lesson. The Foundation
+    /// call to action says "Continue" only then, and "Start" for one never taught.
+    func hasStartedLesson(on concept: Concept) -> Bool {
+        !isFirstLessonPending && concept.lastTaughtSession != nil
+    }
 
     /// Home's surfaces, read off the gate (`canOpen`), the Foundation track and
     /// the review history.
     var homeSurfaces: HomeSurfaces {
         let inFoundation = isInFoundation
-        let progress = foundationProgress()
+        let nextUnlock: String?
+        if inFoundation {
+            let progress = foundationProgress()
+            nextUnlock = ReadinessCopy.nextUnlockLine(readingReadiness: readiness(for: .reading),
+                                                      done: progress.done, target: progress.target,
+                                                      readingHeldByGovernor: isReadingHeldByGovernor)
+        } else {
+            nextUnlock = nextUnlockAfterFoundation
+        }
         return HomeSurfaces(
-            hidesLockedEntries: inFoundation,
             lockedModalities: Set(LearningModality.allCases.filter { !canOpen($0) }),
-            nextUnlock: inFoundation
-                ? ReadinessCopy.nextUnlockLine(readingReadiness: readiness(for: .reading),
-                                               done: progress.done, target: progress.target,
-                                               readingHeldByGovernor: isReadingHeldByGovernor)
-                : nil,
-            showsDueCount: hasReviewedAnyCard,
+            nextUnlock: nextUnlock,
+            foundationFocusNote: inFoundation && isGovernorActive ? ReadinessCopy.governorConsolidating : nil,
+            showsDueCount: showsDueCount,
             firstLessonPending: isFirstLessonPending
         )
+    }
+
+    /// The "Next unlock" line once Reading is open: the activities still locked and
+    /// the one condition that opens them. Nil when the day's plan already names it
+    /// (`DailyPlanEngine`): with every chosen activity locked the plan leads with
+    /// its "Start with Reading … opens X" row, and with the governor active its
+    /// rationale is the governor headline for the chosen locked activities.
+    private var nextUnlockAfterFoundation: String? {
+        let locked = LearningModality.allCases.filter { readiness(for: $0) != .unlocked }
+        guard !locked.isEmpty else { return nil }
+        let prefs = preferences ?? .default
+        let chosenOpen = LearningModality.allCases.contains {
+            prefs.modalities.contains($0) && readiness(for: $0) == .unlocked
+        }
+        if !lockedChosenModalities.isEmpty && (isGovernorActive || !chosenOpen) { return nil }
+        return ReadinessCopy.nextUnlockLine(lockedAfterReading: locked, readingMinutes: totalMinutes(.reading),
+                                            governorActive: isGovernorActive)
     }
 
     /// Ask for the daily-practice preferences now (UX-06)? Never while the learner
@@ -3603,10 +3653,21 @@ extension AppStore {
     /// ONCE, when Reading opens. "Asked" is persisted as the answer itself: the
     /// onboarding screen's only exit is saving (`PreferencesView`), which stores
     /// and syncs `preferences`. Held while a lesson is open (Reading opens at a
-    /// lesson's end) so the prompt follows the lesson instead of fighting its cover.
+    /// lesson's end) so the prompt follows the lesson instead of fighting its cover,
+    /// and while Home has any sheet or cover of its own up, so it waits for that
+    /// to close rather than collide with it.
     var shouldAskPreferences: Bool {
         hasCompletedAssessment && loadError == nil && !hasSetPreferences
-            && !isInFoundation && !isLessonInProgress
+            && !isInFoundation && !isLessonInProgress && !isHomePresenting
+    }
+
+    /// The onboarding preferences screen's intro line. "You've unlocked Reading"
+    /// is only true for a learner who got there through lessons; a record whose
+    /// Reading is open before any lesson was played (a retake on a record that
+    /// already clears the bar, or one restored without preferences) is told that
+    /// its level opens Reading instead.
+    var preferencesAskIntro: String {
+        isFirstLessonPending ? HomeCopy.preferencesPlacedIntro : HomeCopy.preferencesAskIntro
     }
 
     /// Whether the first-run placement is the root screen (UX-14). Never decided

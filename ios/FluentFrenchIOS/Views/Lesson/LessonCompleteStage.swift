@@ -3,7 +3,7 @@
 //  FluentFrenchIOS
 //
 //  The completion screen and the out-of-hearts recap (C5 / C26): first-attempt
-//  accuracy, the capstone held/slipped tally (C16), XP, best streak, an honest
+//  accuracy, the capstone held/slipped tally (C16), XP, best run, an honest
 //  level line (no theta decimals), the missed items with their answers and
 //  "Practice these now", and any skills unlocked. The day line ("Lesson 1 of 3
 //  done", "Day 1 streak started") and the "Next lesson" button continue the day
@@ -90,26 +90,43 @@ struct LessonCompleteStage: View {
         }
     }
 
-    /// "Next lesson" leads while the day has lessons to go (UX-05); "Done" is then
-    /// the secondary way out. Otherwise "Done" is the one button.
+    /// The buttons `LessonCompletionActions` decided on: after running out of hearts
+    /// "Practice these now" leads; otherwise "Next lesson" leads while the day has
+    /// lessons to go (UX-05). "Done" is the way out, primary only when nothing else
+    /// leads. A "Next lesson" that came back empty is replaced by a line saying so.
     @ViewBuilder
     private var buttons: some View {
-        if model.nextLessonOffer?.nextAvailable == true {
-            VStack(spacing: 8) {
-                if let notice = model.nextLessonNotice {
-                    Text(notice).font(.footnote).foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                LessonPrimaryButton(title: LessonCopy.nextLessonButton) {
-                    Haptics.select()
-                    model.startNextLesson(store: store)
+        let actions = model.completionActions
+        VStack(spacing: 8) {
+            if let note = actions.nextLessonNote {
+                Text(note).font(.footnote).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            switch actions.lead {
+            case .practiceMissed:
+                LessonPrimaryButton(title: LessonCopy.practiceMissedButton, action: practiceMissed)
+                if actions.offersNextLesson {
+                    LessonSecondaryButton(title: LessonCopy.nextLessonButton, action: startNextLesson)
                 }
                 LessonSecondaryButton(title: LessonCopy.doneButton, action: onDone)
+            case .nextLesson:
+                LessonPrimaryButton(title: LessonCopy.nextLessonButton, action: startNextLesson)
+                LessonSecondaryButton(title: LessonCopy.doneButton, action: onDone)
+            case .done:
+                LessonPrimaryButton(title: LessonCopy.doneButton, action: onDone)
             }
-        } else {
-            LessonPrimaryButton(title: LessonCopy.doneButton, action: onDone)
         }
+    }
+
+    private func startNextLesson() {
+        Haptics.select()
+        model.startNextLesson(store: store)
+    }
+
+    private func practiceMissed() {
+        Haptics.select()
+        model.practiceMissed(store: store)
     }
 
     /// Where the day stands: "Lesson 1 of 3 done" and "Day 1 streak started".
@@ -232,7 +249,7 @@ struct LessonCompleteStage: View {
             }
             summaryRow("star.fill", Theme.warning, "XP earned", "+\(summary.xp + bonus)",
                        detail: bonus > 0 ? "includes +\(bonus) for finishing" : nil)
-            summaryRow("flame.fill", Theme.primary, "Best streak", "\(summary.bestCombo)")
+            summaryRow(LessonCopy.runSymbol, Theme.primary, LessonCopy.bestRunLabel, LessonCopy.bestRunValue(summary.bestCombo))
             summaryRow("chart.line.uptrend.xyaxis", Theme.secondary, "Level", level)
             if !summary.releasedConceptIds.isEmpty {
                 let names = summary.releasedConceptIds.compactMap { store.concept($0)?.name }
@@ -265,9 +282,11 @@ struct LessonCompleteStage: View {
             Text(model.isCapstone ? "What slipped, with the answers" : "Missed items")
                 .font(.headline).foregroundStyle(Theme.text)
             LessonMissedList(items: summary.missed)
-            LessonSecondaryButton(title: "Practice these now", systemImage: "arrow.clockwise") {
-                Haptics.select()
-                model.practiceMissed(store: store)
+            // After running out of hearts the same action leads the bottom bar, so
+            // the card does not offer it a second time.
+            if model.completionActions.practiceInMissedCard {
+                LessonSecondaryButton(title: LessonCopy.practiceMissedButton, systemImage: "arrow.clockwise",
+                                      action: practiceMissed)
             }
             if let notice = model.followUpNotice {
                 Text(notice).font(.footnote).foregroundStyle(Theme.textSecondary)

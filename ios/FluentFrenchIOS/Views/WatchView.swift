@@ -63,6 +63,14 @@ final class WatchModel {
 }
 
 struct WatchView: View {
+    /// Closes Watch back to Home (UX-03), drawn in Watch's own header beside the
+    /// title: the section's one way out, as in Read and My words.
+    let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The header carries the screen title and the search field, so it grows
@@ -127,9 +135,9 @@ struct WatchView: View {
                             Text("Immerse yourself in French video").font(.footnote).foregroundStyle(.white.opacity(0.6))
                         }
                         Spacer()
-                        Image(systemName: "play.tv.fill").font(.title2).foregroundStyle(Theme.primary)
-                            .frame(width: 50, height: 50).background(Theme.primary.opacity(0.15)).clipShape(.rect(cornerRadius: 16))
-                            .accessibilityHidden(true)
+                        // The close button takes the decorative TV tile's place: two
+                        // round shapes in the corner read as two controls (UX-03).
+                        SectionCloseButton(action: onClose)
                     }
 
                     Button {
@@ -142,7 +150,9 @@ struct WatchView: View {
                             Text(searching ? "Close search" : "Search YouTube in French…")
                                 .font(.subheadline).foregroundStyle(.white.opacity(0.55))
                             Spacer()
-                            Image(systemName: searching ? "xmark" : "chevron.right").font(.footnote).foregroundStyle(.white.opacity(0.45))
+                            // Not an "xmark": the header's close button right above it is
+                            // the one "xmark", and it leaves Watch (UX-03).
+                            Image(systemName: searching ? "chevron.up" : "chevron.right").font(.footnote).foregroundStyle(.white.opacity(0.45))
                                 .accessibilityHidden(true)
                         }
                         .padding(.horizontal, 16).frame(minHeight: 46)

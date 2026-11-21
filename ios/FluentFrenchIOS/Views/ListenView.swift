@@ -13,6 +13,14 @@ import Foundation
 import SwiftUI
 
 struct ListenView: View {
+    /// Closes Listen back to Home (UX-03), drawn in Listen's own header beside the
+    /// title: the section's one way out, as in Read and My words.
+    let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The header holds the largest text on the screen, so its height grows with
@@ -111,9 +119,13 @@ struct ListenView: View {
                 .fill(RadialGradient(colors: [.white.opacity(0.18), .clear], center: .center, startRadius: 0, endRadius: 150))
                 .frame(width: 240, height: 240).offset(x: 130, y: -30)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Listen").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
-                Text("Train your ear with French dialogues and stories").font(.subheadline).foregroundStyle(.white.opacity(0.85))
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Listen").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
+                    Text("Train your ear with French dialogues and stories").font(.subheadline).foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                SectionCloseButton(action: onClose)
             }
             .padding(.horizontal, 20).padding(.bottom, 18)
         }
@@ -563,9 +575,9 @@ private struct ListeningCaptureSheet: View {
     private func status(_ spec: ListeningCaptureSpec) -> String {
         switch outcomes[spec.turnIndex] {
         case .saved?: return "Saved"
-        case .duplicate?: return "Already in your deck"
+        case .duplicate?: return HomeCopy.alreadyInMyWords
         case .rejected?: return "Couldn't save"
-        case nil: return store.hasGap(forWord: spec.french) ? "Already in your deck" : "Save"
+        case nil: return store.hasGap(forWord: spec.french) ? HomeCopy.alreadyInMyWords : "Save"
         }
     }
 
@@ -675,7 +687,7 @@ private struct ListeningCaptureSheet: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(done)
-                    .accessibilityLabel(done ? status(spec) : "Save this line to my deck")
+                    .accessibilityLabel(done ? status(spec) : HomeCopy.saveItemToMyWords("this line"))
                 } else {
                     // The deck refuses a turn longer than a card, so the sheet
                     // says why rather than offering a save that does nothing. A

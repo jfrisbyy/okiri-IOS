@@ -138,6 +138,7 @@ struct GapsView: View {
     }
 
     private func categoryCard(_ stat: CategoryStat) -> some View {
+        let showsDue = store.showsDueCount
         let total = max(stat.active + stat.mastered, 1)
         let masteryProgress = Double(stat.mastered) / Double(total)
         let healthLabel: String
@@ -199,7 +200,9 @@ struct GapsView: View {
                 .accessibilityValue("\(stat.mastered) of \(stat.active + stat.mastered) mastered")
 
                 HStack {
-                    if stat.due > 0 {
+                    // "Due" only once any card has been reviewed (UX-15,
+                    // `AppStore.showsDueCount`): before that it is the seeded batch.
+                    if stat.due > 0 && showsDue {
                         HStack(spacing: 4) {
                             Image(systemName: "clock.fill").scaledFont(10).accessibilityHidden(true)
                             Text("\(stat.due) due now").font(.caption.weight(.medium))
@@ -229,7 +232,7 @@ struct GapsView: View {
         .buttonStyle(.plain)
         .pressable()
         .accessibilityLabel("\(stat.category.label): \(HomeCopy.categoryCounts(toLearn: stat.active, mastered: stat.mastered, separator: ", ")), \(healthLabel)")
-        .accessibilityValue(stat.due > 0
+        .accessibilityValue(stat.due > 0 && showsDue
                             ? "\(stat.due) due now"
                             : (stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention) percent retention"))
         .accessibilityHint(stat.active > 0 ? "Starts a focused lesson."

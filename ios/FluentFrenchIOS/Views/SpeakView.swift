@@ -15,6 +15,14 @@ import SwiftUI
 import UIKit
 
 struct SpeakView: View {
+    /// Closes Speak back to Home (UX-03), drawn in Speak's own header beside the
+    /// title: the section's one way out, as in Read and My words.
+    let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -161,9 +169,13 @@ struct SpeakView: View {
                 .frame(width: 220, height: 220).offset(x: 120, y: -20)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Speak").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
-                    Text("Practice speaking and build fluency").font(.system(.callout)).foregroundStyle(.white.opacity(0.8))
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Speak").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
+                        Text("Practice speaking and build fluency").font(.system(.callout)).foregroundStyle(.white.opacity(0.8))
+                    }
+                    Spacer()
+                    SectionCloseButton(action: onClose)
                 }
                 HStack(spacing: 16) {
                     statChip("chart.line.uptrend.xyaxis", "\(store.totalMinutes(.speaking))", "total min")
@@ -436,10 +448,10 @@ struct SpeakView: View {
         case (0, 0) where outcome.tooLongToSave:
             return "Too long to save as a card — a card holds a word or a short phrase, so read the correction above instead."
         case (0, 0): return "Nothing new to save — your line was already good."
-        case (0, _): return "These phrases are already in your deck."
+        case (0, _): return "These phrases are already in \(HomeCopy.myWordsTitle)."
         case (1, _) where outcome.shortened: return "Saved the part we corrected as 1 phrase."
-        case (1, _): return "Saved 1 phrase to your deck."
-        default: return "Saved \(outcome.savedCount) phrases to your deck."
+        case (1, _): return "Saved 1 phrase to \(HomeCopy.myWordsTitle)."
+        default: return "Saved \(outcome.savedCount) phrases to \(HomeCopy.myWordsTitle)."
         }
     }
 

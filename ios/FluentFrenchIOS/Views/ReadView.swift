@@ -206,7 +206,7 @@ struct ReadView: View {
     /// height follows the (now scalable) title and subtitle instead of pinning
     /// them inside 150 pt. At the default text size the layout is unchanged.
     private var header: some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Read").scaledSerifDisplay(34, weight: .bold).foregroundStyle(.white)
                     .accessibilityAddTraits(.isHeader)
@@ -214,28 +214,28 @@ struct ReadView: View {
                     .font(.subheadline).foregroundStyle(.white.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            if readiness == .unlocked {
+            Spacer(minLength: 0)
+            // Search only OPENS from here, and it is a labelled capsule, not a
+            // second round icon beside the close button: the round "xmark" is the
+            // header's one way out of Read (UX-03). While search is open this
+            // button steps aside and the search row carries its own Cancel, so
+            // dismissing search can never be mistaken for leaving Read.
+            if readiness == .unlocked, !searching {
                 Button {
                     Haptics.tap()
-                    withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching.toggle() }
-                    // Closing search clears the query too, so re-opening it starts
-                    // empty instead of showing a stale term with no results.
-                    if !searching { model.clearSearch(); searchText = "" }
+                    withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching = true }
                 } label: {
-                    // A toggle, drawn selected while search is open — not an "xmark":
-                    // the header's own close button beside it is the one "xmark",
-                    // and it leaves Read (UX-03).
-                    Image(systemName: "magnifyingglass")
-                        .scaledFont(17, weight: .semibold)
-                        .foregroundStyle(searching ? Theme.primaryText : .white)
-                        .frame(width: Theme.minimumHitTarget * typeScale,
-                               height: Theme.minimumHitTarget * typeScale)
-                        .background(searching ? Color.white : Color.white.opacity(0.2)).clipShape(.circle)
+                    Label("Search", systemImage: "magnifyingglass")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 36 * Theme.chromeScale(typeScale))
+                        .background(Color.white.opacity(0.2), in: Capsule())
+                        .minimumHitTarget()
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(searching ? "Close search" : "Search stories")
-                .accessibilityHint(searching ? "Returns to the feed" : "Finds French stories on any topic")
+                .accessibilityLabel("Search stories")
+                .accessibilityHint("Finds French stories on any topic")
             }
             SectionCloseButton(action: onClose)
         }
@@ -304,26 +304,44 @@ struct ReadView: View {
     // MARK: - Search
 
     private var searchBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted).accessibilityHidden(true)
-            TextField("Search any topic…", text: $searchText)
-                .font(.body).autocorrectionDisabled()
-                .onSubmit { Task { await model.runSearch(searchText) } }
-                .accessibilityLabel("Search stories")
-            if !searchText.isEmpty {
-                Button { searchText = ""; model.clearSearch() } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted)
-                        .frame(minWidth: 44, minHeight: 44)
+        HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+                TextField("Search any topic…", text: $searchText)
+                    .font(.body).autocorrectionDisabled()
+                    .onSubmit { Task { await model.runSearch(searchText) } }
+                    .accessibilityLabel("Search stories")
+                if !searchText.isEmpty {
+                    Button { searchText = ""; model.clearSearch() } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
             }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background(Theme.card)
+            .clipShape(.rect(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
+            // Search's own way out, in the search row and in words: it returns to
+            // the feed and never leaves Read (the header's "xmark" does that).
+            Button("Cancel") { closeSearch() }
+                .font(.body.weight(.semibold)).foregroundStyle(Theme.primaryText)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .buttonStyle(.plain)
+                .accessibilityHint("Closes search and returns to the feed")
         }
-        .padding(.horizontal, 14).padding(.vertical, 6)
-        .background(Theme.card)
-        .clipShape(.rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
         .padding(.horizontal, 16).padding(.top, 12)
+    }
+
+    /// Leaves search for the Feed/Library switch. Closing clears the query too,
+    /// so re-opening search starts empty instead of showing a stale term.
+    private func closeSearch() {
+        Haptics.tap()
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { searching = false }
+        model.clearSearch()
+        searchText = ""
     }
 
     private var segmented: some View {

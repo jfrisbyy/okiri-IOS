@@ -617,7 +617,7 @@ struct LookupUnavailableView: View {
 /// The save button every capture surface uses. It is disabled until there is
 /// something real to save (`draft == nil` while a lookup is in flight), offers
 /// "Save now, translate later" when the draft has no meaning yet, and reports
-/// "Saved" / "Already in your deck" from the store's own outcome — the store,
+/// "Saved" / "Already in My words" from the store's own outcome — the store,
 /// not the view, dedupes and builds the gap.
 struct SaveToDeckButton: View {
     let draft: CaptureDraft?
@@ -654,13 +654,13 @@ struct SaveToDeckButton: View {
     }
 
     private var title: String {
-        if case .duplicate? = outcome { return "Already in your deck" }
-        if isDone { return "Saved to deck" }
-        if isBusy || draft == nil { return "Save to my deck" }
+        if case .duplicate? = outcome { return HomeCopy.alreadyInMyWords }
+        if isDone { return HomeCopy.savedToMyWords }
+        if isBusy || draft == nil { return HomeCopy.saveToMyWords }
         if isTooLong { return "Too long to save as a card" }
         if isSelfGlossed { return "Same word in English" }
         if draft?.needsTranslation == true { return "Save now, translate later" }
-        return "Save to my deck"
+        return HomeCopy.saveToMyWords
     }
 
     private var symbol: String {
@@ -675,7 +675,7 @@ struct SaveToDeckButton: View {
 
     /// Says what the button will do — or why it cannot yet be used.
     private var hint: String {
-        if isDone { return "This word is already in your deck" }
+        if isDone { return HomeCopy.itemAlreadyInMyWords("This word") }
         if isBusy || draft == nil { return "Available once the lookup finishes" }
         if isTooLong {
             return "A card holds up to \(Tuning.maxCardWords) words, and never stops in the middle of a sentence"
@@ -686,7 +686,7 @@ struct SaveToDeckButton: View {
         if draft?.needsTranslation == true {
             return "Saves the word without a meaning; it is translated once translation is available"
         }
-        return "Adds this word to your review deck"
+        return HomeCopy.addsToMyWords("word")
     }
 
     var body: some View {

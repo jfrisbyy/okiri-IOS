@@ -144,6 +144,85 @@ struct LessonCopyTests {
         #expect(LessonCopy.streakLine(o) == nil)
     }
 
+    // MARK: Completion buttons — out of hearts, and a "Next lesson" that came back empty
+
+    private func actions(outOfHearts: Bool = false, missed: Bool = true, practiceExhausted: Bool = false,
+                         next: Bool = true, nextExhausted: Bool = false) -> LessonCompletionActions {
+        LessonCompletionActions.resolve(outOfHearts: outOfHearts, hasMissed: missed,
+                                        practiceExhausted: practiceExhausted,
+                                        nextAvailable: next, nextExhausted: nextExhausted)
+    }
+
+    @Test func outOfHeartsLeadsWithPracticeTheseNow() {
+        let a = actions(outOfHearts: true)
+        #expect(a.lead == .practiceMissed)
+        #expect(a.offersNextLesson, "Next lesson stays on offer, as a secondary button")
+        #expect(!a.practiceInMissedCard, "the missed card does not offer the lead a second time")
+        #expect(a.nextLessonNote == nil)
+
+        // Nothing missed (or the follow-up already came back empty): nothing to practise.
+        #expect(actions(outOfHearts: true, missed: false).lead == .nextLesson)
+        #expect(actions(outOfHearts: true, practiceExhausted: true).lead == .nextLesson)
+        #expect(!actions(outOfHearts: true, practiceExhausted: true).practiceInMissedCard)
+        #expect(actions(outOfHearts: true, missed: false, next: false).lead == .done)
+    }
+
+    @Test func aFinishedLessonKeepsNextLessonInFront() {
+        let a = actions()
+        #expect(a.lead == .nextLesson)
+        #expect(a.practiceInMissedCard, "a finished lesson keeps Practice these now in the missed card")
+        #expect(actions(next: false).lead == .done)
+        #expect(!actions(next: false).offersNextLesson)
+    }
+
+    @Test func anEmptyNextLessonIsWithdrawnWithALine() {
+        let a = actions(nextExhausted: true)
+        #expect(a.lead == .done, "a tap that did nothing is not offered again")
+        #expect(!a.offersNextLesson)
+        #expect(a.nextLessonNote == LessonCopy.nextLessonExhausted)
+        let hearts = actions(outOfHearts: true, nextExhausted: true)
+        #expect(hearts.lead == .practiceMissed && !hearts.offersNextLesson)
+        #expect(hearts.nextLessonNote == LessonCopy.nextLessonExhausted)
+        #expect(LessonCopy.practiceMissedButton == "Practice these now")
+    }
+
+    /// The line's claim matches what `.empty` means for "Next lesson": the Smart
+    /// selector has nothing practicable now, and what is resting comes due later.
+    @Test func emptyNextLessonMeansNothingPracticableRightNow() {
+        var resting = EngineFixtures.mastered("done")
+        resting.nextCheckInAt = now.addingTimeInterval(30 * day)
+        resting.checkInIntervalDays = Tuning.checkInInitialDays
+        let s = EngineFixtures.store(concepts: [resting], gaps: [])
+        let outcome = LessonPipeline(store: s).outcome(for: .smart(now: now))
+        #expect(outcome.lesson == nil)
+        #expect(outcome.emptyHeadline == "Nothing to practice right now.")
+        #expect(LessonCopy.nextLessonExhausted == "That's everything for now — come back later for more.")
+    }
+
+    // MARK: One flame — the day streak; the answer run is "in a row"
+
+    @Test func theAnswerRunIsNeverCalledAStreak() {
+        #expect(LessonCopy.bestRunLabel == "Best run")
+        #expect(LessonCopy.bestRunValue(4) == "4 in a row")
+        #expect(LessonCopy.runChipLabel == "in a row")
+        #expect(LessonCopy.personalBestLine(accuracyPercent: 85, bestRun: 6)
+                == "85% first-try accuracy · best run 6 in a row")
+        #expect(!LessonCopy.runSymbol.contains("flame"), "the flame is the day streak's")
+        let lines = [LessonCopy.bestRunLabel, LessonCopy.bestRunValue(2), LessonCopy.runChipLabel,
+                     LessonCopy.personalBestLine(accuracyPercent: 50, bestRun: 2)]
+        for line in lines { #expect(!line.lowercased().contains("streak"), "\(line)") }
+    }
+
+    // MARK: UX-13 — "Quick check" everywhere the learner reads it
+
+    @Test func checkInsReadAsQuickChecks() {
+        #expect(LessonCopy.quickCheckHeadline == "Today: quick checks — making sure what you've learned still holds.")
+        #expect(LessonCopy.quickCheckReason(conceptName: "Greetings") == "Quick check: does Greetings still hold?")
+        for line in [LessonCopy.quickCheckHeadline, LessonCopy.quickCheckReason(conceptName: "X")] {
+            #expect(!line.lowercased().contains("check-in"))
+        }
+    }
+
     // MARK: UX-21 — accent keys
 
     @Test func accentKeysAreLowercaseFrenchLetters() {

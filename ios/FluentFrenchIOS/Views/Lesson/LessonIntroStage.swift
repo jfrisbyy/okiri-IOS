@@ -158,7 +158,7 @@ struct LessonIntroStage: View {
                 Image(systemName: "trophy.fill").font(.title3).foregroundStyle(Theme.warning).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Beat your best").font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
-                    Text("\(Int((best.accuracy * 100).rounded()))% first-try accuracy · \(best.streak) best streak")
+                    Text(LessonCopy.personalBestLine(accuracyPercent: Int((best.accuracy * 100).rounded()), bestRun: best.streak))
                         .font(.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()

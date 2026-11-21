@@ -8,9 +8,10 @@
 //  signature horizontal sliding carousel of scaling feature cards.
 //
 //  Every entry point on this screen goes through the readiness gate
-//  (`store.canOpen` / `store.unlockCondition`, D1): a locked activity is a
-//  disabled card that states its unlock condition; Reading in the bridge state
-//  opens (the surface caps itself to short pieces, D5). The daily plan is the
+//  (`store.canOpen` / `store.unlockCondition`, D1): an activity that is still
+//  locked is left off Home, and ONE "Next unlock" line from the store names what
+//  is next (UX-07); Reading in the bridge state opens (the surface caps itself to
+//  short pieces, D5). The daily plan is the
 //  store's plan of record (D14); activity time is credited only while the app is
 //  in the foreground and capped per session (D9). Copy comes from `HomeCopy` and
 //  `ReadinessCopy`, decided from real data (D12/D19).
@@ -186,11 +187,17 @@ struct HomeView: View {
         dailyPlan.lessonItem?.target ?? Tuning.foundationLessonsPerDay
     }
 
-    private func greetingSubtitle(due: Int) -> String {
+    private func greetingSubtitle(due: Int, surfaces: HomeSurfaces) -> String {
         HomeCopy.subtitle(streak: store.currentStreak, dueNow: due,
                           lessonsToday: store.lessonsCompletedToday,
                           lessonTarget: lessonTarget, placed: placed,
-                          firstLessonPending: store.homeSurfaces.firstLessonPending)
+                          firstLessonPending: surfaces.firstLessonPending)
+    }
+
+    /// Any presentation of Home's own on screen. Reported to the store so the
+    /// onboarding preferences cover waits for it to close (UX-06).
+    private var isPresenting: Bool {
+        showProfile || showCEFR || activeLesson != nil || activeSection != nil || activeResource != nil
     }
 
     private var kiriMood: KiriMood {
@@ -205,36 +212,40 @@ struct HomeView: View {
         // `prerequisiteBlockedConceptIds` (two passes over the taxonomy) before
         // scanning the whole gap list (firstrun-9-3).
         let due = store.dueNowCount()
+        // The same for Home's surfaces: `homeSurfaces` reads the gate, the
+        // Foundation progress and the review history, so it is read ONCE here and
+        // handed to every section that renders from it.
+        let surfaces = store.homeSurfaces
         return NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    header(due: due)
-                    statsCard(due: due)
+                    header(due: due, surfaces: surfaces)
+                    statsCard(due: due, surfaces: surfaces)
                         .padding(.horizontal, 16)
                         .offset(y: -60)
                         .padding(.bottom, -44)
 
                     if store.isInFoundation {
-                        foundationSection
+                        foundationSection(surfaces)
                             .padding(.horizontal, 20)
                             .padding(.top, 18)
                     } else {
-                        todayPlanSection
+                        todayPlanSection(surfaces)
                             .padding(.horizontal, 20)
                             .padding(.top, 18)
                     }
 
-                    exploreSection(due: due)
+                    exploreSection(due: due, surfaces: surfaces)
                         .padding(.top, 24)
 
-                    // Locked Reading is not shown to a Foundation learner (UX-07).
-                    if store.homeSurfaces.shows(.reading) {
+                    // Locked Reading is not shown (UX-07).
+                    if surfaces.shows(.reading) {
                         headlinesSection
                             .padding(.horizontal, 20)
                             .padding(.top, 20)
                     }
 
-                    resourcesSection
+                    resourcesSection(surfaces)
                         .padding(.horizontal, 20)
                         .padding(.top, 20)
 
@@ -256,6 +267,10 @@ struct HomeView: View {
             .onChange(of: activeSection) { _, newValue in
                 if let section = newValue { beginActivityTracking(section) } else { finalizeActivity() }
             }
+            .onChange(of: isPresenting, initial: true) { _, presenting in
+                store.setHomePresenting(presenting)
+            }
+            .onDisappear { store.setHomePresenting(false) }
             .onChange(of: scenePhase) { _, phase in
                 let now = Date()
                 if phase == .active {
@@ -296,44 +311,21 @@ struct HomeView: View {
 
     // MARK: - Full-screen section presentation
 
-    /// Each section closes itself from its own header (UX-03) — Home no longer
-    /// draws a floating button over a section, which stacked on top of Read's
-    /// pushed readers' own back button.
+    /// Each section closes itself from its own header (UX-03): ONE way out, the
+    /// same `SectionCloseButton` at the header's top trailing corner in every
+    /// section. Home draws nothing over a section, so nothing can stack on a
+    /// title or on a pushed screen's own back button.
     @ViewBuilder
     private func sectionView(_ section: HomeSection) -> some View {
         let close = { activeSection = nil }
         switch section {
         case .read: ReadView(onClose: close)
         case .deck: DeckView(onClose: close)
-        // TRANSITIONAL (UX-03): Speak, Watch, Listen and Converse do not draw a
-        // close button in their own headers yet, so Home still overlays one on
-        // them. None of the four pushes a screen with its own back button (their
-        // players and calls are full-screen covers of their own), so no two back
-        // affordances meet there. Drop this once each takes an `onClose`.
-        case .speak: SpeakView().overlay(alignment: .topLeading) { legacyCloseButton }
-        case .watch: WatchView().overlay(alignment: .topLeading) { legacyCloseButton }
-        case .listen: ListenView().overlay(alignment: .topLeading) { legacyCloseButton }
-        case .converse: ConverseView().overlay(alignment: .topLeading) { legacyCloseButton }
+        case .speak: SpeakView(onClose: close)
+        case .watch: WatchView(onClose: close)
+        case .listen: ListenView(onClose: close)
+        case .converse: ConverseView(onClose: close)
         }
-    }
-
-    private var legacyCloseButton: some View {
-        Button {
-            Haptics.tap()
-            activeSection = nil
-        } label: {
-            Image(systemName: "chevron.left")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: max(Theme.minimumHitTarget, 44 * tile),
-                       height: max(Theme.minimumHitTarget, 44 * tile))
-                .background(Color.black.opacity(0.22), in: Circle())
-                .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Back to Home")
-        .padding(.top, 56)
-        .padding(.leading, 16)
     }
 
     // MARK: - Gate + lesson entry (every entry point goes through these)
@@ -398,7 +390,7 @@ struct HomeView: View {
 
     // MARK: - Header
 
-    private func header(due: Int) -> some View {
+    private func header(due: Int, surfaces: HomeSurfaces) -> some View {
         ZStack(alignment: .bottom) {
             Theme.primaryGradient
                 .overlay(alignment: .topTrailing) {
@@ -480,7 +472,7 @@ struct HomeView: View {
                             .foregroundStyle(.white)
                         // White on the orange gradient measures 1.9–2.8:1 (UX-08):
                         // the subtitle sits on a text-safe scrim (5.2:1).
-                        Text(greetingSubtitle(due: due))
+                        Text(greetingSubtitle(due: due, surfaces: surfaces))
                             .font(.callout)
                             .foregroundStyle(.white)
                             .fixedSize(horizontal: false, vertical: true)
@@ -523,7 +515,7 @@ struct HomeView: View {
 
     // MARK: - Stats chip card (overlapping)
 
-    private func statsCard(due: Int) -> some View {
+    private func statsCard(due: Int, surfaces: HomeSurfaces) -> some View {
         VStack(spacing: 0) {
             Button {
                 withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
@@ -538,7 +530,7 @@ struct HomeView: View {
                          tint: Theme.success, label: "\(store.masteredThisWeek) mastered this week")
                     // Hidden until any card has been reviewed (UX-15): on day one the
                     // due number is the seeded batch, not a backlog.
-                    if store.homeSurfaces.showsDueCount {
+                    if surfaces.showsDueCount {
                         chipDivider
                         chip(icon: "brain.head.profile", value: "\(due)", unit: HomeCopy.dueNowLabel.lowercased(), tint: Theme.secondary,
                              label: "\(due) \(HomeCopy.dueNowLabel.lowercased())")
@@ -586,7 +578,7 @@ struct HomeView: View {
                     }
 
                     if !recommendations.isEmpty {
-                        recommendationsSection
+                        recommendationsSection(showsDueCount: surfaces.showsDueCount)
                     }
                 }
                 .padding(.horizontal, 16).padding(.bottom, 16).padding(.top, 2)
@@ -699,7 +691,9 @@ struct HomeView: View {
         return Array(result.sorted { $0.count > $1.count }.prefix(3))
     }
 
-    private var recommendationsSection: some View {
+    /// `showsDueCount` (UX-15): before any review the rows are the seeded batch,
+    /// so they carry no "Due now" badge — the same rule as the chip above.
+    private func recommendationsSection(showsDueCount: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles").font(.caption).foregroundStyle(Theme.primary)
@@ -725,13 +719,15 @@ struct HomeView: View {
                                 .font(.caption2).foregroundStyle(Theme.textSecondary)
                         }
                         Spacer()
-                        HStack(spacing: 4) {
-                            Image(systemName: "clock.fill").font(.caption2)
-                            Text(HomeCopy.dueNowLabel).font(.caption2.weight(.semibold))
+                        if showsDueCount {
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock.fill").font(.caption2)
+                                Text(HomeCopy.dueNowLabel).font(.caption2.weight(.semibold))
+                            }
+                            .foregroundStyle(Theme.warningText)
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background(Theme.warning.opacity(0.12)).clipShape(.capsule)
                         }
-                        .foregroundStyle(Theme.warningText)
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background(Theme.warning.opacity(0.12)).clipShape(.capsule)
                     }
                     .padding(Space.md)
                     .frame(minHeight: 44)
@@ -744,8 +740,10 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
                 .pressable()
-                .accessibilityLabel("\(rec.category.label), \(HomeCopy.gapsToReview(rec.count, practised: rec.practised)), \(HomeCopy.dueNowLabel)")
-                .accessibilityHint("Starts a lesson on what is due in \(rec.category.label)")
+                .accessibilityLabel("\(rec.category.label), \(HomeCopy.gapsToReview(rec.count, practised: rec.practised))"
+                                    + (showsDueCount ? ", \(HomeCopy.dueNowLabel)" : ""))
+                .accessibilityHint(showsDueCount ? "Starts a lesson on what is due in \(rec.category.label)"
+                                                 : "Starts a lesson on \(rec.category.label)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -763,15 +761,20 @@ struct HomeView: View {
 
     // MARK: - Foundation track (the beginner front door)
 
-    private var foundationSection: some View {
+    private func foundationSection(_ surfaces: HomeSurfaces) -> some View {
         // The bar counts to the gate's own finish line, not to every base skill:
         // the Foundation card disappears the moment reading opens, so a bar that
         // counted all 28 skills could only ever fill halfway (D10, round 3).
         let (mastered, total) = store.foundationProgress()
         let progress = min(1, Double(mastered) / Double(max(1, total)))
-        let progressCaption = HomeCopy.foundationProgress(done: mastered, target: total,
-                                                          governorHeld: store.isGovernorActive)
+        // Progress is stated ONCE, under the bar: the store's "Next unlock" line
+        // (UX-07). The count-only caption is the fallback should the store have none.
+        let progressLine = surfaces.nextUnlock
+            ?? HomeCopy.foundationProgress(done: mastered, target: total, governorHeld: store.isGovernorActive)
         let next = nextTargetConcept
+        let lessonTitle = HomeCopy.foundationLessonTitle(conceptName: next?.name,
+                                                         started: next.map { store.hasStartedLesson(on: $0) } ?? false)
+        let lessonDetail = HomeCopy.foundationLessonDetail(firstLessonPending: surfaces.firstLessonPending)
         let lessonsDone = store.lessonsCompletedToday
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -782,35 +785,38 @@ struct HomeView: View {
                 Text("Build Your Foundation").scaledSerifDisplay(22, weight: .bold).foregroundStyle(Theme.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Text("\(mastered)/\(total)").font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                    .accessibilityHidden(true)
             }
 
             Text("Let's lock in the core basics first. Each lesson builds on the last.")
                 .font(.subheadline).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 progressBar(progress, tint: Theme.secondary, height: 8)
-                Text(progressCaption)
-                    .font(.caption).foregroundStyle(Theme.textSecondary)
+                nextUnlockLabel(progressLine)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Foundation progress")
-            .accessibilityValue(progressCaption)
+            .accessibilityValue(progressLine)
 
             // Pace (B10): "Lesson 2 of 3 today", straight from the store's count.
-            HStack(spacing: 8) {
-                Image(systemName: lessonsDone >= lessonTarget ? "checkmark.circle.fill" : "graduationcap.fill")
-                    .font(.footnote)
-                    .foregroundStyle(lessonsDone >= lessonTarget ? Theme.success : Theme.secondary)
-                    .accessibilityHidden(true)
-                Text(HomeCopy.lessonPace(done: lessonsDone, target: lessonTarget))
-                    .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-                if store.isGovernorActive {
-                    Text(dailyPlan.rationale).font(.caption2).foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2).multilineTextAlignment(.trailing)
+            // While the retention governor is active, what today's lessons do about
+            // it gets its own full-width line under the pace, never a squeezed
+            // trailing caption beside it (UX-25).
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: lessonsDone >= lessonTarget ? "checkmark.circle.fill" : "graduationcap.fill")
+                        .font(.footnote)
+                        .foregroundStyle(lessonsDone >= lessonTarget ? Theme.success : Theme.secondary)
+                        .accessibilityHidden(true)
+                    Text(HomeCopy.lessonPace(done: lessonsDone, target: lessonTarget))
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let note = surfaces.foundationFocusNote {
+                    Text(note).font(.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -824,9 +830,9 @@ struct HomeView: View {
                         .background(Color.white.opacity(0.2)).clipShape(.rect(cornerRadius: 12))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(next.map { "Continue: \($0.name)" } ?? "Review the basics")
+                        Text(lessonTitle)
                             .font(.subheadline.weight(.bold)).foregroundStyle(.white)
-                        Text("Tap to start your next basics lesson").font(.caption).foregroundStyle(.white.opacity(0.85))
+                        Text(lessonDetail).font(.caption).foregroundStyle(.white.opacity(0.85))
                     }
                     Spacer()
                     Image(systemName: "arrow.right").font(.subheadline.weight(.bold)).foregroundStyle(.white)
@@ -840,13 +846,13 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             .pressable()
-            .accessibilityLabel(next.map { "Continue: \($0.name)" } ?? "Review the basics")
-            .accessibilityHint("Starts your next basics lesson")
+            .accessibilityLabel(lessonTitle)
+            .accessibilityHint(surfaces.firstLessonPending ? "Starts your first lesson" : "Starts your next basics lesson")
 
             // The capstone cadence applies to Foundation learners too (C15).
             if capstoneReady { capstoneRow }
 
-            nextUnlockRow
+            bridgeReadingRow
         }
         .padding(Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -856,49 +862,48 @@ struct HomeView: View {
         .softLift(radius: 22, y: 10)
     }
 
-    /// The path ahead for a Foundation learner, as ONE line (UX-07): everything
-    /// locked sits behind Reading, so the store's "Next unlock" line stands for all
-    /// of it instead of a row of padlocked chips. Reading in the bridge state (D5)
-    /// is offered here: short pieces only.
-    private var nextUnlockRow: some View {
-        let bridgeOpen = store.readiness(for: .reading) == .foundation
-        return VStack(alignment: .leading, spacing: 8) {
-            if let line = store.homeSurfaces.nextUnlock {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "lock.open.fill").font(.caption).foregroundStyle(Theme.textSecondary)
-                        .accessibilityHidden(true)
-                    Text(line)
-                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-            }
-            if bridgeOpen {
-                Button { open(.read) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: LearningModality.reading.icon).font(.footnote).foregroundStyle(Theme.success)
-                            .accessibilityHidden(true)
-                        Text("Read short pieces at your level").font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textSecondary)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .frame(minHeight: Theme.minimumHitTarget)
-                    .background(Theme.successLight).clipShape(.rect(cornerRadius: Radius.card))
-                }
-                .buttonStyle(.plain)
-                .pressable()
-                .accessibilityHint("Opens Reading with short, level-capped pieces")
-            }
+    /// The ONE "Next unlock" line (UX-07), in Foundation and after it: everything
+    /// still locked is left off Home and this line stands for it. A closed lock —
+    /// what it names is not open yet.
+    private func nextUnlockLabel(_ line: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "lock.fill").font(.caption).foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+            Text(line)
+                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Reading in the bridge state (D5) is offered on the Foundation card: short
+    /// pieces only.
+    @ViewBuilder private var bridgeReadingRow: some View {
+        if store.readiness(for: .reading) == .foundation {
+            Button { open(.read) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: LearningModality.reading.icon).font(.footnote).foregroundStyle(Theme.success)
+                        .accessibilityHidden(true)
+                    Text("Read short pieces at your level").font(.footnote.weight(.semibold)).foregroundStyle(Theme.text)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.textSecondary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .background(Theme.successLight).clipShape(.rect(cornerRadius: Radius.card))
+            }
+            .buttonStyle(.plain)
+            .pressable()
+            .accessibilityHint("Opens Reading with short, level-capped pieces")
+        }
     }
 
     // MARK: - Today plan (the front door)
 
-    private var todayPlanSection: some View {
+    private func todayPlanSection(_ surfaces: HomeSurfaces) -> some View {
         let plan = dailyPlan
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -924,9 +929,10 @@ struct HomeView: View {
                 // The unlock action leads and is the primary action (D2).
                 if let unlock = plan.unlockItem { unlockRow(unlock) }
                 ForEach(plan.items.filter { $0.kind != .unlock }) { item in planRow(item) }
-                // Chosen activities that are still locked: disabled, with the condition (D1).
-                ForEach(store.lockedChosenModalities) { m in lockedPlanRow(m) }
             }
+            // What is still locked, as ONE line (UX-07): no row of padlocks the
+            // moment Reading opens. Nil when the plan above already names it.
+            if let line = surfaces.nextUnlock { nextUnlockLabel(line) }
 
             // The plan already carries a lessons row that starts the same lesson,
             // so the "Lesson ready" card only shows for a plan with no lessons spine.
@@ -1046,32 +1052,6 @@ struct HomeView: View {
         .pressable()
         .accessibilityLabel("Start with \(modality.label)")
         .accessibilityValue("\(ReadinessCopy.minutesProgress(done: done, bar: item.target)); opens \(opens)")
-    }
-
-    /// A chosen activity that is still locked: disabled, stating its condition (D1).
-    private func lockedPlanRow(_ modality: LearningModality) -> some View {
-        let condition = store.unlockCondition(for: modality) ?? ReadinessCopy.lockedLabel
-        return HStack(spacing: 14) {
-            ZStack {
-                Circle().stroke(Theme.border, lineWidth: 4)
-                    .frame(width: 40 * tile, height: 40 * tile)
-                Image(systemName: "lock.fill").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-            }
-            .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(modality.label).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-                Text(condition).font(.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-        }
-        .padding(Space.md)
-        .frame(minHeight: Theme.minimumHitTarget)
-        .background(Theme.backgroundSecondary.opacity(0.6))
-        .clipShape(.rect(cornerRadius: Radius.card))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.border.opacity(0.4), lineWidth: 0.5))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(modality.label), locked. \(condition)")
     }
 
     private var lessonReadyRow: some View {
@@ -1210,7 +1190,7 @@ struct HomeView: View {
 
     // MARK: - Explore (secondary tool drawer)
 
-    private func exploreSection(due: Int) -> some View {
+    private func exploreSection(due: Int, surfaces: HomeSurfaces) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Button {
                 withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
@@ -1238,7 +1218,7 @@ struct HomeView: View {
             .accessibilityHint(exploreExpanded ? "Collapses the activity cards" : "Expands the activity cards")
 
             if exploreExpanded {
-                carousel(due: due).transition(reduceMotion ? AnyTransition.opacity
+                carousel(due: due, surfaces: surfaces).transition(reduceMotion ? AnyTransition.opacity
                                                  : AnyTransition.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -1246,7 +1226,7 @@ struct HomeView: View {
 
     // MARK: - Signature sliding carousel
 
-    private func featureCards(due: Int) -> [FeatureCard] {
+    private func featureCards(due: Int, surfaces: HomeSurfaces) -> [FeatureCard] {
         [
             FeatureCard(id: "learn", title: "Learn", subtitle: "Practice what you're learning",
                         description: "Master vocabulary, grammar & more with adaptive lessons",
@@ -1278,23 +1258,22 @@ struct HomeView: View {
             FeatureCard(id: "deck", title: HomeCopy.myWordsTitle, subtitle: "Spaced repetition",
                         description: "Drill your words until mastery with smart review",
                         icon: "square.stack.3d.up.fill", iconColor: Theme.primary, iconBg: Theme.primaryLight,
-                        stats: HomeCopy.deckCardStat(due: due, showsDueCount: store.homeSurfaces.showsDueCount),
+                        stats: HomeCopy.deckCardStat(due: due, showsDueCount: surfaces.showsDueCount),
                         modality: nil) { open(.deck) },
         ]
     }
 
-    private func carousel(due: Int) -> some View {
+    private func carousel(due: Int, surfaces: HomeSurfaces) -> some View {
         // Built once and shared with the nav bar below: the list was previously
         // rebuilt for every card, every nav item and every width calculation.
-        // A Foundation learner sees only what they can open today (UX-07); the
-        // Foundation card's "Next unlock" line stands for the rest.
-        let surfaces = store.homeSurfaces
-        let cards = featureCards(due: due).filter { surfaces.shows($0.modality) }
+        // Only what the learner can open today is shown (UX-07); the one
+        // "Next unlock" line stands for the rest.
+        let cards = featureCards(due: due, surfaces: surfaces).filter { surfaces.shows($0.modality) }
         return VStack(spacing: 18) {
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
                     ForEach(cards) { card in
-                        featureCardView(card, due: due)
+                        featureCardView(card, due: due, surfaces: surfaces)
                             .frame(width: cardWidth)
                             // The transition closure is @Sendable and nonisolated:
                             // capture the Reduce Motion value, never read the
@@ -1375,7 +1354,7 @@ struct HomeView: View {
         .frame(width: barWidth + 10)
     }
 
-    private func featureCardView(_ card: FeatureCard, due: Int) -> some View {
+    private func featureCardView(_ card: FeatureCard, due: Int, surfaces: HomeSurfaces) -> some View {
         let locked = card.modality.map { !store.canOpen($0) } ?? false
         let condition = card.modality.flatMap { store.unlockCondition(for: $0) }
         return Button(action: card.action) {
@@ -1409,7 +1388,7 @@ struct HomeView: View {
                 Spacer(minLength: 18)
 
                 if card.id == "learn" {
-                    learnStatRow(due: due)
+                    learnStatRow(due: due, showsDueCount: surfaces.showsDueCount)
                         .padding(.top, 16)
                         .overlay(alignment: .top) {
                             Rectangle().fill(Theme.borderLight).frame(height: 1)
@@ -1442,7 +1421,11 @@ struct HomeView: View {
         .accessibilityHint(locked ? "" : card.description)
     }
 
-    private func learnStatRow(due: Int) -> some View {
+    /// The Learn card's numbers. The "Due now" column follows the same rule as the
+    /// stats chip and My words (`AppStore.showsDueCount`, UX-15): before any card
+    /// has been reviewed the queue is the seeded batch, already counted under
+    /// "To learn", so the column is left out rather than called "due".
+    private func learnStatRow(due: Int, showsDueCount: Bool) -> some View {
         let active = store.visibleGaps.count
         let mastered = store.masteredGaps.count
         let total = max(active + mastered, 1)
@@ -1451,8 +1434,10 @@ struct HomeView: View {
                 learnStat(value: "\(active)", label: HomeCopy.toLearnLabel)
                 Rectangle().fill(Theme.border).frame(width: 1, height: 26)
                 learnStat(value: "\(mastered)", label: "Mastered")
-                Rectangle().fill(Theme.border).frame(width: 1, height: 26)
-                learnStat(value: "\(due)", label: HomeCopy.dueNowLabel)
+                if showsDueCount {
+                    Rectangle().fill(Theme.border).frame(width: 1, height: 26)
+                    learnStat(value: "\(due)", label: HomeCopy.dueNowLabel)
+                }
             }
             progressBar(Double(mastered) / Double(total), tint: Theme.secondary, height: 6)
                 .accessibilityElement(children: .ignore)
@@ -1556,14 +1541,13 @@ struct HomeView: View {
 
     // MARK: - Resources
 
-    private var resourcesSection: some View {
+    private func resourcesSection(_ surfaces: HomeSurfaces) -> some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             Text("Resources").scaledSerifDisplay(20, weight: .semibold).foregroundStyle(Theme.text)
                 .accessibilityAddTraits(.isHeader)
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
-                    // A Foundation learner sees only the resources open today (UX-07).
-                    let surfaces = store.homeSurfaces
+                    // Only the resources open today are shown (UX-07).
                     ForEach([HomeResource.scenarios, .translator, .tenses, .accent, .idioms, .gaps]
                         .filter { surfaces.shows($0.modality) }) { r in
                         resourceButton(r)

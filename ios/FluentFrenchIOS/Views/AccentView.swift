@@ -301,8 +301,8 @@ private struct AccentPracticeView: View {
     /// What the deck button says: already saved, the same word in English (no card
     /// to make), or an invitation to save.
     private func saveTitle(saved: Bool, selfGlossed: Bool) -> String {
-        if saved { return "In your deck" }
-        return selfGlossed ? "Same word in English" : "Save to my deck"
+        if saved { return HomeCopy.inMyWords }
+        return selfGlossed ? "Same word in English" : HomeCopy.saveToMyWords
     }
 
     private func saveSymbol(saved: Bool, selfGlossed: Bool) -> String {
@@ -350,12 +350,12 @@ private struct AccentPracticeView: View {
             }
             .buttonStyle(.plain)
             .disabled(saved || selfGlossed)
-            .accessibilityLabel(saved ? "\(word.word) is already in your deck"
+            .accessibilityLabel(saved ? HomeCopy.itemAlreadyInMyWords(word.word)
                                 : (selfGlossed ? "\(word.word) is the same word in English"
-                                   : "Save \(word.word) to my deck"))
+                                   : HomeCopy.saveItemToMyWords(word.word)))
             .accessibilityHint(saved ? ""
                                : (selfGlossed ? "Practice the sound here; there is nothing to review as a card"
-                                  : "Adds this word to your practice deck"))
+                                  : HomeCopy.addsToMyWords("word")))
         }
         .padding(20)
         .frame(maxWidth: .infinity)

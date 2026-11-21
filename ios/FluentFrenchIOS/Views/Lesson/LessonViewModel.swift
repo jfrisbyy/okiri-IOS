@@ -56,8 +56,10 @@ final class LessonViewModel {
     /// The day so far and whether a next lesson is on offer (UX-05). Set when a
     /// lesson that recorded answers is booked; nil for an empty lesson.
     private(set) var nextLessonOffer: NextLessonOffer? = nil
-    /// The pipeline's headline when "Next lesson" found nothing to teach (C23).
-    private(set) var nextLessonNotice: String? = nil
+    /// "Next lesson" came back `.empty` (C23): the Smart selector has nothing
+    /// practicable right now, so the button is withdrawn rather than left to repeat
+    /// a no-op (see `LessonCompletionActions`).
+    private(set) var nextLessonExhausted = false
     /// AI teaching summaries — only for skill cards without a content `teaching` block (C17 fallback).
     private(set) var conceptExplanations: [String: String] = [:]
 
@@ -518,14 +520,24 @@ final class LessonViewModel {
 
     /// "Next lesson" on the completion screen (UX-05): the same Smart selection
     /// Home's lesson button asks for, played in this cover so the learner does not
-    /// go back through Home. An empty outcome shows the selector's own headline.
+    /// go back through Home. An empty outcome withdraws the button and says why.
     func startNextLesson(store: AppStore) {
         switch LessonPipeline(store: store).outcome(for: .smart()) {
         case .lesson(let next):
             restart(with: next)
-        case .empty(let headline):
-            nextLessonNotice = headline
+        case .empty:
+            nextLessonExhausted = true
         }
+    }
+
+    /// The completion screen's buttons and which one leads, from what the lesson
+    /// ended with and what the follow-ups already came back with.
+    var completionActions: LessonCompletionActions {
+        LessonCompletionActions.resolve(outOfHearts: summary?.end == .outOfHearts,
+                                        hasMissed: !(summary?.missed.isEmpty ?? true),
+                                        practiceExhausted: followUpNotice != nil,
+                                        nextAvailable: nextLessonOffer?.nextAvailable == true,
+                                        nextExhausted: nextLessonExhausted)
     }
 
     private func restart(with next: AssembledLesson) {
@@ -538,7 +550,7 @@ final class LessonViewModel {
         isNewBest = false
         followUpNotice = nil
         nextLessonOffer = nil
-        nextLessonNotice = nil
+        nextLessonExhausted = false
         conceptExplanations = [:]
         masteryFlash = nil
         timer = LessonTimer()

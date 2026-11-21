@@ -1032,7 +1032,7 @@ private struct FlowWords: View {
                     .contentShape(Rectangle())
                     .onTapGesture { if lookupEnabled { onWordTap(headword) } }
                     .accessibilityAddTraits(lookupEnabled ? .isButton : [])
-                    .accessibilityHint(lookupEnabled ? (saved ? "Saved to your deck" : "Look up this word") : "")
+                    .accessibilityHint(lookupEnabled ? (saved ? HomeCopy.savedToMyWords : "Look up this word") : "")
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment == .center ? .center : .leading)

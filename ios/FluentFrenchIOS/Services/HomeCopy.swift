@@ -45,6 +45,10 @@ nonisolated enum HomeCopy {
     /// only ever asked once Reading is open (`AppStore.shouldAskPreferences`), so
     /// the line is always true when it shows.
     static let preferencesAskIntro = "You've unlocked Reading — how do you want to spend your time?"
+    /// The same screen for a learner whose Reading was open before any lesson was
+    /// played (`AppStore.preferencesAskIntro`): nothing was unlocked in front of
+    /// them, their level opens it.
+    static let preferencesPlacedIntro = "Your level opens Reading now — how do you want to spend your time?"
 
     /// A category row's two counts, for the Gap Map cards and the deck's category
     /// list. The unmastered half is the SAME quantity the overviews label with
@@ -65,9 +69,49 @@ nonisolated enum HomeCopy {
 
     /// The My words card's stat line. Before any card has been reviewed the due
     /// number is the freshly seeded batch, not a backlog (UX-15,
-    /// `HomeSurfaces.showsDueCount`), so it is not called "due".
+    /// `AppStore.showsDueCount`), so it is not called "due": it is what the first
+    /// lessons start on — the same words the deck itself then offers.
     static func deckCardStat(due: Int, showsDueCount: Bool) -> String {
-        showsDueCount ? "\(due) \(dueNowLabel.lowercased())" : "Reviews start after your first lesson"
+        showsDueCount ? "\(due) \(dueNowLabel.lowercased())" : firstWordsReady(due)
+    }
+
+    // MARK: My words before the first review (UX-15)
+    //
+    // The deck, the Home "My words" card and the Learn card follow ONE rule
+    // (`AppStore.showsDueCount`): until a card has been reviewed, the queued batch
+    // is the freshly seeded Foundation set, so no surface calls it "due".
+
+    /// "20 words ready for your first lessons"; "Nothing to review yet" when the
+    /// seeded batch is not due yet either.
+    static func firstWordsReady(_ count: Int) -> String {
+        guard count > 0 else { return "Nothing to review yet" }
+        return "\(count) word\(count == 1 ? "" : "s") ready for your first lessons"
+    }
+
+    /// The label under the deck header's first number: "Due now", or "Ready" for
+    /// the seeded batch before any review.
+    static func deckQueueLabel(showsDueCount: Bool) -> String {
+        showsDueCount ? dueNowLabel : "Ready"
+    }
+
+    /// The deck's spaced-repetition summary: "4 due now · 12 coming up", or the
+    /// first-lessons line before any review.
+    static func deckReviewSummary(due: Int, upcoming: Int, showsDueCount: Bool) -> String {
+        showsDueCount ? "\(due) \(dueNowLabel.lowercased()) · \(upcoming) \(upcomingLabel.lowercased())"
+                      : firstWordsReady(due)
+    }
+
+    /// The deck's review button. Before any review it starts on the ready batch
+    /// without calling it a review of what is due.
+    static func deckReviewButton(due: Int, showsDueCount: Bool) -> String {
+        guard due > 0 else { return "Review what's coming up" }
+        return showsDueCount ? "Review due now" : "Start on these words"
+    }
+
+    /// The VoiceOver hint of `deckReviewButton`.
+    static func deckReviewHint(due: Int, showsDueCount: Bool) -> String {
+        guard due > 0 else { return "Starts an early review of what is coming up" }
+        return showsDueCount ? "Starts a review of the cards due today" : "Starts a lesson on the words ready for you"
     }
 
     /// Time-of-day greeting (French, as the Expo original).
@@ -192,6 +236,20 @@ nonisolated enum HomeCopy {
         return "Lesson \(done + 1) of \(target) today"
     }
 
+    /// The Foundation card's call to action (UX-15): "Start: Greetings" for a
+    /// concept no lesson has taught yet — on day one, every one — and
+    /// "Continue: Greetings" only once a lesson has; "Review the basics" when the
+    /// selector has no concept to teach.
+    static func foundationLessonTitle(conceptName: String?, started: Bool) -> String {
+        guard let conceptName else { return "Review the basics" }
+        return started ? "Continue: \(conceptName)" : "Start: \(conceptName)"
+    }
+
+    /// The line under `foundationLessonTitle`.
+    static func foundationLessonDetail(firstLessonPending: Bool) -> String {
+        firstLessonPending ? "Tap to start your first lesson" : "Tap to start your next basics lesson"
+    }
+
     /// The Foundation bar's caption: the track ends where reading opens, so the
     /// number the learner is counting to is the gate's, not every base skill. A full
     /// bar is only ever on screen while the retention governor is holding the gate
@@ -262,5 +320,37 @@ nonisolated enum HomeCopy {
     /// The capture toast after an activity: "Saved 3 things you didn't know".
     static func captured(_ count: Int) -> String {
         "Saved \(count) thing\(count == 1 ? "" : "s") you didn't know"
+    }
+
+    // MARK: Capture wording (UX-12)
+    //
+    // Every save affordance names the learner's deck by its ONE learner-facing
+    // name, `myWordsTitle`: the screen the saved card lands on is called "My
+    // words", so the button that puts it there says so too. "Deck" stays in type
+    // names and persisted keys only.
+
+    /// The save button's call to action.
+    static let saveToMyWords = "Save to \(myWordsTitle)"
+    /// The state after a save went through.
+    static let savedToMyWords = "Saved to \(myWordsTitle)"
+    /// The state when the item was already saved earlier.
+    static let alreadyInMyWords = "Already in \(myWordsTitle)"
+    /// The short saved-state label on compact rows ("In My words").
+    static let inMyWords = "In \(myWordsTitle)"
+
+    /// "Save tu es to My words" — the VoiceOver label for a save button that names its item.
+    static func saveItemToMyWords(_ item: String) -> String {
+        "Save \(item) to \(myWordsTitle)"
+    }
+
+    /// "tu es is already in My words" — the VoiceOver label once that item is saved.
+    static func itemAlreadyInMyWords(_ item: String) -> String {
+        "\(item) is already in \(myWordsTitle)"
+    }
+
+    /// "Adds this word to My words" — the VoiceOver hint of a save button; `kind`
+    /// is what is being saved ("word", "idiom", "form").
+    static func addsToMyWords(_ kind: String) -> String {
+        "Adds this \(kind) to \(myWordsTitle)"
     }
 }

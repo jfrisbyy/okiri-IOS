@@ -76,9 +76,10 @@ struct PreferencesView: View {
             }
             .padding(.top, isOnboarding ? 16 : 0)
             .accessibilityHidden(true)
-            // Asked once, when Reading opens (UX-06, `AppStore.shouldAskPreferences`).
+            // Asked once, when Reading opens (UX-06, `AppStore.shouldAskPreferences`);
+            // the store picks the intro that is true for how Reading opened.
             if isOnboarding {
-                Text(HomeCopy.preferencesAskIntro)
+                Text(store.preferencesAskIntro)
                     .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.primaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }

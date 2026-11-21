@@ -1,0 +1,1012 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "present-ir-re-verbs",
+      "category": "grammar",
+      "teaching": {
+        "rule": "Regular -ir verbs like finir (to finish) and choisir (to choose) drop -ir and add -is, -is, -it, -issons, -issez, -issent: je finis, tu finis, il finit, nous finissons, vous finissez, ils finissent. The -iss- in the plural is the mark of this group. Regular -re verbs like vendre (to sell) and attendre (to wait for) drop -re and add -s, -s, nothing, -ons, -ez, -ent: je vends, tu vends, il vend, nous vendons, vous vendez, ils vendent. In the singular the endings are silent, so finis and finit sound the same, and so do vends and vend; in the plural you hear more: finissent ends in a clear 'ss' sound and vendent in a clear d.",
+        "examples": [
+          {
+            "fr": "Je finis à six heures.",
+            "en": "I finish at six.",
+            "note": "finir: stem fin- plus -is; the s is silent."
+          },
+          {
+            "fr": "Nous choisissons un film.",
+            "en": "We're choosing a film.",
+            "note": "The plural of choisir inserts -iss-: choisissons."
+          },
+          {
+            "fr": "Elle vend des fleurs.",
+            "en": "She sells flowers.",
+            "note": "-re verbs add nothing for il / elle / on; the final d is silent."
+          },
+          {
+            "fr": "Ils attendent le train.",
+            "en": "They're waiting for the train.",
+            "note": "In the ils form the d is pronounced: 'a-tand'. attendre already means 'wait for'."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "nous finissons",
+            "en": "we finish",
+            "note": "NOT 'nous finons': regular -ir verbs put -iss- before the plural endings (finissons, finissez, finissent)."
+          },
+          {
+            "fr": "il vend",
+            "en": "he sells",
+            "note": "NOT 'il vendt': -re verbs add no ending for il / elle / on; the d belongs to the stem and stays silent."
+          },
+          {
+            "fr": "je pars",
+            "en": "I'm leaving",
+            "note": "Not every -ir verb works like finir: partir, sortir and dormir drop a consonant in the singular (je pars, je sors, je dors) and never take -iss- (nous partons)."
+          },
+          {
+            "fr": "J'attends le bus.",
+            "en": "I'm waiting for the bus.",
+            "note": "NOT 'J'attends pour le bus': attendre already contains the 'for'."
+          }
+        ],
+        "commonMistake": "Learners drop the -iss- from the plural of finir-type verbs ('nous finons', 'ils choisent'); the plural is nous finissons, vous finissez, ils finissent, and the same for choisir: nous choisissons."
+      },
+      "probes": [
+        {
+          "fr": "nous ___ (finir)",
+          "en": "finissons",
+          "ex": "Nous finissons à six heures.",
+          "exEn": "We finish at six.",
+          "options": [
+            "finons",
+            "finisons",
+            "finissez"
+          ]
+        },
+        {
+          "fr": "il ___ (vendre)",
+          "en": "vend",
+          "ex": "Il vend sa voiture.",
+          "exEn": "He's selling his car.",
+          "options": [
+            "vendre",
+            "vendt",
+            "vends"
+          ]
+        },
+        {
+          "fr": "ils ___ (choisir)",
+          "en": "choisissent",
+          "ex": "Ils choisissent un restaurant.",
+          "exEn": "They're choosing a restaurant.",
+          "options": [
+            "choisent",
+            "choisit",
+            "choisissez"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "je finis",
+          "en": "I finish",
+          "note": "finir: stem fin- plus -is for je; the s is silent, so it sounds like 'fi-ni'.",
+          "ex": "Le vendredi, je finis à midi.",
+          "exEn": "On Fridays I finish at noon.",
+          "diff": "easy",
+          "blank": "je finis",
+          "alts": [
+            "finis",
+            "je termine"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tu choisis",
+          "en": "you choose (informal)",
+          "note": "choisir: stem chois- plus -is for tu; it looks and sounds exactly like je choisis.",
+          "ex": "Ce soir, c'est ton tour : tu choisis le film.",
+          "exEn": "Tonight it's your turn: you choose the film.",
+          "diff": "okay",
+          "blank": "tu choisis",
+          "alts": [
+            "choisis"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "elle finit",
+          "en": "she finishes",
+          "note": "-it for il, elle and on; the t is silent, so elle finit sounds like je finis.",
+          "ex": "D'habitude, elle finit tard.",
+          "exEn": "She usually finishes late.",
+          "diff": "okay",
+          "blank": "elle finit",
+          "alts": [
+            "finit",
+            "elle termine"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "nous finissons",
+          "en": "we finish",
+          "note": "The plural of finir-type verbs inserts -iss- before -ons: fi-ni-SSON.",
+          "ex": "Le jeudi, nous finissons à cinq heures.",
+          "exEn": "On Thursdays we finish at five.",
+          "diff": "okay",
+          "blank": "nous finissons",
+          "alts": [
+            "finissons",
+            "nous terminons",
+            "on finit",
+            "on termine"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous choisissez",
+          "en": "you choose (formal or plural)",
+          "note": "-iss- plus -ez for vous; the s between vowels sounds like z: choi-zi-SSÉ.",
+          "ex": "Si vous choisissez cette option, votre billet coûte plus cher.",
+          "exEn": "If you choose this option, your ticket costs more.",
+          "diff": "hard",
+          "blank": "vous choisissez",
+          "alts": [
+            "choisissez"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ils choisissent",
+          "en": "they choose",
+          "note": "-iss- plus a silent -ent for ils and elles: you hear the 'ss', which tells ils choisissent apart from il choisit.",
+          "ex": "Pour les vacances, ils choisissent toujours la mer.",
+          "exEn": "For their holidays they always pick the seaside.",
+          "diff": "hard",
+          "blank": "ils choisissent",
+          "alts": [
+            "choisissent",
+            "elles choisissent"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je vends",
+          "en": "I sell",
+          "note": "vendre: stem vend- plus -s for je; both the d and the s are silent.",
+          "ex": "Si ça t'intéresse, je vends mon vélo.",
+          "exEn": "If you're interested, I'm selling my bike.",
+          "diff": "easy",
+          "blank": "je vends",
+          "alts": [
+            "vends"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "il vend",
+          "en": "he sells",
+          "note": "-re verbs add no ending for il, elle and on: il vend, with a silent d.",
+          "ex": "Au marché, il vend des fruits et des légumes.",
+          "exEn": "At the market he sells fruit and vegetables.",
+          "diff": "okay",
+          "blank": "il vend",
+          "alts": [
+            "vend"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "nous vendons",
+          "en": "we sell",
+          "note": "Stem vend- plus -ons; the d is now pronounced: van-DON.",
+          "ex": "Ici, nous vendons du pain bio.",
+          "exEn": "Here we sell organic bread.",
+          "diff": "okay",
+          "blank": "nous vendons",
+          "alts": [
+            "vendons",
+            "on vend"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "j'attends",
+          "en": "I'm waiting (for)",
+          "note": "attendre starts with a vowel, so je becomes j'; attendre needs no word for 'for'.",
+          "ex": "Pardon, j'attends quelqu'un.",
+          "exEn": "Sorry, I'm waiting for someone.",
+          "diff": "easy",
+          "blank": "j'attends",
+          "alts": [
+            "attends"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous attendez",
+          "en": "you're waiting (formal or plural)",
+          "note": "Stem attend- plus -ez for vous; the d is pronounced: a-tan-DÉ.",
+          "ex": "Bonjour, vous attendez le médecin ? Asseyez-vous, il arrive.",
+          "exEn": "Hello, are you waiting for the doctor? Have a seat, he's on his way.",
+          "diff": "okay",
+          "blank": "vous attendez",
+          "alts": [
+            "attendez"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ils répondent",
+          "en": "they answer",
+          "note": "répondre follows vendre: stem répond- plus a silent -ent, so you hear the d: ré-POND.",
+          "ex": "Quand je pose une question, ils répondent en anglais.",
+          "exEn": "When I ask a question, they reply in English.",
+          "diff": "hard",
+          "blank": "ils répondent",
+          "alts": [
+            "répondent",
+            "elles répondent"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tu entends",
+          "en": "you hear (informal)",
+          "note": "entendre (to hear) follows vendre: tu entends, with a silent -ds.",
+          "ex": "Chut ! Écoute, tu entends ce bruit ?",
+          "exEn": "Shh! Listen, can you hear that noise?",
+          "diff": "okay",
+          "blank": "tu entends",
+          "alts": [
+            "entends"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "imperative",
+      "category": "grammar",
+      "teaching": {
+        "rule": "The imperative gives orders, advice and invitations. It has three forms, taken from the present tense with the subject pronoun left out: the tu form (Regarde !), the nous form, which means 'let's' (Regardons !), and the vous form, for one person you call vous or for several people (Regardez !). For -er verbs, for aller and for verbs like ouvrir and offrir, the tu form loses its final s: tu manges becomes Mange !, tu vas becomes Va !, tu ouvres becomes Ouvre ! Most other verbs keep it: Finis ! Attends ! Viens ! Before y the s comes back: Vas-y ! To say 'don't', put ne... pas around the verb: Ne touche pas ! Être and avoir have their own forms: sois, soyons, soyez and aie, ayons, ayez.",
+        "examples": [
+          {
+            "fr": "Mange ta soupe !",
+            "en": "Eat your soup!",
+            "note": "tu manges → Mange !: no subject, and the s of an -er verb disappears."
+          },
+          {
+            "fr": "Allons-y !",
+            "en": "Let's go!",
+            "note": "The nous form means 'let's'; y is 'there', joined to the verb by a hyphen."
+          },
+          {
+            "fr": "Venez avec nous !",
+            "en": "Come with us!",
+            "note": "The vous form, for one person you call vous or for a group."
+          },
+          {
+            "fr": "Ne parle pas si fort !",
+            "en": "Don't talk so loudly!",
+            "note": "ne and pas surround the verb, as in any negative."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Tu regardes la télé.",
+            "en": "You're watching TV.",
+            "note": "With tu it is a statement. To make it an order, drop tu and the s: Regarde la télé !"
+          },
+          {
+            "fr": "Regarde !",
+            "en": "Look!",
+            "note": "NOT 'Regardes !': -er verbs (and aller: Va !) lose the s of the tu form in the imperative."
+          },
+          {
+            "fr": "Attends !",
+            "en": "Wait!",
+            "note": "finir-type verbs and -re verbs keep their s: Attends ! Finis ! It is -er verbs and aller (Va !) that drop it."
+          }
+        ],
+        "commonMistake": "Learners keep the s on -er verbs ('Regardes !', 'Manges !') or keep the pronoun ('Tu regarde !'); the tu imperative of an -er verb is the present form without tu and without the s: Regarde ! Mange !"
+      },
+      "probes": [
+        {
+          "fr": "(tu) ___ ! (écouter)",
+          "en": "Écoute",
+          "ex": "Écoute, c'est important.",
+          "exEn": "Listen, it's important.",
+          "options": [
+            "Écoutes",
+            "Écouter",
+            "Écoutons"
+          ]
+        },
+        {
+          "fr": "N'oublie pas ton billet.",
+          "en": "Don't forget your ticket.",
+          "ex": "N'oublie pas ton billet, on part demain.",
+          "exEn": "Don't forget your ticket, we're leaving tomorrow.",
+          "options": [
+            "You haven't forgotten your ticket.",
+            "You're not going to forget your ticket.",
+            "Don't lose your ticket."
+          ]
+        },
+        {
+          "fr": "Partons tout de suite.",
+          "en": "Let's leave right away.",
+          "ex": "Il est tard, partons tout de suite.",
+          "exEn": "It's late, let's leave right away.",
+          "options": [
+            "We're leaving right away.",
+            "Leave right away.",
+            "We left right away."
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "Regarde !",
+          "en": "look! (informal)",
+          "note": "tu regardes → Regarde !: no pronoun, and an -er verb drops its s.",
+          "ex": "Regarde, ton bus arrive !",
+          "exEn": "Look, your bus is coming!",
+          "diff": "easy",
+          "blank": "Regarde",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "Écoute !",
+          "en": "listen! (informal)",
+          "note": "écouter is an -er verb, so tu écoutes becomes Écoute ! with no s.",
+          "ex": "Écoute, j'ai une idée pour ton anniversaire.",
+          "exEn": "Listen, I've got an idea for your birthday.",
+          "diff": "easy",
+          "blank": "Écoute",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "Attends !",
+          "en": "wait! (informal)",
+          "note": "attendre is a -re verb, so the s stays: tu attends → Attends !",
+          "ex": "Attends, tu as oublié ton sac !",
+          "exEn": "Wait, you've forgotten your bag!",
+          "diff": "okay",
+          "blank": "Attends",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "Réfléchis bien !",
+          "en": "think carefully! (informal)",
+          "note": "réfléchir is a finir-type verb, so the s stays: Réfléchis !",
+          "ex": "Réfléchis bien avant de donner ta réponse.",
+          "exEn": "Think carefully before you give your answer.",
+          "diff": "okay",
+          "blank": "Réfléchis",
+          "alts": [
+            "réfléchis"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Va chercher ton manteau !",
+          "en": "go and get your coat! (informal)",
+          "note": "aller drops its s like an -er verb: tu vas → Va ! 'Go and get' is simply va chercher.",
+          "ex": "Va chercher ton manteau, il fait froid.",
+          "exEn": "Go and get your coat, it's cold.",
+          "diff": "okay",
+          "blank": "Va",
+          "alts": [
+            "va chercher ton manteau"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "N'oublie pas !",
+          "en": "don't forget! (informal)",
+          "note": "ne... pas wraps around the verb; ne becomes n' before the vowel of oublie.",
+          "ex": "N'oublie pas ton passeport !",
+          "exEn": "Don't forget your passport!",
+          "diff": "okay",
+          "blank": "N'oublie pas",
+          "alts": [
+            "n'oublie pas"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Sois sage !",
+          "en": "be good! (to a child)",
+          "note": "être has its own imperative: sois (tu), soyons (nous), soyez (vous).",
+          "ex": "Sois sage chez ta grand-mère !",
+          "exEn": "Be good at your grandmother's!",
+          "diff": "okay",
+          "blank": "Sois",
+          "alts": [
+            "sois sage"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "N'aie pas peur !",
+          "en": "don't be afraid! (informal)",
+          "note": "avoir has its own imperative: aie, ayons, ayez. avoir peur is 'to be afraid'.",
+          "ex": "N'aie pas peur, tu ne vas pas tomber.",
+          "exEn": "Don't be scared, you're not going to fall.",
+          "diff": "hard",
+          "blank": "N'aie pas peur",
+          "alts": [
+            "n'aie pas peur"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Entrez !",
+          "en": "come in! (formal or plural)",
+          "note": "The vous form is the present without vous: vous entrez → Entrez !",
+          "ex": "Entrez, votre table est prête.",
+          "exEn": "Come in, your table is ready.",
+          "diff": "easy",
+          "blank": "Entrez",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "Faites attention !",
+          "en": "be careful! (formal or plural)",
+          "note": "faire is irregular in the present (vous faites) and the imperative keeps that form: Faites !",
+          "ex": "Faites attention à vos affaires dans le métro.",
+          "exEn": "Watch your belongings on the metro.",
+          "diff": "okay",
+          "blank": "Faites",
+          "alts": [
+            "faites attention",
+            "soyez prudent",
+            "soyez prudente",
+            "soyez prudents",
+            "soyez prudentes"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Ne touchez pas !",
+          "en": "don't touch! (formal or plural)",
+          "note": "In the negative, ne and pas surround the verb: Ne touchez pas.",
+          "ex": "Ne touchez pas, s'il vous plaît, c'est fragile.",
+          "exEn": "Please don't touch, it's fragile.",
+          "diff": "okay",
+          "blank": "Ne touchez pas",
+          "alts": [
+            "ne touchez pas"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Ne perdons pas de temps !",
+          "en": "let's not waste time",
+          "note": "The nous form means 'let's'; ne... pas around it means 'let's not'. perdre du temps is 'to waste time'.",
+          "ex": "Ne perdons pas de temps, le train part dans dix minutes.",
+          "exEn": "Let's not waste any time, the train leaves in ten minutes.",
+          "diff": "hard",
+          "blank": "perdons",
+          "alts": [
+            "ne perdons pas de temps"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Soyons honnêtes.",
+          "en": "let's be honest",
+          "note": "être in the nous imperative is soyons, a form learners have to memorise.",
+          "ex": "Soyons honnêtes, ce n'est pas facile.",
+          "exEn": "Let's be honest, it isn't easy.",
+          "diff": "hard",
+          "blank": "Soyons",
+          "alts": [
+            "soyons honnêtes",
+            "soyons francs"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "modal-verbs",
+      "category": "grammar",
+      "teaching": {
+        "rule": "Pouvoir (can, to be able to, to be allowed to), vouloir (to want) and devoir (to have to, must) are irregular, and each is followed directly by a second verb in the infinitive: je peux venir, je veux partir, je dois travailler. Only the first verb changes: je peux, tu peux, il peut, nous pouvons, vous pouvez, ils peuvent; je veux, tu veux, il veut, nous voulons, vous voulez, ils veulent; je dois, tu dois, il doit, nous devons, vous devez, ils doivent. The stem changes again in the ils form (peuvent, veulent, doivent). In the negative, ne... pas goes around the first verb: je ne peux pas venir.",
+        "examples": [
+          {
+            "fr": "Je peux t'aider.",
+            "en": "I can help you.",
+            "note": "peux + the infinitive aider, with no de or à in between; the object pronoun t' goes just before the infinitive."
+          },
+          {
+            "fr": "Elle veut apprendre le japonais.",
+            "en": "She wants to learn Japanese.",
+            "note": "English needs 'to'; French puts the infinitive straight after veut."
+          },
+          {
+            "fr": "Nous devons partir à sept heures.",
+            "en": "We have to leave at seven.",
+            "note": "devons carries the person; partir stays in the infinitive."
+          },
+          {
+            "fr": "Ils ne peuvent pas venir.",
+            "en": "They can't come.",
+            "note": "ne... pas wraps around peuvent, not around venir."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je veux partir.",
+            "en": "I want to leave.",
+            "note": "NOT 'je veux de partir' or 'je veux à partir': the infinitive comes straight after the modal."
+          },
+          {
+            "fr": "Tu ne dois pas fumer ici.",
+            "en": "You mustn't smoke here.",
+            "note": "ne... pas + devoir means 'must not', a prohibition, not 'don't have to'."
+          },
+          {
+            "fr": "Je sais nager.",
+            "en": "I can swim.",
+            "note": "For a skill you have learned, French uses savoir, not pouvoir: je peux nager means you are able or allowed to right now."
+          }
+        ],
+        "commonMistake": "Learners put de or à between the modal and the next verb ('je veux de manger') or conjugate both verbs ('je peux viens'); the second verb stays in the infinitive, directly after the modal: je veux manger, je peux venir."
+      },
+      "probes": [
+        {
+          "fr": "nous ___ (pouvoir)",
+          "en": "pouvons",
+          "ex": "Nous pouvons partir maintenant.",
+          "exEn": "We can leave now.",
+          "options": [
+            "peuvons",
+            "pouvez",
+            "peuvent"
+          ]
+        },
+        {
+          "fr": "ils ___ (vouloir)",
+          "en": "veulent",
+          "ex": "Ils veulent partir en vacances.",
+          "exEn": "They want to go on holiday.",
+          "options": [
+            "voulent",
+            "veut",
+            "voulez"
+          ]
+        },
+        {
+          "fr": "Elle veut dormir.",
+          "en": "She wants to sleep.",
+          "ex": "Elle est fatiguée, elle veut dormir.",
+          "exEn": "She's tired, she wants to sleep.",
+          "options": [
+            "She has to sleep.",
+            "She can sleep.",
+            "She's going to sleep."
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "je peux",
+          "en": "I can",
+          "note": "pouvoir: je peux, with a silent x; the next verb stays in the infinitive.",
+          "ex": "Demain, je peux venir à huit heures.",
+          "exEn": "Tomorrow I can come at eight.",
+          "diff": "easy",
+          "blank": "je peux",
+          "alts": [
+            "peux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tu peux",
+          "en": "you can (informal)",
+          "note": "tu peux sounds exactly like je peux; only the pronoun tells them apart.",
+          "ex": "Si tu veux, tu peux dormir ici.",
+          "exEn": "If you like, you can sleep here.",
+          "diff": "easy",
+          "blank": "tu peux",
+          "alts": [
+            "peux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on peut",
+          "en": "we can (spoken)",
+          "note": "In everyday speech on peut is the usual way to say 'we can'; on takes the il form, peut.",
+          "ex": "On peut payer par carte ?",
+          "exEn": "Can we pay by card?",
+          "diff": "okay",
+          "blank": "On peut",
+          "alts": [
+            "peut",
+            "nous pouvons"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous pouvez",
+          "en": "you can (formal or plural)",
+          "note": "pouvoir changes its stem in the nous and vous forms: vous pouvez.",
+          "ex": "Vous pouvez laisser vos valises ici.",
+          "exEn": "You can leave your suitcases here.",
+          "diff": "okay",
+          "blank": "Vous pouvez",
+          "alts": [
+            "pouvez"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je ne peux pas",
+          "en": "I can't",
+          "note": "ne... pas goes around peux, and the infinitive follows pas.",
+          "ex": "Samedi, je ne peux pas venir, je travaille.",
+          "exEn": "I can't come on Saturday, I'm working.",
+          "diff": "okay",
+          "blank": "je ne peux pas",
+          "alts": [
+            "ne peux pas"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je veux",
+          "en": "I want",
+          "note": "vouloir: je veux, with a silent x; English 'to' has no French equivalent before the infinitive.",
+          "ex": "Ce soir, je veux rester à la maison.",
+          "exEn": "Tonight I want to stay home.",
+          "diff": "easy",
+          "blank": "je veux",
+          "alts": [
+            "veux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tu veux",
+          "en": "you want (informal)",
+          "note": "Tu veux + infinitive is the everyday way to offer or suggest something to a friend.",
+          "ex": "Tu veux inviter ta sœur ?",
+          "exEn": "Do you want to invite your sister?",
+          "diff": "easy",
+          "blank": "Tu veux",
+          "alts": [
+            "veux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "il veut",
+          "en": "he wants",
+          "note": "il veut ends in t; je veux and tu veux end in x, but all three sound the same.",
+          "ex": "Mon fils veut devenir pilote.",
+          "exEn": "My son wants to become a pilot.",
+          "diff": "okay",
+          "blank": "veut",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ils veulent",
+          "en": "they want",
+          "note": "veulent goes back to the eu of je veux and il veut (unlike nous voulons) and adds an l; the -ent is silent.",
+          "ex": "Mes voisins veulent vendre leur maison.",
+          "exEn": "My neighbours want to sell their house.",
+          "diff": "hard",
+          "blank": "veulent",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je dois",
+          "en": "I have to / I must",
+          "note": "devoir: je dois, with a silent s, then the infinitive.",
+          "ex": "Désolé, je dois partir.",
+          "exEn": "Sorry, I have to go.",
+          "diff": "easy",
+          "blank": "je dois",
+          "alts": [
+            "dois"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "nous devons",
+          "en": "we have to",
+          "note": "devoir changes its stem in the nous and vous forms: nous devons.",
+          "ex": "Nous devons trouver un hôtel ce soir.",
+          "exEn": "We need to find a hotel tonight.",
+          "diff": "okay",
+          "blank": "Nous devons",
+          "alts": [
+            "devons",
+            "on doit"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous devez",
+          "en": "you must (formal or plural)",
+          "note": "vous devez, then the infinitive: a common form on signs and in official instructions.",
+          "ex": "Vous devez montrer votre passeport.",
+          "exEn": "You must show your passport.",
+          "diff": "hard",
+          "blank": "Vous devez",
+          "alts": [
+            "devez"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "venir-de-recent-past",
+      "category": "grammar",
+      "teaching": {
+        "rule": "To say something has only just happened, French uses venir (to come) in the present, then de, then the verb in the infinitive: je viens de manger means 'I've just eaten'. Only venir changes with the person (je viens, tu viens, il vient, nous venons, vous venez, ils viennent); the second verb stays in the infinitive, and de becomes d' before a vowel: il vient d'arriver. There is no past tense in the sentence, yet it describes the very recent past. It is the mirror image of aller + infinitive, which looks just ahead.",
+        "examples": [
+          {
+            "fr": "Je viens de finir mon travail.",
+            "en": "I've just finished my work.",
+            "note": "viens + de + finir: the present of venir describes a past that is only moments old."
+          },
+          {
+            "fr": "Elle vient d'appeler.",
+            "en": "She has just called.",
+            "note": "de becomes d' before a vowel."
+          },
+          {
+            "fr": "Nous venons de nous lever.",
+            "en": "We've just got up.",
+            "note": "A reflexive verb keeps its pronoun, matching the subject, just before the infinitive."
+          },
+          {
+            "fr": "Ils viennent de partir.",
+            "en": "They've just left.",
+            "note": "viennent is the ils form; partir stays in the infinitive."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je viens de Paris.",
+            "en": "I'm from Paris.",
+            "note": "venir de + a place says where you come from; only venir de + an infinitive means 'have just done'."
+          },
+          {
+            "fr": "Je viens manger.",
+            "en": "I'm coming to eat.",
+            "note": "Without de, venir + infinitive means coming somewhere in order to do something."
+          },
+          {
+            "fr": "Je vais manger.",
+            "en": "I'm going to eat.",
+            "note": "aller + infinitive looks just ahead; venir de + infinitive looks just behind."
+          }
+        ],
+        "commonMistake": "Learners translate 'I have just eaten' word for word with avoir ('j'ai juste mangé', which usually means 'all I did was eat') or drop the de ('je viens manger', which means 'I'm coming to eat'); use venir + de + infinitive: je viens de manger. You may hear juste added for emphasis (je viens juste de manger), but learn the plain form first."
+      },
+      "probes": [
+        {
+          "fr": "Elle vient de partir.",
+          "en": "She's just left.",
+          "ex": "Désolée, elle vient de partir.",
+          "exEn": "Sorry, she's just left.",
+          "options": [
+            "She's about to leave.",
+            "She left a long time ago.",
+            "She's coming back."
+          ]
+        },
+        {
+          "fr": "Nous venons de déjeuner.",
+          "en": "We've just had lunch.",
+          "ex": "Merci, mais nous venons de déjeuner.",
+          "exEn": "Thanks, but we've just had lunch.",
+          "options": [
+            "We're going to have lunch.",
+            "We're coming to have lunch.",
+            "We had lunch yesterday."
+          ]
+        },
+        {
+          "fr": "ils ___ d'arriver (venir)",
+          "en": "viennent",
+          "ex": "Ils viennent d'arriver.",
+          "exEn": "They've just arrived.",
+          "options": [
+            "vient",
+            "venent",
+            "venons"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "je viens de manger",
+          "en": "I've just eaten",
+          "note": "viens is the je form of venir; de and the infinitive manger stay the same for every subject.",
+          "ex": "Non merci, je viens de manger.",
+          "exEn": "No thanks, I've just eaten.",
+          "diff": "easy",
+          "blank": "viens de manger",
+          "alts": [
+            "viens de manger"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le train vient de partir",
+          "en": "the train has just left",
+          "note": "vient is the il / elle form; with a noun subject it works the same way.",
+          "ex": "Trop tard, le train vient de partir !",
+          "exEn": "Too late, the train has just left!",
+          "diff": "easy",
+          "blank": "vient de partir",
+          "alts": [
+            "vient de partir"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "nous venons d'arriver",
+          "en": "we've just arrived",
+          "note": "de becomes d' before the vowel of arriver; venons is the nous form.",
+          "ex": "Nous venons d'arriver à l'hôtel.",
+          "exEn": "We've only just got to the hotel.",
+          "diff": "okay",
+          "blank": "venons d'arriver",
+          "alts": [
+            "venons d'arriver",
+            "on vient d'arriver"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tu viens de rater",
+          "en": "you've just missed (informal)",
+          "note": "rater is the everyday verb for missing a bus or a train; manquer also works.",
+          "ex": "Tu viens de rater le bus, le prochain est dans dix minutes.",
+          "exEn": "You've just missed the bus; the next one is in ten minutes.",
+          "diff": "okay",
+          "blank": "viens de rater",
+          "alts": [
+            "viens de rater",
+            "viens de manquer",
+            "tu viens de manquer",
+            "viens de louper",
+            "tu viens de louper"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous venez de gagner",
+          "en": "you've just won (formal or plural)",
+          "note": "venez is the vous form; the whole phrase still sits in the present tense.",
+          "ex": "Vous venez de gagner un voyage à Rome !",
+          "exEn": "You've just won a trip to Rome!",
+          "diff": "okay",
+          "blank": "venez de gagner",
+          "alts": [
+            "venez de gagner"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "elles viennent de finir",
+          "en": "they've just finished",
+          "note": "viennent is the ils / elles form, with a doubled n; finir stays in the infinitive.",
+          "ex": "Les filles viennent de finir leurs devoirs.",
+          "exEn": "The girls have just finished their homework.",
+          "diff": "hard",
+          "blank": "viennent de finir",
+          "alts": [
+            "viennent de finir",
+            "viennent de terminer",
+            "elles viennent de terminer",
+            "ils viennent de finir",
+            "ils viennent de terminer"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le film vient de commencer",
+          "en": "the film has just started",
+          "note": "A handy way to say something has only just begun: vient de commencer.",
+          "ex": "Chut, le film vient de commencer !",
+          "exEn": "Shh, the film has just started!",
+          "diff": "okay",
+          "blank": "vient de commencer",
+          "alts": [
+            "vient de commencer",
+            "vient de démarrer",
+            "le film vient de démarrer"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je viens de rentrer",
+          "en": "I've just got home",
+          "note": "rentrer is to come back home; viens de rentrer says it happened moments ago.",
+          "ex": "Je viens de rentrer du travail.",
+          "exEn": "I've just got home from work.",
+          "diff": "okay",
+          "blank": "viens de rentrer",
+          "alts": [
+            "viens de rentrer"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "elle vient d'avoir un bébé",
+          "en": "she's just had a baby",
+          "note": "de becomes d' before avoir; the recent past works with any verb.",
+          "ex": "Ma cousine vient d'avoir un bébé.",
+          "exEn": "My cousin has just had a baby.",
+          "diff": "okay",
+          "blank": "vient d'avoir",
+          "alts": [
+            "vient d'avoir"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on vient de se rencontrer",
+          "en": "we've just met",
+          "note": "With a reflexive verb, the pronoun (se for on) sits just before the infinitive.",
+          "ex": "Non, on ne se connaît pas, on vient de se rencontrer.",
+          "exEn": "No, we don't know each other, we've only just met.",
+          "diff": "hard",
+          "blank": "vient de se rencontrer",
+          "alts": [
+            "vient de se rencontrer",
+            "vient de faire connaissance",
+            "nous venons de nous rencontrer"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je viens de recevoir",
+          "en": "I've just received",
+          "note": "recevoir stays in the infinitive after de; only venir carries the person.",
+          "ex": "Je viens de recevoir ton message.",
+          "exEn": "I've just received your message.",
+          "diff": "okay",
+          "blank": "viens de recevoir",
+          "alts": [
+            "viens de recevoir"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "il vient de pleuvoir",
+          "en": "it's just rained",
+          "note": "Weather verbs take il as a dummy subject, so the recent past is il vient de pleuvoir.",
+          "ex": "Attention, la route est mouillée, il vient de pleuvoir.",
+          "exEn": "Careful, the road is wet, it has just rained.",
+          "diff": "hard",
+          "blank": "vient de pleuvoir",
+          "alts": [
+            "vient de pleuvoir"
+          ],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

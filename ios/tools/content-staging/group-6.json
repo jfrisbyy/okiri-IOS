@@ -1,0 +1,926 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "quantity-expressions",
+      "category": "grammar",
+      "teaching": {
+        "rule": "After a word that measures an amount - beaucoup (a lot), peu (little / few), un peu (a little), trop (too much / too many), assez (enough), plus (more), moins (less / fewer) - or a container or measure such as une bouteille, un kilo or une tasse, French uses plain de, not du, de la or des, when the noun is meant in general: beaucoup de livres, une bouteille de lait. Before a vowel or a silent h, de becomes d': assez d'argent. The noun keeps its own number: things you count stay plural (trop de voitures), things you don't stay singular (trop de bruit). Two exceptions: la plupart (most) takes des (la plupart des gens), and plusieurs (several) and quelques (a few) take no de at all (plusieurs fois, quelques amis).",
+        "examples": [
+          {
+            "fr": "Elle a trop de devoirs ce soir.",
+            "en": "She has too much homework tonight.",
+            "note": "trop de + plain de; devoirs is plural in French, and it stays plural after de."
+          },
+          {
+            "fr": "un paquet de biscuits",
+            "en": "a packet of biscuits",
+            "note": "A container or measure works like a quantity word: paquet de, whatever the gender or number of what is inside."
+          },
+          {
+            "fr": "Il a peu d'amis.",
+            "en": "He has few friends.",
+            "note": "peu de means 'few / not much'; de becomes d' before the vowel of amis."
+          },
+          {
+            "fr": "un litre de lait",
+            "en": "a litre of milk",
+            "note": "Measures take plain de: un litre de lait, never 'un litre du lait'."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "trop de bruit",
+            "en": "too much noise",
+            "note": "NOT 'trop du bruit': once a quantity word is there, du, de la and des normally shrink to plain de."
+          },
+          {
+            "fr": "un peu de sucre / peu de sucre",
+            "en": "a little sugar / not much sugar",
+            "note": "un peu de is positive (some, a bit); peu de without un is negative (hardly any). One small word flips the meaning."
+          },
+          {
+            "fr": "la plupart des étudiants",
+            "en": "most students",
+            "note": "The exception: la plupart takes des, not de, and the verb after it is plural (la plupart des étudiants travaillent)."
+          },
+          {
+            "fr": "quelques amis",
+            "en": "a few friends",
+            "note": "NOT 'quelques d'amis': quelques and plusieurs go straight before the noun, with no de."
+          }
+        ],
+        "commonMistake": "Learners carry the partitive over after a quantity word ('beaucoup des gens', 'un kilo des pommes'); as soon as an amount is named, the article normally drops to plain de: beaucoup de gens, un kilo de pommes."
+      },
+      "probes": [
+        {
+          "fr": "Il y a trop ___ voitures en ville.",
+          "en": "de",
+          "ex": "Il y a trop de voitures en ville.",
+          "exEn": "There are too many cars in town.",
+          "options": [
+            "des",
+            "du",
+            "les"
+          ]
+        },
+        {
+          "fr": "La plupart ___ élèves sont déjà là.",
+          "en": "des",
+          "ex": "La plupart des élèves sont déjà là.",
+          "exEn": "Most of the pupils are already here.",
+          "options": [
+            "de",
+            "du",
+            "d'"
+          ]
+        },
+        {
+          "fr": "peu de temps",
+          "en": "not much time",
+          "ex": "J'ai peu de temps aujourd'hui.",
+          "exEn": "I don't have much time today.",
+          "options": [
+            "a little time",
+            "too much time",
+            "a lot of time"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "trop de sel",
+          "en": "too much salt",
+          "note": "trop (too much / too many) + plain de: trop de sel, never 'trop du sel'.",
+          "ex": "Il y a trop de sel dans cette soupe.",
+          "exEn": "There's too much salt in this soup.",
+          "diff": "easy",
+          "blank": "trop de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "assez d'argent",
+          "en": "enough money",
+          "note": "assez (enough) + de, and de becomes d' before the vowel of argent.",
+          "ex": "Tu as assez d'argent pour le billet ?",
+          "exEn": "Do you have enough money for the ticket?",
+          "diff": "okay",
+          "blank": "assez d'argent",
+          "alts": [
+            "suffisamment d'argent"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "peu de touristes",
+          "en": "few tourists",
+          "note": "peu de without un means 'few / not many', a negative idea; touristes stays plural after de.",
+          "ex": "En novembre, il y a peu de touristes.",
+          "exEn": "In November there are few tourists.",
+          "diff": "okay",
+          "blank": "peu de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un peu de patience",
+          "en": "a little patience",
+          "note": "un peu de means 'a little, some' and goes with things you don't count, like patience or sugar.",
+          "ex": "Avec un peu de patience, tu vas y arriver.",
+          "exEn": "With a little patience, you'll get there.",
+          "diff": "easy",
+          "blank": "un peu de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un morceau de fromage",
+          "en": "a piece of cheese",
+          "note": "A measure + plain de: un morceau de fromage. Without a measure word it would be du fromage (some cheese).",
+          "ex": "Je mange un morceau de fromage avec mon pain.",
+          "exEn": "I'm eating a piece of cheese with my bread.",
+          "diff": "easy",
+          "blank": "de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "une bouteille d'eau",
+          "en": "a bottle of water",
+          "note": "A container + de: une bouteille d'eau, not 'une bouteille de l'eau'; de becomes d' before the vowel.",
+          "ex": "Je prends une bouteille d'eau pour le voyage.",
+          "exEn": "I'm taking a bottle of water for the trip.",
+          "diff": "easy",
+          "blank": "d'eau",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un kilo de pommes",
+          "en": "a kilo of apples",
+          "note": "Weights take plain de, and the fruit stays plural: un kilo de pommes, never 'un kilo des pommes'.",
+          "ex": "Je voudrais un kilo de pommes, s'il vous plaît.",
+          "exEn": "I'd like a kilo of apples, please.",
+          "diff": "easy",
+          "blank": "de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "une douzaine d'œufs",
+          "en": "a dozen eggs",
+          "note": "douzaine needs de where English says just 'a dozen eggs'; de becomes d' before œufs.",
+          "ex": "J'achète une douzaine d'œufs au marché.",
+          "exEn": "I'm buying a dozen eggs at the market.",
+          "diff": "okay",
+          "blank": "d'œufs",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "moins de sucre",
+          "en": "less sugar",
+          "note": "moins de means 'less' (or 'fewer' with a plural); like every quantity word it takes plain de.",
+          "ex": "Je mets moins de sucre dans mon café maintenant.",
+          "exEn": "I put less sugar in my coffee now.",
+          "diff": "okay",
+          "blank": "moins de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "plus de temps",
+          "en": "more time",
+          "note": "plus de means 'more' of something; plain de, never 'plus du temps'. davantage de means the same, in a slightly more formal style.",
+          "ex": "J'aimerais avoir plus de temps pour lire.",
+          "exEn": "I'd like to have more time to read.",
+          "diff": "okay",
+          "blank": "plus de temps",
+          "alts": [
+            "davantage de temps"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la plupart des gens",
+          "en": "most people",
+          "note": "The exception: la plupart (most) takes des, not de, and the verb that follows is plural.",
+          "ex": "Au bureau, la plupart des gens arrivent à neuf heures.",
+          "exEn": "At the office, most people arrive at nine.",
+          "diff": "hard",
+          "blank": "la plupart des",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "plusieurs fois",
+          "en": "several times",
+          "note": "plusieurs (several) goes straight before the noun with no de at all; it never changes for gender.",
+          "ex": "J'ai vu ce film plusieurs fois.",
+          "exEn": "I've seen this film several times.",
+          "diff": "hard",
+          "blank": "plusieurs",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "comparatives-superlatives",
+      "category": "grammar",
+      "teaching": {
+        "rule": "To compare two things, put plus (more), moins (less) or aussi (as) before the adjective and que (than / as) after it: plus grand que, moins cher que, aussi rapide que. The adjective still agrees with what it describes (ma sœur est plus grande que moi), and a pronoun standing alone after que is moi, toi, lui or elle, not je or tu. For the top or the bottom of a group, add le, la or les: le plus grand, la moins chère. When the adjective normally follows the noun, the article appears twice: le restaurant le plus cher. 'In' after a superlative is normally de: le plus grand parc de la ville. Exceptions to know now: 'better' is meilleur, never 'plus bon', and with a verb it is mieux, never 'plus bien'.",
+        "examples": [
+          {
+            "fr": "Le train est plus rapide que le bus.",
+            "en": "The train is faster than the bus.",
+            "note": "plus + adjective + que: the basic 'more ... than' pattern."
+          },
+          {
+            "fr": "Cette jupe est moins chère que la robe.",
+            "en": "This skirt is cheaper than the dress.",
+            "note": "moins ... que means 'less ... than'; chère agrees with jupe, which is feminine."
+          },
+          {
+            "fr": "Il est aussi grand que son père.",
+            "en": "He's as tall as his father.",
+            "note": "aussi ... que means 'as ... as'; the second 'as' is que, not comme."
+          },
+          {
+            "fr": "C'est le film le plus drôle de l'année.",
+            "en": "It's the funniest film of the year.",
+            "note": "drôle comes after the noun, so le appears twice; 'of the year' after a superlative is de."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Elle est plus grande que moi.",
+            "en": "She is taller than me.",
+            "note": "NOT 'plus grande que je': after que, use the stressed pronoun moi, toi, lui, elle, nous, vous, eux."
+          },
+          {
+            "fr": "le plus grand musée de la ville",
+            "en": "the biggest museum in the city",
+            "note": "Say de, not dans: after a superlative, 'in' is normally de."
+          },
+          {
+            "fr": "le restaurant le plus cher",
+            "en": "the most expensive restaurant",
+            "note": "Keep both articles: without the second le, the phrase no longer means 'the most expensive'."
+          }
+        ],
+        "commonMistake": "Learners say 'plus grand de moi' or, following English, 'le plus grand dans le monde'; after an adjective, 'than' is que (plus grand que moi), and 'in' after a superlative is normally de (le plus grand du monde)."
+      },
+      "probes": [
+        {
+          "fr": "Paul est plus grand ___ Marc.",
+          "en": "que",
+          "ex": "Paul est plus grand que Marc.",
+          "exEn": "Paul is taller than Marc.",
+          "options": [
+            "de",
+            "comme",
+            "à"
+          ]
+        },
+        {
+          "fr": "C'est la ville la plus calme ___ la région.",
+          "en": "de",
+          "ex": "C'est la ville la plus calme de la région.",
+          "exEn": "It's the quietest town in the region.",
+          "options": [
+            "à",
+            "en",
+            "que"
+          ]
+        },
+        {
+          "fr": "Elle est aussi grande que moi.",
+          "en": "She is as tall as me.",
+          "ex": "Elle est aussi grande que moi, maintenant.",
+          "exEn": "She's as tall as me now.",
+          "options": [
+            "She is taller than me.",
+            "She is shorter than me.",
+            "She is the tallest."
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "plus grand que",
+          "en": "taller than (masculine)",
+          "note": "plus + adjective + que is 'more ... than'; for people grand means tall. After que, use moi, not je.",
+          "ex": "Mon frère est plus grand que moi.",
+          "exEn": "My brother is taller than me.",
+          "diff": "easy",
+          "blank": "plus grand que",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "moins cher que",
+          "en": "less expensive than (masculine)",
+          "note": "moins + adjective + que is 'less ... than'; it is the everyday way to say 'cheaper than'.",
+          "ex": "Le train est moins cher que l'avion.",
+          "exEn": "The train is less expensive than the plane.",
+          "diff": "easy",
+          "blank": "moins cher que",
+          "alts": [
+            "moins coûteux que"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "aussi intéressant que",
+          "en": "as interesting as (masculine)",
+          "note": "aussi + adjective + que is 'as ... as'; both 'as' words change: aussi first, que second.",
+          "ex": "Ce livre est aussi intéressant que le film.",
+          "exEn": "This book is as interesting as the film.",
+          "diff": "okay",
+          "blank": "aussi intéressant que",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "plus petite que",
+          "en": "smaller than (feminine)",
+          "note": "The adjective still agrees: chambre is feminine, so petit becomes petite inside the comparison.",
+          "ex": "Ma chambre est plus petite que la tienne.",
+          "exEn": "My bedroom is smaller than yours.",
+          "diff": "okay",
+          "blank": "plus petite que",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "plus âgé que",
+          "en": "older than (masculine)",
+          "note": "For people, plus âgé que is the neutral way to say 'older than'; plus vieux que is also common.",
+          "ex": "Paul est plus âgé que sa sœur.",
+          "exEn": "Paul is older than his sister.",
+          "diff": "okay",
+          "blank": "plus âgé que",
+          "alts": [
+            "plus vieux que"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "moins sportive que",
+          "en": "less sporty than (feminine)",
+          "note": "moins ... que with a feminine subject: sportif becomes sportive, then the comparison wraps around it.",
+          "ex": "Ma sœur est moins sportive que moi.",
+          "exEn": "My sister is less sporty than me.",
+          "diff": "okay",
+          "blank": "moins sportive que",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "plus vite que",
+          "en": "faster than (with a verb)",
+          "note": "Adverbs compare the same way: il court plus vite que moi. vite is an adverb, so it never agrees. One exception: with a verb, 'better' is mieux, never 'plus bien'.",
+          "ex": "Il court plus vite que moi.",
+          "exEn": "He runs faster than me.",
+          "diff": "okay",
+          "blank": "plus vite que",
+          "alts": [
+            "plus rapidement que"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le plus grand",
+          "en": "the biggest / the tallest (masculine)",
+          "note": "le / la / les + plus + adjective names the top of a group; grand means big for things and tall for people. grand comes before the noun, so there is only one le.",
+          "ex": "C'est le plus grand parc de la ville.",
+          "exEn": "It's the biggest park in the city.",
+          "diff": "okay",
+          "blank": "le plus grand",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la plus belle",
+          "en": "the most beautiful (feminine)",
+          "note": "belle sits before the noun, so the superlative goes there too: la plus belle plage.",
+          "ex": "C'est la plus belle plage de la région.",
+          "exEn": "It's the most beautiful beach in the region.",
+          "diff": "okay",
+          "blank": "la plus belle",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le moins cher",
+          "en": "the cheapest (masculine)",
+          "note": "cher follows the noun, so the article is repeated: le menu le moins cher. 'The cheapest' is literally 'the least expensive'.",
+          "ex": "Je prends le menu le moins cher.",
+          "exEn": "I'll take the cheapest set menu.",
+          "diff": "hard",
+          "blank": "le moins cher",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "les plus chers",
+          "en": "the most expensive (masculine plural)",
+          "note": "Plural noun, so les and chers: les hôtels les plus chers, with the article twice because cher follows the noun.",
+          "ex": "Ce sont les hôtels les plus chers de la ville.",
+          "exEn": "These are the most expensive hotels in the city.",
+          "diff": "hard",
+          "blank": "les plus chers",
+          "alts": [
+            "les plus coûteux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la plus grande de la classe",
+          "en": "the tallest in the class (feminine)",
+          "note": "After a superlative, 'in' is normally de: la plus grande de la classe, rather than dans la classe.",
+          "ex": "Léa est la plus grande de la classe.",
+          "exEn": "Léa is the tallest in the class.",
+          "diff": "hard",
+          "blank": "de la classe",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "adverb-formation",
+      "category": "grammar",
+      "teaching": {
+        "rule": "Many English adverbs end in -ly; the French ones often end in -ment. Start from the FEMININE form of the adjective and add -ment: lent → lente → lentement (slowly), heureux → heureuse → heureusement (fortunately). If the masculine adjective already ends in a vowel, add -ment to it directly: vrai → vraiment, poli → poliment. Adjectives of more than one syllable ending in -ant or -ent change to -amment and -emment, which are pronounced the same way: courant → couramment, récent → récemment (the one-syllable lent follows the first rule: lentement). A few are irregular: gentil → gentiment, bon → bien, mauvais → mal. With a one-word verb the adverb goes right after it (il parle lentement). In the passé composé, bien, mal and vraiment go between avoir or être and the past participle (j'ai bien dormi); many other -ment adverbs can go either there or after the participle (il a répondu poliment, il a poliment répondu).",
+        "examples": [
+          {
+            "fr": "Il conduit lentement.",
+            "en": "He drives slowly.",
+            "note": "lent → feminine lente → lentement; the adverb comes right after the verb."
+          },
+          {
+            "fr": "Elle a répondu calmement.",
+            "en": "She answered calmly.",
+            "note": "calme already ends in -e, so it just adds -ment: calmement."
+          },
+          {
+            "fr": "Ils parlent couramment l'anglais.",
+            "en": "They speak English fluently.",
+            "note": "courant ends in -ant, so the adverb ends in -amment: couramment."
+          },
+          {
+            "fr": "Nous avons bien mangé.",
+            "en": "We ate well.",
+            "note": "bien is the adverb of bon; in the passé composé it goes between avoir and the participle."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Il travaille sérieusement.",
+            "en": "He works seriously.",
+            "note": "NOT 'sérieuxment': build from the feminine sérieuse, then add -ment."
+          },
+          {
+            "fr": "J'ai vraiment aimé ce livre.",
+            "en": "I really liked this book.",
+            "note": "NOT 'j'ai aimé vraiment ce livre': vraiment, like bien and mal, sits between avoir and the participle."
+          },
+          {
+            "fr": "Elle parle bien.",
+            "en": "She speaks well.",
+            "note": "NOT 'elle parle bon': bon is the adjective (good); with a verb you need the adverb bien (well)."
+          }
+        ],
+        "commonMistake": "Learners build the adverb from the masculine form ('heureuxment', 'sérieuxment'); start from the feminine (heureuse → heureusement) unless the masculine already ends in a vowel (vrai → vraiment)."
+      },
+      "probes": [
+        {
+          "fr": "poliment",
+          "en": "politely",
+          "ex": "Il demande poliment l'addition.",
+          "exEn": "He politely asks for the bill.",
+          "options": [
+            "quickly",
+            "quietly",
+            "rarely"
+          ]
+        },
+        {
+          "fr": "Elle sourit ___ à l'enfant. (gentil)",
+          "en": "gentiment",
+          "ex": "Elle sourit gentiment à l'enfant.",
+          "exEn": "She smiles kindly at the child.",
+          "options": [
+            "gentillement",
+            "gentilment",
+            "gentilement"
+          ]
+        },
+        {
+          "fr": "J'ai bien dormi.",
+          "en": "correct: bien goes between avoir and the past participle",
+          "ask": "Is “J'ai bien dormi” right, and why?",
+          "ex": "J'ai bien dormi, merci.",
+          "exEn": "I slept well, thanks.",
+          "options": [
+            "wrong: bien goes after the past participle (j'ai dormi bien)",
+            "wrong: the adjective bon is needed here (j'ai bon dormi)",
+            "correct: a French adverb can go anywhere in the sentence"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "lentement",
+          "en": "slowly",
+          "note": "lent → feminine lente → lentement: the feminine form plus -ment.",
+          "ex": "Le temps passe lentement quand on attend.",
+          "exEn": "Time passes slowly when you're waiting.",
+          "diff": "easy",
+          "blank": "lentement",
+          "alts": [
+            "doucement"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "rapidement",
+          "en": "quickly",
+          "note": "rapide already ends in -e, so it just adds -ment. vite means the same and is just as common.",
+          "ex": "Les enfants apprennent rapidement.",
+          "exEn": "Children learn quickly.",
+          "diff": "easy",
+          "blank": "rapidement",
+          "alts": [
+            "vite"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "heureusement",
+          "en": "fortunately",
+          "note": "heureux → feminine heureuse → heureusement; it means 'luckily', not 'happily'.",
+          "ex": "Le train est en retard, mais heureusement nous avons le temps.",
+          "exEn": "The train is late, but fortunately we have time.",
+          "diff": "okay",
+          "blank": "heureusement",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "vraiment",
+          "en": "really",
+          "note": "vrai ends in a vowel, so -ment goes straight onto the masculine: vraiment, not 'vraiement'.",
+          "ex": "Ce gâteau est vraiment bon.",
+          "exEn": "This cake is really good.",
+          "diff": "easy",
+          "blank": "vraiment",
+          "alts": [
+            "réellement"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "poliment",
+          "en": "politely",
+          "note": "poli ends in a vowel, so -ment is added to the masculine: poliment.",
+          "ex": "Le serveur nous salue poliment.",
+          "exEn": "The waiter greets us politely.",
+          "diff": "okay",
+          "blank": "poliment",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "facilement",
+          "en": "easily",
+          "note": "facile already ends in -e, so it just adds -ment: facilement.",
+          "ex": "Mon frère se fâche facilement.",
+          "exEn": "My brother gets angry easily.",
+          "diff": "easy",
+          "blank": "facilement",
+          "alts": [
+            "aisément"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "couramment",
+          "en": "fluently",
+          "note": "courant ends in -ant, so the adverb ends in -amment: couramment. It is the usual word for speaking a language fluently.",
+          "ex": "Après deux ans, elle parle couramment.",
+          "exEn": "After two years, she speaks fluently.",
+          "diff": "hard",
+          "blank": "couramment",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "récemment",
+          "en": "recently",
+          "note": "récent ends in -ent, so the adverb ends in -emment, pronounced just like -amment. dernièrement means the same.",
+          "ex": "Ils ont déménagé récemment, donc ils ne connaissent personne ici.",
+          "exEn": "They moved recently, so they don't know anyone here.",
+          "diff": "hard",
+          "blank": "récemment",
+          "alts": [
+            "dernièrement"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "gentiment",
+          "en": "kindly",
+          "note": "Irregular: gentil → gentiment, with one l and no extra e.",
+          "ex": "Elle me répond gentiment.",
+          "exEn": "She answers me kindly.",
+          "diff": "okay",
+          "blank": "gentiment",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "bien",
+          "en": "well",
+          "note": "bien is the adverb of bon: bon describes a noun, bien describes how something is done. In the passé composé it goes between avoir and the participle.",
+          "ex": "Tu as bien dormi ?",
+          "exEn": "Did you sleep well?",
+          "diff": "easy",
+          "blank": "bien",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "mal",
+          "en": "badly",
+          "note": "mal is the adverb of mauvais; like bien, it sits between avoir and the participle.",
+          "ex": "J'ai mal dormi cette nuit.",
+          "exEn": "I slept badly last night.",
+          "diff": "okay",
+          "blank": "mal",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "complètement",
+          "en": "completely",
+          "note": "complet → feminine complète → complètement; the grave accent of the feminine stays.",
+          "ex": "La salle est complètement vide.",
+          "exEn": "The room is completely empty.",
+          "diff": "okay",
+          "blank": "complètement",
+          "alts": [
+            "totalement"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "patiemment",
+          "en": "patiently",
+          "note": "patient ends in -ent, so the adverb ends in -emment: patiemment.",
+          "ex": "Mon chien attend patiemment.",
+          "exEn": "My dog waits patiently.",
+          "diff": "hard",
+          "blank": "patiemment",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "countries-prepositions",
+      "category": "grammar",
+      "teaching": {
+        "rule": "Countries and continents have a gender, and the word for 'in' or 'to' follows it. Feminine names - nearly every one ending in -e, and all the continents - take en: en Italie, en Belgique, en Europe. Masculine names take au: au Japon, au Portugal, au Brésil, except that a masculine name starting with a vowel takes en, for the sound: en Iran. Plural names take aux: aux Pays-Bas. Cities take à, with no article (à Rome), unless the article is part of the name: Le Caire gives au Caire. A few island countries also take plain à: à Cuba. For 'from', use de (d' before a vowel) for feminine countries and for cities, du for masculine countries (but d'Iran, as with en Iran), des for plural ones: d'Espagne, du Brésil, des États-Unis. Watch the exceptions to the -e rule: le Mexique and le Cambodge are masculine, so au Mexique.",
+        "examples": [
+          {
+            "fr": "Elle vit en Irlande.",
+            "en": "She lives in Ireland.",
+            "note": "Irlande ends in -e, so it is feminine and takes en."
+          },
+          {
+            "fr": "On part au Maroc cet hiver.",
+            "en": "We're going to Morocco this winter.",
+            "note": "le Maroc is masculine, so 'to' is au; the same word means 'in'."
+          },
+          {
+            "fr": "Ils habitent aux Philippines.",
+            "en": "They live in the Philippines.",
+            "note": "A plural country name takes aux, like aux États-Unis."
+          },
+          {
+            "fr": "Je viens du Sénégal.",
+            "en": "I'm from Senegal.",
+            "note": "'From' + a masculine country is du (de + le)."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "au Mexique",
+            "en": "in Mexico",
+            "note": "NOT 'en Mexique': it ends in -e but le Mexique is masculine, one of the few exceptions."
+          },
+          {
+            "fr": "en Afghanistan",
+            "en": "in Afghanistan",
+            "note": "NOT 'au Afghanistan': a masculine country starting with a vowel takes en."
+          },
+          {
+            "fr": "à Rome",
+            "en": "in Rome",
+            "note": "NOT 'en Rome': cities take à, whatever their gender."
+          },
+          {
+            "fr": "Je viens de Grèce.",
+            "en": "I'm from Greece.",
+            "note": "With a feminine country, 'from' is plain de with no article: de Grèce, d'Italie."
+          }
+        ],
+        "commonMistake": "Learners use en for every country ('en Japon', 'en Portugal') or keep the article after de ('je viens de la Suisse'); check the gender first: au Japon, au Portugal, je viens de Suisse."
+      },
+      "probes": [
+        {
+          "fr": "Ils vivent ___ Danemark.",
+          "en": "au",
+          "ex": "Ils vivent au Danemark depuis deux ans.",
+          "exEn": "They've been living in Denmark for two years.",
+          "options": [
+            "en",
+            "à",
+            "aux"
+          ]
+        },
+        {
+          "fr": "Je viens ___ Suisse.",
+          "en": "de",
+          "ex": "Je viens de Suisse, mais j'habite à Lyon.",
+          "exEn": "I'm from Switzerland, but I live in Lyon.",
+          "options": [
+            "du",
+            "des",
+            "au"
+          ]
+        },
+        {
+          "fr": "Il revient ___ Canada ce soir.",
+          "en": "du",
+          "ex": "Il revient du Canada ce soir.",
+          "exEn": "He's coming back from Canada tonight.",
+          "options": [
+            "de",
+            "de le",
+            "des"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "au Japon",
+          "en": "in Japan",
+          "note": "le Japon is masculine (it doesn't end in -e), so 'in' or 'to' is au.",
+          "ex": "Mon cousin habite au Japon.",
+          "exEn": "My cousin lives in Japan.",
+          "diff": "easy",
+          "blank": "au",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "en Italie",
+          "en": "in Italy",
+          "note": "l'Italie ends in -e, so it is feminine and takes en.",
+          "ex": "Nous passons nos vacances en Italie.",
+          "exEn": "We're spending our holidays in Italy.",
+          "diff": "easy",
+          "blank": "en",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "au Portugal",
+          "en": "to Portugal",
+          "note": "le Portugal is masculine; au means both 'to' and 'in', so the verb tells you which.",
+          "ex": "Cet été, je vais au Portugal.",
+          "exEn": "This summer I'm going to Portugal.",
+          "diff": "easy",
+          "blank": "au",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "en Belgique",
+          "en": "in Belgium",
+          "note": "la Belgique ends in -e, so en; there is no article after en.",
+          "ex": "On parle français en Belgique.",
+          "exEn": "People speak French in Belgium.",
+          "diff": "easy",
+          "blank": "en",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "au Mexique",
+          "en": "in Mexico",
+          "note": "An exception: le Mexique ends in -e but is masculine, so au, not en.",
+          "ex": "Ma sœur travaille au Mexique.",
+          "exEn": "My sister works in Mexico.",
+          "diff": "hard",
+          "blank": "au",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "en Iran",
+          "en": "in Iran",
+          "note": "l'Iran is masculine, but it starts with a vowel, so it takes en instead of au.",
+          "ex": "Ma collègue est née en Iran.",
+          "exEn": "My colleague was born in Iran.",
+          "diff": "hard",
+          "blank": "en",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "aux Pays-Bas",
+          "en": "in the Netherlands",
+          "note": "les Pays-Bas is plural, so 'in' or 'to' is aux.",
+          "ex": "Mon frère étudie aux Pays-Bas.",
+          "exEn": "My brother is studying in the Netherlands.",
+          "diff": "okay",
+          "blank": "aux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "du Brésil",
+          "en": "from Brazil",
+          "note": "'From' + a masculine country: de + le fuses into du.",
+          "ex": "Ce café vient du Brésil.",
+          "exEn": "This coffee comes from Brazil.",
+          "diff": "okay",
+          "blank": "du",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "d'Espagne",
+          "en": "from Spain",
+          "note": "'From' + a feminine country is plain de, with no article, and de becomes d' before the vowel: d'Espagne.",
+          "ex": "Je rentre d'Espagne demain.",
+          "exEn": "I'm coming back from Spain tomorrow.",
+          "diff": "okay",
+          "blank": "d'Espagne",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "des États-Unis",
+          "en": "from the United States",
+          "note": "'From' + a plural country: de + les fuses into des.",
+          "ex": "Ils reviennent des États-Unis la semaine prochaine.",
+          "exEn": "They're coming back from the United States next week.",
+          "diff": "hard",
+          "blank": "des",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "au Caire",
+          "en": "in Cairo",
+          "note": "Cities take à, but Le Caire keeps its article, so à + le fuses into au.",
+          "ex": "Ma tante habite au Caire.",
+          "exEn": "My aunt lives in Cairo.",
+          "diff": "hard",
+          "blank": "au",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "à Cuba",
+          "en": "to Cuba",
+          "note": "Some island countries behave like cities and take plain à with no article: à Cuba.",
+          "ex": "Ils partent en vacances à Cuba.",
+          "exEn": "They're going on holiday to Cuba.",
+          "diff": "hard",
+          "blank": "à",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "en Europe",
+          "en": "in Europe",
+          "note": "All the continents are feminine, so they take en: en Europe, en Asie, en Afrique.",
+          "ex": "Il voyage en Europe tout l'été.",
+          "exEn": "He's travelling in Europe all summer.",
+          "diff": "okay",
+          "blank": "en",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,875 @@
+{
+ "version": 2,
+ "skills": [
+  {
+   "id": "vowel-contrasts",
+   "category": "pronunciation",
+   "teaching": {
+    "rule": "French has two pairs of vowels that English speakers tend to merge. First, u and ou: for u (tu, vue, sûr) say 'ee', then round and push your lips forward as for 'oo' while your tongue stays forward; for ou (tout, vous, roue) the tongue pulls back and you get a short, tense 'oo' as in 'food'. Second, é and è: é (café, léger, fermé) is a closed 'ay' held steady with no glide at the end; è (mère, fête, règle) is the open e of English 'bed'. The e sound is always open (è) when its syllable ends in a pronounced consonant, which is why premier ends in é with a silent r, but première ends in è followed by a sounded r. Swapping u and ou changes the word: tu / tout, rue / roue, dessus / dessous.",
+    "examples": [
+     {
+      "fr": "tu",
+      "en": "you (one friend)",
+      "note": "The French u: say 'ee', then round and push your lips forward as for 'oo' without moving your tongue back. English has no such vowel."
+     },
+     {
+      "fr": "vous",
+      "en": "you (formal or several people)",
+      "note": "The French ou: the 'oo' of English 'food', but shorter, with well-rounded lips and the tongue pulled back; the s is silent."
+     },
+     {
+      "fr": "le café",
+      "en": "coffee",
+      "note": "é is a closed, steady 'ay' with no glide at the end: ka-FÉ, not English 'ka-FAY-ee'. Smile slightly and hold the sound still."
+     },
+     {
+      "fr": "la mère",
+      "en": "the mother",
+      "note": "è is the open e of English 'bed': MÈR. It is open here because the syllable ends in a pronounced r."
+     }
+    ],
+    "contrast": [
+     {
+      "fr": "dessus / dessous",
+      "en": "on top / underneath",
+      "note": "Only the vowel changes: tongue forward for u (de-SÜ), tongue back for ou (de-SOO). Mix them up and you say the opposite."
+     },
+     {
+      "fr": "tu / tout",
+      "en": "you / everything",
+      "note": "Both end in a vowel, since the t of tout is silent, so the vowel alone tells the two words apart."
+     },
+     {
+      "fr": "premier / première",
+      "en": "first (masculine / feminine)",
+      "note": "The masculine ends in closed é with a silent r (pruh-MYÉ); the feminine ends in open è followed by a sounded r (pruh-MYÈR)."
+     }
+    ],
+    "commonMistake": "English speakers replace u with ou, so tu sounds like tout and la rue like la roue, and they let é slide into the English diphthong 'ay-ee'. Keep the tongue forward and the lips rounded for u, and hold é perfectly still."
+   },
+   "probes": [
+    {
+     "fr": "la rue / la roue",
+     "en": "only the vowel: tongue forward for rue, pulled back for roue",
+     "ask": "What tells “la rue” (the street) apart from “la roue” (the wheel) when you say them?",
+     "ex": "J'ai trouvé une roue de vélo dans la rue.",
+     "exEn": "I found a bike wheel in the street.",
+     "options": [
+      "the r: rolled in rue, silent in roue",
+      "the final e: sounded in roue, silent in rue",
+      "nothing: the two words sound exactly the same"
+     ]
+    },
+    {
+     "fr": "café",
+     "en": "on a steady closed é with no glide: ka-FÉ",
+     "ask": "How does “café” end?",
+     "ex": "Un café, s'il vous plaît.",
+     "exEn": "A coffee, please.",
+     "options": [
+      "on a glide, as in English 'day': ka-FAY-ee",
+      "on the open è of mère: ka-FÈ",
+      "on a silent e: KAF"
+     ]
+    },
+    {
+     "fr": "première",
+     "en": "with the open è of mère and a sounded r: pruh-MYÈR",
+     "ask": "How does “première” end?",
+     "ex": "C'est la première fois.",
+     "exEn": "It's the first time.",
+     "options": [
+      "with the closed é of café and a silent r: pruh-MYÉ",
+      "with an 'ee' sound: pruh-MEER",
+      "with a nasal vowel: pruh-MYIN"
+     ]
+    }
+   ],
+   "items": [
+    {
+     "fr": "tout",
+     "en": "everything / all",
+     "note": "The ou vowel: a short, tense 'oo' as in 'food', lips well rounded, tongue back (TOO); the t is silent. Keep it apart from tu (you), whose vowel is made with the tongue forward.",
+     "ex": "Tout va bien.",
+     "exEn": "Everything is fine.",
+     "diff": "easy",
+     "blank": "Tout",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "doux",
+     "en": "soft (to the touch) / mild",
+     "note": "Rounded 'oo' with the tongue back (DOO), and the x is silent. It must not sound like du (some, of the), where the tongue stays forward for u.",
+     "ex": "Ce pull est très doux.",
+     "exEn": "This jumper is very soft.",
+     "diff": "okay",
+     "blank": "doux",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "la roue",
+     "en": "the wheel",
+     "note": "The ou vowel with rounded lips (ROO). Compare la rue (the street): the two words differ only in this vowel.",
+     "ex": "Une voiture a quatre roues.",
+     "exEn": "A car has four wheels.",
+     "diff": "okay",
+     "blank": "roues",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "la vue",
+     "en": "the view",
+     "note": "The u vowel: say 'ee', then round your lips without moving your tongue (VÜ). With ou it would sound like vous (you).",
+     "ex": "Cette chambre a une belle vue.",
+     "exEn": "This room has a lovely view.",
+     "diff": "okay",
+     "blank": "vue",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "le jus",
+     "en": "the juice",
+     "note": "The u vowel with the tongue forward and the lips rounded (ZHÜ); the s is silent. Said with ou, it becomes joue (cheek; plays).",
+     "ex": "Un jus d'orange, s'il vous plaît.",
+     "exEn": "An orange juice, please.",
+     "diff": "easy",
+     "blank": "jus",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "sûr",
+     "en": "sure",
+     "note": "The u vowel followed by a sounded r (SÜR). The circumflex changes nothing in speech, so sûr sounds exactly like sur (on); with ou it would become sourd (deaf).",
+     "ex": "Tu es sûr ?",
+     "exEn": "Are you sure?",
+     "diff": "okay",
+     "blank": "sûr",
+     "alts": [
+      "certain"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "léger",
+     "en": "light (not heavy)",
+     "note": "Two closed é sounds, lé-JÉ: the final -er is said é and its r is silent. The feminine légère ends in open è plus a sounded r: lé-JÈR.",
+     "ex": "Ce sac est léger.",
+     "exEn": "This bag is light.",
+     "diff": "okay",
+     "blank": "léger",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "dernière",
+     "en": "last (feminine)",
+     "note": "Open è twice, with both r's sounded: dèr-NYÈR. The masculine dernier ends in closed é with a silent r: dèr-NYÉ.",
+     "ex": "C'est la dernière question.",
+     "exEn": "That's the last question.",
+     "diff": "okay",
+     "blank": "dernière",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "la fête",
+     "en": "the party",
+     "note": "ê is the open è of English 'bed' (FÈT), and the t is pronounced because an -e follows it. Do not close it to é. Faire la fête means to party.",
+     "ex": "On fait la fête ce soir !",
+     "exEn": "We're partying tonight!",
+     "diff": "easy",
+     "blank": "fête",
+     "alts": [
+      "la soirée"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "l'élève",
+     "en": "the pupil",
+     "note": "Both kinds of e in one word: closed é first, then open è before the v: é-LÈV. The final -e is silent.",
+     "ex": "Cet élève travaille bien.",
+     "exEn": "This pupil works well.",
+     "diff": "okay",
+     "blank": "élève",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "fermé",
+     "en": "closed",
+     "note": "Open è, then closed é: fèr-MÉ. The first e is open because its syllable ends in r. Without the accent, ferme (farm; closes) ends on the open sound: FÈRM.",
+     "ex": "Le magasin est fermé le dimanche.",
+     "exEn": "The shop is closed on Sundays.",
+     "diff": "hard",
+     "blank": "fermé",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "la règle",
+     "en": "the rule",
+     "note": "è before two consonants is open: RÈGL, with the final -e silent. Règle also means a ruler for drawing lines.",
+     "ex": "Quelle est la règle ?",
+     "exEn": "What's the rule?",
+     "diff": "okay",
+     "blank": "règle",
+     "alts": [],
+     "testable": true
+    }
+   ]
+  },
+  {
+   "id": "rhythm-and-stress",
+   "category": "pronunciation",
+   "teaching": {
+    "rule": "English stresses one syllable inside each word (ba-NA-na, PHAR-ma-cy, IN-ter-est-ing) and shrinks the others to 'uh'. French does not. Every syllable gets about the same length and a full vowel (the one exception is the light e of je, le or ne, which is often dropped in speech), and only the last pronounced syllable of a group of words is lengthened: cho-co-LA, un-ca-FÉ. A group is a chunk said in one breath, usually a noun with its article and adjectives, or a short verb phrase, so the stress moves to the end as the group grows: un café, then un café CRÈME. A final silent -e does not count, so in banane the stress falls on -nane. The stressed syllable is mostly longer, not louder: keep the syllables before it full and even instead of swallowing them.",
+    "examples": [
+     {
+      "fr": "le chocolat",
+      "en": "chocolate",
+      "note": "Three even beats, the last one longer: cho-co-LA, with the t silent. English squeezes the word into CHOC-lit."
+     },
+     {
+      "fr": "J'habite à Paris.",
+      "en": "I live in Paris.",
+      "note": "One group said as one smooth stream, ja-bi-ta-pa-RI: no word inside it gets its own stress, only the very last syllable."
+     },
+     {
+      "fr": "un verre de vin",
+      "en": "a glass of wine",
+      "note": "Four words, one group, one stress at the end, on vin. Verre sits in the middle of the group, so it stays light."
+     }
+    ],
+    "contrast": [
+     {
+      "fr": "Paris",
+      "en": "Paris",
+      "note": "English says PA-ris; French says pa-RI, with even syllables and the weight on the last one. The s is silent."
+     },
+     {
+      "fr": "un café / un café crème",
+      "en": "a coffee / a white coffee",
+      "note": "On its own, café takes the stress on -fé; add crème and the group gets longer, so the stress moves to crème and -fé goes light."
+     }
+    ],
+    "commonMistake": "English speakers stress words near the front (PHAR-ma-cie, IN-té-res-sant) and reduce the other vowels to 'uh'; keep every syllable even and full, except the light e of je, le or ne, and lean only on the last syllable of the group."
+   },
+   "probes": [
+    {
+     "fr": "Paris",
+     "en": "on the last syllable: pa-RI",
+     "ask": "Where does the stress fall in “Paris”, said on its own?",
+     "ex": "J'habite à Paris depuis deux ans.",
+     "exEn": "I've lived in Paris for two years.",
+     "options": [
+      "on the first syllable: PA-ri",
+      "on the first syllable, with the s pronounced: PA-riss",
+      "on the last syllable, with the s pronounced: pa-RISS"
+     ]
+    },
+    {
+     "fr": "Je ne comprends pas.",
+     "en": "on pas, the last syllable",
+     "ask": "Where does the stress fall in “Je ne comprends pas”?",
+     "ex": "Pardon, je ne comprends pas.",
+     "exEn": "Sorry, I don't understand.",
+     "options": [
+      "on ne, the negative word",
+      "on comprends, the verb",
+      "on je, the first word"
+     ]
+    },
+    {
+     "fr": "un café crème",
+     "en": "on crème, the end of the group",
+     "ask": "In “un café crème”, which part carries the stress?",
+     "ex": "Je voudrais un café crème.",
+     "exEn": "I'd like a white coffee.",
+     "options": [
+      "on -fé, the end of café",
+      "on ca-, the start of café",
+      "on un, the first word"
+     ]
+    }
+   ],
+   "items": [
+    {
+     "fr": "un chocolat chaud",
+     "en": "a hot chocolate",
+     "note": "On its own, chocolat is stressed on -lat; add chaud and the group gets longer, so the stress moves to the end: cho-co-la-CHO, with -lat now light.",
+     "ex": "Je voudrais un chocolat chaud.",
+     "exEn": "I'd like a hot chocolate.",
+     "diff": "easy",
+     "blank": "chaud",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "la banane",
+     "en": "the banana",
+     "note": "Two syllables, ba-NANN: the final -e is silent, so the stress lands on -nane. Both a's are the same open 'a', never the 'buh' of English 'banana'.",
+     "ex": "Je mange une banane.",
+     "exEn": "I'm eating a banana.",
+     "diff": "easy",
+     "blank": "banane",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "intéressant",
+     "en": "interesting",
+     "note": "Four even beats, in-té-ré-SAN, with only the last one lengthened. English stresses the first syllable of 'interesting'; in French in- stays light.",
+     "ex": "Ce livre est très intéressant.",
+     "exEn": "This book is very interesting.",
+     "diff": "okay",
+     "blank": "intéressant",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "absolument",
+     "en": "absolutely",
+     "note": "Four even syllables with the weight on the final nasal: ab-so-lu-MAN. Do not lean on ab- as in English 'AB-solutely'.",
+     "ex": "Tu es d'accord ? — Absolument.",
+     "exEn": "Do you agree? — Absolutely.",
+     "diff": "okay",
+     "blank": "Absolument",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "le dictionnaire",
+     "en": "the dictionary",
+     "note": "Three even beats, dik-syo-NÈR, with the stress on the last one and the final -e silent. English stresses DIC-tionary.",
+     "ex": "Tu as un dictionnaire ?",
+     "exEn": "Do you have a dictionary?",
+     "diff": "okay",
+     "blank": "dictionnaire",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "un ordinateur portable",
+     "en": "a laptop",
+     "note": "One group, one stress at the end: un-nor-di-na-teur-por-TABL. Said alone, ordinateur ends on -teur; inside this group -teur goes light and the stress moves to -table.",
+     "ex": "Mon ordinateur portable est trop lent.",
+     "exEn": "My laptop is too slow.",
+     "diff": "okay",
+     "blank": "portable",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "malheureusement",
+     "en": "unfortunately",
+     "note": "Said in four beats because the e before -ment drops: ma-leu-reuz-MAN, with the stress at the very end. The h is silent.",
+     "ex": "Malheureusement, le magasin est fermé.",
+     "exEn": "Unfortunately, the shop is closed.",
+     "diff": "hard",
+     "blank": "Malheureusement",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "la pharmacie",
+     "en": "the chemist's / the pharmacy",
+     "note": "far-ma-SI: three even syllables, the last one lengthened. English puts the weight on PHAR-; French keeps it light. In la pharmacie de la gare the stress moves on to gare, and -cie goes light.",
+     "ex": "Il y a une pharmacie près d'ici ?",
+     "exEn": "Is there a chemist's near here?",
+     "diff": "okay",
+     "blank": "pharmacie",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "l'anniversaire",
+     "en": "the birthday",
+     "note": "Four even beats, la-ni-vèr-SÈR: the stress is on -saire, and the final -e is silent. In l'anniversaire de Paul the group grows and the stress moves to Paul.",
+     "ex": "Samedi, c'est mon anniversaire.",
+     "exEn": "Saturday is my birthday.",
+     "diff": "okay",
+     "blank": "anniversaire",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "évidemment",
+     "en": "obviously",
+     "note": "é-vi-da-MAN: the -emment ending is said like -amment, and the stress sits on the last syllable only.",
+     "ex": "Tu viens ? — Évidemment !",
+     "exEn": "Are you coming? — Obviously!",
+     "diff": "hard",
+     "blank": "Évidemment",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "un verre d'eau",
+     "en": "a glass of water",
+     "note": "Three words, one rhythm group, one stress at the end: un-vèr-DO. Verre is in the middle of the group, so it is not stressed.",
+     "ex": "Je voudrais un verre d'eau, s'il vous plaît.",
+     "exEn": "I'd like a glass of water, please.",
+     "diff": "easy",
+     "blank": "un verre d'eau",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "le supermarché",
+     "en": "the supermarket",
+     "note": "su-pèr-mar-CHÉ: four even beats. English stresses SU-permarket; French leans only on the final -ché. In le supermarché du coin the group grows, so the stress moves to coin.",
+     "ex": "Je fais les courses au supermarché.",
+     "exEn": "I do the shopping at the supermarket.",
+     "diff": "easy",
+     "blank": "supermarché",
+     "alts": [],
+     "testable": true
+    }
+   ]
+  },
+  {
+   "id": "avoir-expressions",
+   "category": "grammar",
+   "teaching": {
+    "rule": "Where English says 'I am' plus a bodily feeling, French says 'I have' plus a noun: j'ai faim (I'm hungry, literally 'I have hunger'), j'ai soif, j'ai chaud, j'ai froid, j'ai peur. Age works the same way, j'ai trente ans (I'm thirty), and in a full sentence the word ans must be said. So does being right or wrong, avoir raison and avoir tort, and two very common expressions take de before what follows: avoir besoin de (to need) and avoir envie de (to feel like). Conjugate avoir for the subject (j'ai, tu as, il a, nous avons, vous avez, ils ont) and leave the word after it as it is: it never agrees, so elle a froid, not 'elle a froide'. To say 'very', add très: j'ai très faim.",
+    "examples": [
+     {
+      "fr": "J'ai faim.",
+      "en": "I'm hungry.",
+      "note": "Literally 'I have hunger': faim is a noun, so French uses avoir where English uses 'to be'."
+     },
+     {
+      "fr": "Il a vingt-cinq ans.",
+      "en": "He's twenty-five.",
+      "note": "Age is something you have, and in a full sentence ans (years) is required: never just 'il a vingt-cinq'."
+     },
+     {
+      "fr": "Vous avez raison.",
+      "en": "You're right.",
+      "note": "Being right is having reason: avoir raison. Its opposite is avoir tort."
+     }
+    ],
+    "contrast": [
+     {
+      "fr": "Il fait froid. / J'ai froid.",
+      "en": "It's cold. / I'm cold.",
+      "note": "For the weather use faire: il fait froid. For a person feeling the cold use avoir: j'ai froid."
+     },
+     {
+      "fr": "Elle a tort. / C'est faux.",
+      "en": "She's wrong. / That's wrong.",
+      "note": "avoir tort is for a person who is mistaken; for a statement or an answer that is incorrect, say c'est faux."
+     }
+    ],
+    "commonMistake": "Once avoir is in place, learners still treat the word after it as an adjective and make it agree: 'elle a froide', 'ils ont chauds'; faim, soif, froid, chaud and peur never change here. They also drop ans from an age in a full sentence ('il a trente') and use avoir tort for a wrong answer, which is c'est faux."
+   },
+   "probes": [
+    {
+     "fr": "J'ai froid.",
+     "en": "I'm cold.",
+     "ex": "Ferme la porte, j'ai froid.",
+     "exEn": "Close the door, I'm cold.",
+     "options": [
+      "It's cold.",
+      "I have a cold.",
+      "I'm afraid."
+     ]
+    },
+    {
+     "fr": "Il a raison.",
+     "en": "He's right.",
+     "ex": "Écoute-le, il a raison.",
+     "exEn": "Listen to him, he's right.",
+     "options": [
+      "He's wrong.",
+      "He has a reason.",
+      "He's reasonable."
+     ]
+    },
+    {
+     "fr": "Tu as besoin d'aide ?",
+     "en": "Do you need help?",
+     "ex": "Tu as besoin d'aide avec ta valise ?",
+     "exEn": "Do you need help with your suitcase?",
+     "options": [
+      "Do you want to help?",
+      "Can you help me?",
+      "Did you help?"
+     ]
+    }
+   ],
+   "items": [
+    {
+     "fr": "avoir faim",
+     "en": "to be hungry",
+     "note": "Hunger is something you have: tu as faim, literally 'you have hunger'. Never 'tu es faim'.",
+     "ex": "Tu as faim ?",
+     "exEn": "Are you hungry?",
+     "diff": "easy",
+     "blank": "as",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir soif",
+     "en": "to be thirsty",
+     "note": "Like faim, soif is a noun, so it follows avoir: j'ai soif. Add très for 'very': j'ai très soif.",
+     "ex": "J'ai soif, tu as de l'eau ?",
+     "exEn": "I'm thirsty, do you have any water?",
+     "diff": "easy",
+     "blank": "soif",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir chaud",
+     "en": "to feel hot",
+     "note": "A person feeling hot is j'ai chaud. Chaud does not change for the speaker, so a woman also says j'ai chaud.",
+     "ex": "Ouvre la fenêtre, j'ai trop chaud.",
+     "exEn": "Open the window, I'm too hot.",
+     "diff": "easy",
+     "blank": "chaud",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir froid",
+     "en": "to feel cold",
+     "note": "ont is the ils/elles form of avoir. 'Ils sont froids' would describe them as cold to the touch or unfriendly, not as feeling cold.",
+     "ex": "Les enfants ont froid.",
+     "exEn": "The children are cold.",
+     "diff": "okay",
+     "blank": "ont",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir peur",
+     "en": "to be afraid",
+     "note": "What you are afraid of follows de, and de + les becomes des: elle a peur des chiens.",
+     "ex": "Elle a peur des araignées.",
+     "exEn": "She's afraid of spiders.",
+     "diff": "okay",
+     "blank": "peur",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir raison",
+     "en": "to be right",
+     "note": "Literally 'to have reason'. It works for any subject: tu as raison, ils ont raison.",
+     "ex": "Tu as raison, c'est trop cher.",
+     "exEn": "You're right, it's too expensive.",
+     "diff": "okay",
+     "blank": "raison",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir tort",
+     "en": "to be wrong",
+     "note": "Use it for a person who is mistaken. For a wrong answer or a false statement, say c'est faux.",
+     "ex": "Je crois que tu as tort.",
+     "exEn": "I think you're wrong.",
+     "diff": "okay",
+     "blank": "tort",
+     "alts": [
+      "se tromper"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "avoir besoin de",
+     "en": "to need",
+     "note": "The thing you need follows de, which shortens to d' before a vowel: j'ai besoin d'un café.",
+     "ex": "J'ai besoin d'un café.",
+     "exEn": "I need a coffee.",
+     "diff": "okay",
+     "blank": "besoin",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir envie de",
+     "en": "to feel like",
+     "note": "A softer way to say you want something: j'ai envie d'une glace, or with a verb, j'ai envie de dormir.",
+     "ex": "J'ai envie d'une glace.",
+     "exEn": "I feel like an ice cream.",
+     "diff": "okay",
+     "blank": "envie",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir mal à",
+     "en": "to have a pain in",
+     "note": "à + the body part with le, la or les, not 'my': j'ai mal à la tête, j'ai mal au dos, j'ai mal aux dents.",
+     "ex": "J'ai mal à la tête.",
+     "exEn": "I have a headache.",
+     "diff": "okay",
+     "blank": "mal",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir trente ans",
+     "en": "to be thirty (years old)",
+     "note": "Age takes avoir, and the word ans must be said: mon frère a trente ans, never 'mon frère est trente'.",
+     "ex": "Mon frère a trente ans.",
+     "exEn": "My brother is thirty.",
+     "diff": "hard",
+     "blank": "a",
+     "alts": [],
+     "testable": true
+    },
+    {
+     "fr": "avoir de la chance",
+     "en": "to be lucky",
+     "note": "Literally 'to have some luck', with the partitive de la: here chance means luck. A very common reaction to good news.",
+     "ex": "Tu as de la chance !",
+     "exEn": "You're lucky!",
+     "diff": "hard",
+     "blank": "chance",
+     "alts": [],
+     "testable": true
+    }
+   ]
+  },
+  {
+   "id": "il-faut-necessity",
+   "category": "grammar",
+   "teaching": {
+    "rule": "Il faut says that something is necessary without saying who has to do it. Its il stands for nobody, so it never changes: there is no 'je faut' or 'on faut'. Follow it with an infinitive for an action, il faut partir, and English picks 'we', 'you' or 'one' from the situation. Follow it with a noun for what is needed or for how long something takes: il faut un passeport (you need a passport), il faut deux heures (it takes two hours). To say who needs a thing, put a pronoun before faut: il me faut un stylo (I need a pen). The negative il ne faut pas forbids (you mustn't); the future is il faudra. Il faut que + a full clause also exists, but it needs the subjunctive, which comes later.",
+    "examples": [
+     {
+      "fr": "Il faut partir.",
+      "en": "We have to go.",
+      "note": "faut + infinitive, no de in between. The il is impersonal, and English chooses 'we' because of the situation."
+     },
+     {
+      "fr": "Il faut deux heures en train.",
+      "en": "It takes two hours by train.",
+      "note": "With a length of time, il faut translates 'it takes'."
+     },
+     {
+      "fr": "Il nous faut une plus grande table.",
+      "en": "We need a bigger table.",
+      "note": "A pronoun before faut (me, te, nous, vous) names who needs the thing."
+     }
+    ],
+    "contrast": [
+     {
+      "fr": "Il ne faut pas venir. / Tu n'as pas besoin de venir.",
+      "en": "You mustn't come. / You don't have to come.",
+      "note": "il ne faut pas forbids; it does not mean 'you don't have to'. For that, use pas besoin de or ce n'est pas la peine de."
+     },
+     {
+      "fr": "Il faut partir. / Il doit partir.",
+      "en": "We have to leave. / He has to leave.",
+      "note": "With devoir, il is a real person (he). With faut, il is nobody, and the person comes from the context."
+     }
+    ],
+    "commonMistake": "English speakers read il faut as 'he needs' or build 'je faut'; faut only ever takes impersonal il. They also use il ne faut pas for 'you don't have to', when it actually means 'you mustn't'."
+   },
+   "probes": [
+    {
+     "fr": "Il ne faut pas courir.",
+     "en": "You mustn't run.",
+     "ex": "Il ne faut pas courir dans le couloir.",
+     "exEn": "You mustn't run in the corridor.",
+     "options": [
+      "You don't have to run.",
+      "You didn't run.",
+      "You don't want to run."
+     ]
+    },
+    {
+     "fr": "Il faut dix minutes à pied.",
+     "en": "It takes ten minutes on foot.",
+     "ex": "Pour aller à la gare, il faut dix minutes à pied.",
+     "exEn": "It takes ten minutes on foot to get to the station.",
+     "options": [
+      "He walks for ten minutes.",
+      "He needs ten minutes on foot.",
+      "It's ten minutes by car."
+     ]
+    },
+    {
+     "fr": "Il me faut du sucre.",
+     "en": "I need some sugar.",
+     "ex": "Pour ce gâteau, il me faut du sucre.",
+     "exEn": "I need some sugar for this cake.",
+     "options": [
+      "He needs some sugar.",
+      "He wants some sugar.",
+      "Pass me the sugar."
+     ]
+    }
+   ],
+   "items": [
+    {
+     "fr": "il faut partir",
+     "en": "we have to leave",
+     "note": "il faut + infinitive: the il is nobody in particular, and English chooses 'we', 'you' or 'I' from the situation.",
+     "ex": "Il est tard, il faut partir.",
+     "exEn": "It's late, we have to leave.",
+     "diff": "easy",
+     "blank": "faut",
+     "alts": [
+      "nous devons partir",
+      "on doit partir"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il faut réserver",
+     "en": "you need to book",
+     "note": "No de and no que between faut and the infinitive: il faut réserver, not 'il faut de réserver'.",
+     "ex": "Le restaurant est petit, il faut réserver.",
+     "exEn": "The restaurant is small, you need to book.",
+     "diff": "easy",
+     "blank": "faut",
+     "alts": [
+      "on doit réserver",
+      "tu dois réserver",
+      "vous devez réserver"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il ne faut pas fumer",
+     "en": "you mustn't smoke",
+     "note": "ne and pas go around faut. This forbids something; it never means 'you don't have to'.",
+     "ex": "Il ne faut pas fumer ici.",
+     "exEn": "You mustn't smoke here.",
+     "diff": "okay",
+     "blank": "ne faut pas",
+     "alts": [
+      "on ne doit pas fumer",
+      "tu ne dois pas fumer",
+      "vous ne devez pas fumer"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il faut deux heures",
+     "en": "it takes two hours",
+     "note": "With a length of time, il faut means 'it takes'. Ça prend deux heures is a more casual equivalent.",
+     "ex": "D'ici, il faut deux heures en train.",
+     "exEn": "From here, it takes two hours by train.",
+     "diff": "okay",
+     "blank": "faut",
+     "alts": [
+      "ça prend deux heures"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il me faut",
+     "en": "I need",
+     "note": "me before faut says who needs the thing. The il is still impersonal: il me faut never means 'he needs'.",
+     "ex": "Il me faut un stylo, tu en as un ?",
+     "exEn": "I need a pen, do you have one?",
+     "diff": "okay",
+     "blank": "me",
+     "alts": [
+      "j'ai besoin de"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "qu'est-ce qu'il faut apporter ?",
+     "en": "what do we need to bring?",
+     "note": "qu'est-ce qu'il faut + infinitive asks what has to be done, without naming who does it.",
+     "ex": "Pour le pique-nique, qu'est-ce qu'il faut apporter ?",
+     "exEn": "What do we need to bring for the picnic?",
+     "diff": "okay",
+     "blank": "faut",
+     "alts": [
+      "qu'est-ce qu'on doit apporter ?",
+      "qu'est-ce que nous devons apporter ?"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il faut être patient",
+     "en": "you have to be patient",
+     "note": "être stays in the infinitive after faut: il faut être, never 'il faut est'.",
+     "ex": "Avec les enfants, il faut être patient.",
+     "exEn": "With children, you have to be patient.",
+     "diff": "okay",
+     "blank": "être",
+     "alts": [
+      "on doit être patient",
+      "tu dois être patient",
+      "vous devez être patient"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il faut un passeport",
+     "en": "you need a passport",
+     "note": "il faut + a noun says what is needed, with its article: il faut un passeport, il faut du temps.",
+     "ex": "Pour ce voyage, il faut un passeport.",
+     "exEn": "You need a passport for this trip.",
+     "diff": "easy",
+     "blank": "faut",
+     "alts": [
+      "on a besoin d'un passeport",
+      "tu as besoin d'un passeport",
+      "vous avez besoin d'un passeport"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il faut combien de temps ?",
+     "en": "how long does it take?",
+     "note": "In conversation the question word can sit after faut. Combien de temps faut-il ? is the more formal order.",
+     "ex": "Il faut combien de temps pour aller à la gare ?",
+     "exEn": "How long does it take to get to the station?",
+     "diff": "hard",
+     "blank": "combien de temps",
+     "alts": [
+      "combien de temps faut-il ?",
+      "ça prend combien de temps ?",
+      "combien de temps ça prend ?"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il nous faut",
+     "en": "we need",
+     "note": "nous before faut says who needs the thing; the il stays impersonal. Nous avons besoin de and on a besoin de say the same.",
+     "ex": "Il nous faut deux chambres pour ce soir.",
+     "exEn": "We need two rooms for tonight.",
+     "diff": "okay",
+     "blank": "nous",
+     "alts": [
+      "nous avons besoin de",
+      "on a besoin de"
+     ],
+     "testable": true
+    },
+    {
+     "fr": "il faut du temps",
+     "en": "it takes time",
+     "note": "il faut + du temps: the partitive du because time is uncountable here. Ça prend du temps is a more casual equivalent.",
+     "ex": "Pour apprendre une langue, il faut du temps.",
+     "exEn": "Learning a language takes time.",
+     "diff": "okay",
+     "blank": "faut",
+     "alts": [
+      "ça prend du temps"
+     ],
+     "testable": true
+    }
+   ]
+  }
+ ]
+}

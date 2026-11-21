@@ -128,6 +128,9 @@ enum ReadSearchState: Equatable {
 }
 
 struct ReadView: View {
+    /// Closes Read back to Home (UX-03). Drawn in Read's own header, so a story
+    /// pushed onto this stack shows only the reader's own back button.
+    let onClose: () -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var model = ReadModel()
@@ -220,16 +223,21 @@ struct ReadView: View {
                     // empty instead of showing a stale term with no results.
                     if !searching { model.clearSearch(); searchText = "" }
                 } label: {
-                    Image(systemName: searching ? "xmark" : "magnifyingglass")
-                        .scaledFont(17, weight: .semibold).foregroundStyle(.white)
+                    // A toggle, drawn selected while search is open — not an "xmark":
+                    // the header's own close button beside it is the one "xmark",
+                    // and it leaves Read (UX-03).
+                    Image(systemName: "magnifyingglass")
+                        .scaledFont(17, weight: .semibold)
+                        .foregroundStyle(searching ? Theme.primaryText : .white)
                         .frame(width: Theme.minimumHitTarget * typeScale,
                                height: Theme.minimumHitTarget * typeScale)
-                        .background(Color.white.opacity(0.2)).clipShape(.circle)
+                        .background(searching ? Color.white : Color.white.opacity(0.2)).clipShape(.circle)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(searching ? "Close search" : "Search stories")
                 .accessibilityHint(searching ? "Returns to the feed" : "Finds French stories on any topic")
             }
+            SectionCloseButton(action: onClose)
         }
         .padding(.horizontal, 20).padding(.top, 60).padding(.bottom, 18)
         .frame(maxWidth: .infinity, minHeight: 150, alignment: .bottomLeading)

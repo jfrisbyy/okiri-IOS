@@ -538,7 +538,7 @@ struct SpeakView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if state.canOpenSettings {
                         Button { Haptics.tap(); openSettings() } label: {
-                            Text("Open Settings").font(.system(.footnote, weight: .bold)).foregroundStyle(Theme.primary)
+                            Text("Open Settings").font(.system(.footnote, weight: .bold)).foregroundStyle(Theme.primaryText)
                                 .minimumHitTarget()
                         }
                         .buttonStyle(.plain)
@@ -664,8 +664,8 @@ struct SpeakView: View {
                         Haptics.tap(); selectedDuration = d.value
                     } label: {
                         VStack(spacing: 4) {
-                            Text(d.label).font(.system(.headline, weight: .bold)).foregroundStyle(active ? Theme.primaryDark : Theme.text)
-                            Text(d.description).font(.system(.caption2)).foregroundStyle(active ? Theme.primary : Theme.textSecondary).multilineTextAlignment(.center)
+                            Text(d.label).font(.system(.headline, weight: .bold)).foregroundStyle(active ? Theme.primaryText : Theme.text)
+                            Text(d.description).font(.system(.caption2)).foregroundStyle(active ? Theme.primaryText : Theme.textSecondary).multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 14)
                         .background(active ? Theme.primaryLight : Theme.card)

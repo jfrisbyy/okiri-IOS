@@ -780,3 +780,17 @@ nonisolated extension Tuning {
     /// Seconds the Watch skip-back / skip-forward buttons move by (must be a value SF Symbols draws: 5, 10, 15, 30, 45, 60, 75 or 90).
     static let watchSeekStepSeconds: Double = 5
 }
+
+nonisolated extension Tuning {
+    // MARK: UX-09 — launch reconcile budget (don't block launch on the network)
+    /// Seconds a cold launch waits for the account reconcile before a learner with a readable local record enters the app (the reconcile finishes in the background).
+    static let launchReconcileBudget: TimeInterval = 2.5
+    /// Seconds a launch with nothing on the device may wait before the loading screen offers "Still syncing…" with "Continue offline".
+    static let launchOfflineOfferDelay: TimeInterval = 5
+}
+
+nonisolated extension Tuning {
+    // MARK: UX-15 — the first Home before any lesson
+    /// Minutes the header promises a first lesson takes ("about 5 minutes"): `lessonSize` items plus the teaching cards, an estimate to revisit once real lesson-minute data exists.
+    static let lessonEstimateMinutes: Int = 5
+}

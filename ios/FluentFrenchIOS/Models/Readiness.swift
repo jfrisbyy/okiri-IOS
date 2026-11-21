@@ -100,17 +100,42 @@ nonisolated enum ReadinessCopy {
         }
     }
 
-    /// The governor holds a gate that coverage alone would open (Pass 3 F6).
+    // The governor lines (UX-25) say what to DO, not "consolidating". They are
+    // worded "review … BEFORE X opens", never "review … TO open X": the governor
+    // holds a gate whenever check-in recall is low, including gates that coverage
+    // or the Reading minutes also still hold (`unlockCondition` returns this line
+    // for every higher modality while the governor is active), so lifting the
+    // governor is always required and not always enough. "Today's lessons focus on
+    // that" is what the governor does: the selector drops the frontier weight and
+    // multiplies urgency (`ConceptSelector`, `Tuning.governorUrgencyMultiplier`).
+
+    /// The governor holds a gate (Pass 3 F6): "Review what you've learned before
+    /// Listening opens — today's lessons focus on that."
     static func governorCondition(for modality: LearningModality) -> String {
-        "Consolidating your base before opening \(modality.label.lowercased())."
+        "Review what you've learned before \(modality.label) opens — today's lessons focus on that."
     }
 
-    /// The header over Home's locked-activity chips. "Build the basics" is a task a
-    /// learner at full base coverage has already finished, so while the governor is
-    /// the only thing holding the gate the header names consolidation instead
-    /// (firstrun-9-2).
-    static func lockedActivitiesHeader(readingHeldByGovernor: Bool) -> String {
-        readingHeldByGovernor ? "UNLOCKS AS YOU CONSOLIDATE" : "UNLOCKS AS YOU BUILD THE BASICS"
+    /// Home's ONE "Next unlock" line for a Foundation learner (UX-07): every locked
+    /// activity sits behind Reading, so Reading is the next unlock, with the gate's
+    /// own progress (`AppStore.foundationProgress`). In the bridge the short pieces
+    /// are already open, so what is next is the rest of Reading. When only the
+    /// governor holds it (`AppStore.isReadingHeldByGovernor`: coverage has cleared
+    /// the bar) the skills are done, the governor is the whole gate, and releasing
+    /// it opens Reading live — the one case where "review … to open it" is true.
+    static func nextUnlockLine(readingReadiness: ModalityReadiness, done: Int, target: Int,
+                               readingHeldByGovernor: Bool) -> String? {
+        let subject: String
+        switch readingReadiness {
+        case .unlocked: return nil
+        case .locked: subject = "Reading"
+        case .foundation: subject = "the rest of Reading"
+        }
+        if readingHeldByGovernor {
+            return "Next unlock: \(subject) — review what you've learned to open it."
+        }
+        let target = max(1, target)
+        let done = min(max(0, done), target)
+        return "Next unlock: \(subject) — \(done) of \(target) skill\(target == 1 ? "" : "s")"
     }
 
     /// The plan's unlock item headline: "15 min of Reading unlocks Listening & Speaking".
@@ -118,14 +143,17 @@ nonisolated enum ReadinessCopy {
         "\(config.higherDemonstratedMinutes) min of Reading unlocks \(names(of: modalities))"
     }
 
-    /// The governor variant of the unlock headline.
+    /// The governor variant of the unlock headline: "Review what you've learned
+    /// before Listening & Speaking open — today's lessons focus on that."
     static func governorHeadline(for modalities: [LearningModality]) -> String {
-        "Consolidating your base before opening \(names(of: modalities).lowercased())."
+        let verb = modalities.count == 1 ? "opens" : "open"
+        return "Review what you've learned before \(names(of: modalities)) \(verb) — today's lessons focus on that."
     }
 
-    /// The governor rationale once everything the learner chose is already open:
-    /// the frontier is closed, so the day leans on review (Pass 3 F6).
-    static let governorConsolidating = "Consolidating your base — today's lessons lean on review."
+    /// The governor rationale when it holds no gate the line could name — every
+    /// chosen activity is open, or coverage (not the governor) keeps Reading shut
+    /// (firstrun-10-6): the frontier is closed, so the day leans on review (Pass 3 F6).
+    static let governorConsolidating = "Today's lessons focus on review — making sure what you've learned sticks."
 
     /// Progress toward the demonstrated-minutes bar: "8 of 15 min of Reading".
     static func minutesProgress(done: Int, bar: Int) -> String {
@@ -149,7 +177,7 @@ nonisolated enum ReadinessCopy {
     static let bridgeCondition = "Almost there — short pieces at your level for now."
     /// Reading held in the bridge by the retention governor (Pass 3 F6): the surface
     /// the learner already had stays open, authentic pieces wait for the base to hold.
-    static let governorBridgeCondition = "Consolidating your base — short pieces at your level for now."
+    static let governorBridgeCondition = "Review what you've learned before the rest of Reading opens — short pieces at your level for now."
     /// The stat line an open-in-bridge Read card shows.
     static let bridgeStat = "Short pieces at your level"
 }

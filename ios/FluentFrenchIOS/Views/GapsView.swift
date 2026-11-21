@@ -102,7 +102,7 @@ struct GapsView: View {
     private var header: some View {
         ResourceHeader(
             gradient: Theme.primaryGradient,
-            title: "Gap Map",
+            title: HomeCopy.progressTitle,
             subtitle: "Where you're strong, where to focus",
             onBack: { dismiss() }
         )
@@ -168,7 +168,7 @@ struct GapsView: View {
             } else if stat.due > 0 {
                 practice(stat.category, dueOnly: true)
             } else {
-                emptyHeadline = "No \(stat.category.label.lowercased()) gaps yet — capture words while reading or speaking, or keep going with your lessons."
+                emptyHeadline = "Nothing in \(stat.category.label) yet — capture words while reading or speaking, or keep going with your lessons."
             }
         } label: {
             VStack(alignment: .leading, spacing: 14) {

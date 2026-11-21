@@ -5,7 +5,10 @@
 //  The completion screen and the out-of-hearts recap (C5 / C26): first-attempt
 //  accuracy, the capstone held/slipped tally (C16), XP, best streak, an honest
 //  level line (no theta decimals), the missed items with their answers and
-//  "Practice these now", and any skills unlocked.
+//  "Practice these now", and any skills unlocked. The day line ("Lesson 1 of 3
+//  done", "Day 1 streak started") and the "Next lesson" button continue the day
+//  (UX-05); the numbers come from `AppStore.nextLessonOffer`, the words from
+//  `LessonCopy`.
 //
 
 import SwiftUI
@@ -14,6 +17,9 @@ struct LessonCompleteStage: View {
     let model: LessonViewModel
     let onDone: () -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Drives the streak flame's one bounce when the streak ticked (UX-05).
+    @State private var streakBeat = false
     /// Icon gutters grow with the type ratio so nothing spills out of them at
     /// large text sizes (G1). Small chrome only — the body curve reaches ~3.1x
     /// at the largest accessibility sizes.
@@ -59,9 +65,12 @@ struct LessonCompleteStage: View {
                     if model.isCapstone {
                         capstoneTally(summary)
                     }
+                    if let offer = model.nextLessonOffer {
+                        dayCard(offer)
+                    }
                     if model.isNewBest {
                         Label("New personal best!", systemImage: "trophy.fill")
-                            .font(.subheadline.weight(.bold)).foregroundStyle(Theme.warning)
+                            .font(.subheadline.weight(.bold)).foregroundStyle(Theme.warningText)
                             .padding(.horizontal, 14).padding(.vertical, 8)
                             .background(Theme.warningLight).clipShape(.capsule)
                     }
@@ -76,8 +85,64 @@ struct LessonCompleteStage: View {
                 .padding(Space.xl)
             }
             .scrollIndicators(.hidden)
-            LessonPrimaryButton(title: "Done", action: onDone)
+            buttons
                 .padding(Space.xl)
+        }
+    }
+
+    /// "Next lesson" leads while the day has lessons to go (UX-05); "Done" is then
+    /// the secondary way out. Otherwise "Done" is the one button.
+    @ViewBuilder
+    private var buttons: some View {
+        if model.nextLessonOffer?.nextAvailable == true {
+            VStack(spacing: 8) {
+                if let notice = model.nextLessonNotice {
+                    Text(notice).font(.footnote).foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                LessonPrimaryButton(title: LessonCopy.nextLessonButton) {
+                    Haptics.select()
+                    model.startNextLesson(store: store)
+                }
+                LessonSecondaryButton(title: LessonCopy.doneButton, action: onDone)
+            }
+        } else {
+            LessonPrimaryButton(title: LessonCopy.doneButton, action: onDone)
+        }
+    }
+
+    /// Where the day stands: "Lesson 1 of 3 done" and "Day 1 streak started".
+    private func dayCard(_ offer: NextLessonOffer) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "graduationcap.fill").foregroundStyle(Theme.secondary)
+                    .frame(width: 28 * Theme.chromeScale(typeScale)).accessibilityHidden(true)
+                Text(LessonCopy.dayLine(offer)).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            if let streak = LessonCopy.streakLine(offer) {
+                HStack(spacing: 10) {
+                    Image(systemName: "flame.fill").foregroundStyle(Theme.primary)
+                        .frame(width: 28 * Theme.chromeScale(typeScale)).accessibilityHidden(true)
+                        .symbolEffect(.bounce, value: streakBeat)
+                    Text(streak).font(.subheadline.weight(.bold))
+                        .foregroundStyle(offer.celebrates ? Theme.primaryText : Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(Space.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card)).softLift(strength: 0.6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(LessonCopy.spokenSummary(offer))
+        .onAppear {
+            // The haptic fired when the lesson was booked; the bounce is the visual
+            // half of the same beat, and Reduce Motion skips it.
+            if offer.celebrates && !reduceMotion { streakBeat.toggle() }
         }
     }
 
@@ -125,7 +190,7 @@ struct LessonCompleteStage: View {
             }
             if !unlisted.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("SLIPPED").font(.caption.weight(.bold)).foregroundStyle(Theme.error).tracking(0.3)
+                    Text("SLIPPED").font(.caption.weight(.bold)).foregroundStyle(Theme.errorText).tracking(0.3)
                     ForEach(unlisted) { gap in
                         HStack(spacing: 8) {
                             Text(gap.frenchWord).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
@@ -163,7 +228,7 @@ struct LessonCompleteStage: View {
         let level = store.hasCompletedAssessment ? store.learnerLevel.rawValue : "Not placed"
         return VStack(spacing: 10) {
             if !model.isCapstone {
-                summaryRow("checkmark.seal.fill", Theme.success, "Mastered this session", "\(summary.masteredCount)")
+                summaryRow("checkmark.seal.fill", Theme.success, LessonCopy.solidSummaryLabel, "\(summary.masteredCount)")
             }
             summaryRow("star.fill", Theme.warning, "XP earned", "+\(summary.xp + bonus)",
                        detail: bonus > 0 ? "includes +\(bonus) for finishing" : nil)
@@ -216,7 +281,7 @@ struct LessonCompleteStage: View {
     private var unlockedCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("New skills unlocked", systemImage: "lock.open.fill")
-                .font(.footnote.weight(.bold)).foregroundStyle(Theme.success)
+                .font(.footnote.weight(.bold)).foregroundStyle(Theme.successText)
             ForEach(model.unlockedConcepts, id: \.self) { name in
                 Text("• \(name)").font(.footnote).foregroundStyle(Theme.textSecondary)
             }

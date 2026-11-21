@@ -384,7 +384,7 @@ private struct ListenPlayerView: View {
                         .font(.caption2).foregroundStyle(Theme.textSecondary)
                     Spacer()
                     if player.didFinish {
-                        Text("Finished").font(.caption2.weight(.semibold)).foregroundStyle(Theme.success)
+                        Text("Finished").font(.caption2.weight(.semibold)).foregroundStyle(Theme.successText)
                     }
                 }
             }

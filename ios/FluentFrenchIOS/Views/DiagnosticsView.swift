@@ -68,7 +68,7 @@ private struct DiagnosticsRow: View {
             Text("Governor \(metrics.governorActive ? "ON" : "off") · stalls \(metrics.stalls) · reading \(metrics.readingUnlocked ? "unlocked" : "locked") · lessons today \(metrics.lessonsToday)")
             if !metrics.stalledConceptIds.isEmpty {
                 Text("Stalled: \(metrics.stalledConceptIds.joined(separator: ", "))")
-                    .foregroundStyle(Theme.error)
+                    .foregroundStyle(Theme.errorText)
             }
         }
         .scaledFont(13)

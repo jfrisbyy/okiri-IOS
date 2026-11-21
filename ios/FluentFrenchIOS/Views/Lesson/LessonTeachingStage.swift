@@ -70,7 +70,7 @@ struct LessonSkillCard: View {
                             .accessibilityHidden(true)
                         Text("Let's look at this again").font(.subheadline.weight(.semibold))
                     }
-                    .foregroundStyle(Theme.warning)
+                    .foregroundStyle(Theme.warningText)
                 }
                 Text(block.concept.name)
                     .font(LessonFont.display).foregroundStyle(Theme.text)
@@ -91,7 +91,7 @@ struct LessonSkillCard: View {
                             Image(systemName: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(Theme.warning)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Common mistake").font(.caption.weight(.bold)).foregroundStyle(Theme.warning)
+                                Text("Common mistake").font(.caption.weight(.bold)).foregroundStyle(Theme.warningText)
                                 Text(mistake).font(.subheadline).foregroundStyle(Theme.text)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -156,7 +156,7 @@ struct LessonSkillCard: View {
                 SpeakButton(text: example.exampleSentence.isEmpty ? example.frenchWord : example.exampleSentence, size: 28)
             }
             if example.exampleSentence.isEmpty {
-                Text(example.frenchWord).font(.title3.weight(.bold)).foregroundStyle(Theme.primary)
+                Text(example.frenchWord).font(.title3.weight(.bold)).foregroundStyle(Theme.primaryText)
                 Text(example.englishTranslation).font(.footnote).foregroundStyle(Theme.textSecondary)
             } else {
                 LessonHighlightedText(sentence: example.exampleSentence, gap: example)
@@ -186,7 +186,7 @@ struct LessonWordCard: View {
                     Spacer()
                 }
                 HStack(spacing: 12) {
-                    Text(gap.frenchWord).font(LessonFont.hero).foregroundStyle(Theme.primary)
+                    Text(gap.frenchWord).font(LessonFont.hero).foregroundStyle(Theme.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     SpeakButton(text: gap.frenchWord, size: 42)
                 }
@@ -237,7 +237,7 @@ struct LessonWordCard: View {
                         FlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(related, id: \.self) { word in
                                 Text(word)
-                                    .font(.footnote.weight(.medium)).foregroundStyle(Theme.primary)
+                                    .font(.footnote.weight(.medium)).foregroundStyle(Theme.primaryText)
                                     .padding(.horizontal, 10).padding(.vertical, 5)
                                     .background(Theme.primary.opacity(0.10), in: Capsule())
                             }

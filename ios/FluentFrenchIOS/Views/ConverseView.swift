@@ -112,7 +112,7 @@ struct ConverseView: View {
                     Haptics.tap()
                     reachability.refresh()
                 } label: {
-                    Text("Try again").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.warning)
+                    Text("Try again").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.warningText)
                         .minimumHitTarget()
                 }
                 .buttonStyle(.plain)
@@ -988,7 +988,7 @@ private struct ConverseCallView: View {
                 Label(saved ? "Saved to your deck" : (duplicate ? "Already in your deck" : "Nothing to save"),
                       systemImage: saved || duplicate ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.system(.caption2, weight: .semibold))
-                    .foregroundStyle(saved || duplicate ? Theme.success : Theme.textSecondary)
+                    .foregroundStyle(saved || duplicate ? Theme.successText : Theme.textSecondary)
             }
         }
         .padding(12)
@@ -1031,7 +1031,7 @@ private struct ConverseCallView: View {
                     let kept = savedCorrectionIds.contains(correction.id) || duplicateCorrectionIds.contains(correction.id)
                     Label(kept ? "Correction saved" : "Corrected above", systemImage: kept ? "checkmark.circle.fill" : "arrow.turn.down.right")
                         .font(.system(.caption2, weight: .semibold))
-                        .foregroundStyle(kept ? Theme.success : Theme.textSecondary)
+                        .foregroundStyle(kept ? Theme.successText : Theme.textSecondary)
                 case .some(.tooLongForACard):
                     // The store would refuse this line, so the recap says why
                     // instead of showing a save button that does nothing (talkmedia-4-1).

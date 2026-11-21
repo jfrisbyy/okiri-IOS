@@ -80,15 +80,7 @@ struct LessonIntroStage: View {
     }
 
     private var subtitle: String {
-        let n = model.gaps.filter { !$0.isProbe }.count
-        let items = "\(n) item\(n == 1 ? "" : "s")"
-        if model.isCapstone {
-            return "\(items) · one question each — your first answer is what counts."
-        }
-        // Not "each": check-ins are asked once, and a skill you show you already
-        // have is released early — so promising every item twice is a promise the
-        // lesson does not keep.
-        return "\(items) · answer an item right \(Tuning.masteryTarget)× to master it this session."
+        LessonCopy.introSubtitle(itemCount: model.gaps.filter { !$0.isProbe }.count, isCapstone: model.isCapstone)
     }
 
     private var startTitle: String {

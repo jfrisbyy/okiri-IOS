@@ -4,9 +4,11 @@
 //
 //  Auth gate + cloud-sync coordinator. Nothing opens until the learner is signed
 //  in; once they are, their progress is reconciled with the cloud BEFORE any
-//  screen that reads it (RootView, onboarding) appears, and continuously backed
-//  up as they use the app. Also owns the app lifecycle hooks: flush + upload on
-//  background, reconcile again on foreground.
+//  screen that reads it (RootView, onboarding) appears — or, when the device
+//  already holds their record, until the launch budget runs out and the
+//  reconcile finishes in the background (UX-09, decided in CloudSync) — and
+//  continuously backed up as they use the app. Also owns the app lifecycle
+//  hooks: flush + upload on background, reconcile again on foreground.
 //
 
 import SwiftUI
@@ -60,9 +62,10 @@ struct ContentView: View {
         }
     }
 
-    /// Signed-in gate: corrupt local data → recovery; reconcile not finished
-    /// for this user → loading; account unreachable with nothing local → retry
-    /// screen; otherwise the app.
+    /// Signed-in gate: corrupt local data → recovery; otherwise whatever
+    /// `CloudSync.launchGate` decides — loading (with "Continue offline" once the
+    /// wait runs long), the retry screen when the account is unreachable with
+    /// nothing local, or the app.
     @ViewBuilder
     private func signedIn(_ user: AuthManager.AppUser) -> some View {
         if pendingAccountSwitch == user.id {
@@ -88,22 +91,29 @@ struct ContentView: View {
                     await cloud.continueWithLocalCopy(store: store, userId: user.id)
                 }
             )
-        } else if cloud.isReconciling || cloud.reconciledUserId != user.id {
-            LaunchLoadingView()
-        } else if cloud.needsAccountBeforeContinuing {
-            AccountUnreachableView(message: syncFailureMessage) {
-                await cloud.reconcile(store: store, userId: user.id, initial: true)
-            }
         } else {
-            RootView()
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    // A low-stakes blob (preferences / practice history) could not
-                    // be read: the app runs on defaults for it and says so, rather
-                    // than blocking the learner behind a cloud restore (store-1-5).
-                    if let notice = store.loadNoticeMessage {
-                        LoadNoticeBanner(message: notice) { store.acknowledgeLoadNotices() }
-                    }
+            switch cloud.launchGate(for: user.id) {
+            case .loading:
+                LaunchLoadingView()
+            case .stillSyncing:
+                LaunchLoadingView(continueOffline: {
+                    cloud.continueOfflineAtLaunch(store: store, userId: user.id)
+                })
+            case .accountUnreachable:
+                AccountUnreachableView(message: syncFailureMessage) {
+                    await cloud.reconcileAtLaunch(store: store, userId: user.id)
                 }
+            case .ready:
+                RootView()
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        // A low-stakes blob (preferences / practice history) could not
+                        // be read: the app runs on defaults for it and says so, rather
+                        // than blocking the learner behind a cloud restore (store-1-5).
+                        if let notice = store.loadNoticeMessage {
+                            LoadNoticeBanner(message: notice) { store.acknowledgeLoadNotices() }
+                        }
+                    }
+            }
         }
     }
 
@@ -164,7 +174,8 @@ struct ContentView: View {
         store.cloud = cloud
         // Uploads stay disabled until the reconcile has applied or pushed:
         // `cloud.setUser` is effectively called by the reconcile on success.
-        await cloud.reconcile(store: store, userId: uid, initial: true)
+        // The wait is bounded for a learner whose record is on the device (UX-09).
+        await cloud.reconcileAtLaunch(store: store, userId: uid)
     }
 
     // MARK: - Lifecycle
@@ -197,8 +208,13 @@ struct ContentView: View {
 }
 
 /// Brief branded loading state shown while the saved session restores on launch
-/// and while the account snapshot is being reconciled after sign-in.
+/// and while the account snapshot is being reconciled after sign-in. When the
+/// wait runs long with nothing on the device (UX-09, `LaunchGate.stillSyncing`)
+/// it says so and offers to continue offline.
 struct LaunchLoadingView: View {
+    /// Non-nil once the wait has run long: shows "Still syncing…" and a
+    /// "Continue offline" button that calls this.
+    var continueOffline: (() -> Void)? = nil
     /// The launch mark grows with the learner's text size so the glyph never
     /// outgrows the circle it sits in.
     @ScaledMetric(relativeTo: .largeTitle) private var markScale: CGFloat = 1
@@ -209,18 +225,43 @@ struct LaunchLoadingView: View {
         ZStack {
             Theme.background.ignoresSafeArea()
             VStack(spacing: 18) {
-                ZStack {
-                    Circle().fill(Theme.primaryGradient)
-                        .frame(width: 76 * mark, height: 76 * mark)
-                    Image(systemName: "sparkles")
-                        .scaledFont(32, weight: .semibold)
-                        .foregroundStyle(.white)
+                VStack(spacing: 18) {
+                    ZStack {
+                        Circle().fill(Theme.primaryGradient)
+                            .frame(width: 76 * mark, height: 76 * mark)
+                        Image(systemName: "sparkles")
+                            .scaledFont(32, weight: .semibold)
+                            .foregroundStyle(.white)
+                    }
+                    ProgressView().tint(Theme.primary)
                 }
-                ProgressView().tint(Theme.primary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Loading your progress")
+
+                if let continueOffline {
+                    Text("Still syncing…")
+                        .scaledFont(17, weight: .semibold)
+                        .foregroundStyle(Theme.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("You can start on this device now. If your account already has progress, it replaces what you do here as soon as it loads.")
+                        .scaledFont(14)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+                    Button {
+                        continueOffline()
+                    } label: {
+                        Text("Continue offline")
+                            .scaledFont(15, weight: .medium)
+                            .frame(minHeight: Theme.minimumHitTarget)
+                            .padding(.horizontal, 20)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.primary)
+                    .accessibilityHint("Opens the app without waiting for your account")
+                }
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Loading your progress")
     }
 }
 

@@ -300,7 +300,7 @@ struct Pass3EngineTests {
         #expect(s.readiness(for: .reading) == .foundation, "not yet opened → held in the bridge while consolidating")
         #expect(s.isInFoundation)
         let plan = DailyPlanEngine(store: s).makePlan(now: now)
-        #expect(plan.rationale == "Consolidating your base before opening reading.")
+        #expect(plan.rationale == "Review what you've learned before Reading opens — today's lessons focus on that.")
         #expect(plan.isLessonPaced)
 
         // Governor releases, the unlock is recorded at a bookkeeping point, and a

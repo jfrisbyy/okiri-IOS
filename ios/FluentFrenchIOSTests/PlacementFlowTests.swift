@@ -527,7 +527,7 @@ struct PlacementFlowTests {
         s.recordAnswer(gapId: first.id, correct: true, format: .multipleChoice, firstTry: true, now: now)
         let practised = s.gaps.first { $0.id == first.id }
         #expect(practised?.isNew == false, "an answered gap is no longer new")
-        #expect(HomeCopy.gapsToReview(3, practised: 3) == "3 gaps to review")
+        #expect(HomeCopy.gapsToReview(3, practised: 3) == "3 to review")
     }
 
     @Test func placementSeedsKeepTheirGapsAndMissedHeadwordsAreNotSeededTwice() {
@@ -622,6 +622,7 @@ struct PlacementFlowTests {
         // Practice grows ability past the placement estimate…
         s.abilityTheta += 0.5
         let earned = s.abilityTheta
+        let shown = s.learnerLevel
 
         // …and a bad-day retake that places A1 takes none of it away.
         let weak = PlacementResult(vocabBand: 0, grammarBand: 0, estimatedLevel: .A1, isTrueBeginner: false,
@@ -629,6 +630,9 @@ struct PlacementFlowTests {
         s.applyPlacement(weak, isFirstRun: false, now: now.addingTimeInterval(day))
         #expect(s.abilityTheta == earned, "practice-grown ability survives a weaker retake")
         #expect(s.assessedLevel == .B1, "the displayed level is never demoted by a retake")
+        // Profile and the retake intro say a retake "can only raise your level"
+        // (UX-27): the level Home and Profile show must not drop either.
+        #expect(s.learnerLevel.order >= shown.order, "the shown level never drops after a retake")
 
         // A stronger retake still raises both.
         let stronger = PlacementResult(vocabBand: 4, grammarBand: 4, estimatedLevel: .B2, isTrueBeginner: false,

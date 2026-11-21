@@ -54,7 +54,7 @@ struct ProfileView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.tint(Theme.primary)
+                    Button("Done") { dismiss() }.tint(Theme.primaryText)
                 }
             }
         }
@@ -81,7 +81,7 @@ struct ProfileView: View {
 
     /// ONE displayed level (`store.learnerLevel`, the ranker's view — the same
     /// number Home shows), with the placement result as the secondary line (D12).
-    /// Before placement: "Not placed". Retaking is "Recalibrate": it blends new
+    /// Before placement: "Not placed". A retake ("Retake the level check") blends new
     /// evidence in and never lowers what was earned (D8).
     private var levelCard: some View {
         let placed = store.hasCompletedAssessment
@@ -101,7 +101,7 @@ struct ProfileView: View {
                     Text(placed ? "Your level: \(level)" : "Not placed")
                         .scaledFont(16, weight: .semibold).foregroundStyle(Theme.text)
                     Text(placed
-                         ? "Placed at \(placedAt) · Recalibrate any time — a retake only adds evidence"
+                         ? "Placed at \(placedAt) · Retake the level check any time — it can only raise your level"
                          : "Take the placement check to set your starting point")
                         .font(.footnote).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -115,7 +115,7 @@ struct ProfileView: View {
         .buttonStyle(.plain)
         .pressable()
         .accessibilityLabel(placed ? "Your level \(level), placed at \(placedAt)" : "Not placed")
-        .accessibilityHint(placed ? "Recalibrate your level. A retake blends in new evidence and never lowers what you've earned." : "Take the placement check.")
+        .accessibilityHint(placed ? "Retake the level check. It can only raise your level." : "Take the placement check.")
     }
 
     private var preferencesCard: some View {
@@ -237,7 +237,7 @@ struct ProfileView: View {
                         .frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
                 }
                 .buttonStyle(.bordered)
-                .tint(Theme.primary)
+                .tint(Theme.primaryText)
                 .accessibilityLabel("Retry backup")
                 .accessibilityHint("Tries to send your latest progress to your account again")
             }
@@ -306,7 +306,7 @@ struct ProfileView: View {
 
     private func statBlock(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
-            Text(value).scaledFont(18, weight: .bold).foregroundStyle(Theme.primary)
+            Text(value).scaledFont(18, weight: .bold).foregroundStyle(Theme.primaryText)
             Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -319,7 +319,7 @@ struct ProfileView: View {
                 SectionHeader(title: "Your patterns")
                 Spacer()
                 NavigationLink { ErrorPatternsView() } label: {
-                    Text("See all").scaledFont(13, weight: .medium).foregroundStyle(Theme.primary)
+                    Text("See all").scaledFont(13, weight: .medium).foregroundStyle(Theme.primaryText)
                         .minimumHitTarget()
                 }
                 .accessibilityLabel("See all patterns")
@@ -362,7 +362,7 @@ struct ProfileView: View {
         Button(role: .destructive) {
             showResetConfirm = true
         } label: {
-            Text("Reset progress (debug)").scaledFont(14, weight: .medium).foregroundStyle(Theme.error)
+            Text("Reset progress (debug)").scaledFont(14, weight: .medium).foregroundStyle(Theme.errorText)
                 .minimumHitTarget()
         }
         .padding(.top, 8)
@@ -412,7 +412,7 @@ struct PracticeStreakCard: View {
                 Spacer()
                 if best > 0 {
                     Text("Best: \(best)d")
-                        .font(.caption.weight(.semibold)).foregroundStyle(Theme.primaryDark)
+                        .font(.caption.weight(.semibold)).foregroundStyle(Theme.primaryText)
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(Theme.primaryLight).clipShape(.capsule)
                         // "12d" reads as a bare letter without this.
@@ -422,7 +422,7 @@ struct PracticeStreakCard: View {
             }
             if streak > 0 {
                 HStack(alignment: .bottom, spacing: 8) {
-                    Text("\(streak)").scaledFont(40, weight: .heavy).foregroundStyle(Theme.primary)
+                    Text("\(streak)").scaledFont(40, weight: .heavy).foregroundStyle(Theme.primaryText)
                     Text(streak == 1 ? "day — keep it going" : "days in a row")
                         .font(.subheadline).foregroundStyle(Theme.textSecondary).padding(.bottom, 8)
                 }
@@ -474,7 +474,7 @@ struct PracticeStreakCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Text(HomeCopy.weeklyGoalValue(done: done, goal: goal))
-                    .font(.footnote).foregroundStyle(met ? Theme.success : Theme.textSecondary)
+                    .font(.footnote).foregroundStyle(met ? Theme.successText : Theme.textSecondary)
                     .layoutPriority(1)
             }
             GeometryReader { geo in

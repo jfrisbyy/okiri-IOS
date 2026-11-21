@@ -486,7 +486,7 @@ struct WordReader: View {
         if !lookupable {
             wordView
         } else if saved {
-            control.accessibilityValue("Saved to your deck")
+            control.accessibilityValue("Saved to \(HomeCopy.myWordsTitle)")
         } else {
             control
         }
@@ -527,7 +527,7 @@ struct WordReader: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(word)
-                        .accessibilityValue(saved ? "Saved to your deck" : "")
+                        .accessibilityValue(saved ? "Saved to \(HomeCopy.myWordsTitle)" : "")
                         .accessibilityHint(saved ? "Opens the word again" : "Opens the translation and lets you save it")
                     }
                 }
@@ -537,7 +537,7 @@ struct WordReader: View {
     }
 
     private var savedFooter: some View {
-        Label("\(savedTerms.count) word\(savedTerms.count == 1 ? "" : "s") added to your deck",
+        Label("\(savedTerms.count) word\(savedTerms.count == 1 ? "" : "s") added to \(HomeCopy.myWordsTitle)",
               systemImage: "checkmark.seal.fill")
             .scaledFont(13, weight: .semibold).foregroundStyle(Theme.success)
             .frame(maxWidth: .infinity)

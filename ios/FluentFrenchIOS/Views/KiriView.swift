@@ -136,7 +136,7 @@ struct KiriView: View {
         Text(text)
             .font(.footnote.weight(.bold))
             .fontDesign(.rounded)
-            .foregroundStyle(Theme.primaryDark)
+            .foregroundStyle(Theme.primaryText)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(Capsule().fill(.white))

@@ -60,6 +60,19 @@ enum Theme {
     nonisolated static let error = Color(hex: "EF4444")
     nonisolated static let errorLight = Color(hex: "FEF2F2")
 
+    // Text-safe brand and status colours (UX-08). The bright tokens above are
+    // for fills, icons and tints; as TEXT on white, cream or their own light
+    // tints they measure 2.1–3.4:1 and fail AA. Use these for any text that is
+    // coloured by brand or status.
+    /// Orange text, 5.2:1 on white ("See all", stat values, links).
+    nonisolated static let primaryText = Color(hex: "C2410C")
+    /// Success text, 5.5:1 on white ("Correct!", "Saved", met goals).
+    nonisolated static let successText = Color(hex: "047857")
+    /// Warning text, 5.0:1 on white (locked notes, retry links on warnings).
+    nonisolated static let warningText = Color(hex: "B45309")
+    /// Error text, 6.5:1 on white (failure notices, wrong answers).
+    nonisolated static let errorText = Color(hex: "B91C1C")
+
     // Purple (pronunciation / SRS accents)
     nonisolated static let purple = Color(hex: "7C3AED")
     nonisolated static let indigo = Color(hex: "4338CA")

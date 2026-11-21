@@ -80,11 +80,11 @@ struct AssessmentView: View {
                 Image(systemName: "graduationcap.fill").scaledFont(44).foregroundStyle(.white)
             }
             .accessibilityHidden(true)
-            Text(isFirstRun ? "Welcome! Let's find your level" : "Recalibrate your level")
+            Text(isFirstRun ? "Welcome! Let's find your level" : "Retake the level check")
                 .scaledSerifDisplay(28, weight: .bold).foregroundStyle(Theme.text).multilineTextAlignment(.center)
             Text(isFirstRun
                  ? "A few quick questions that adapt to you. We'll set your starting point and only teach what you don't already know."
-                 : "A short retake to update your level. It adds to what you've already shown — it never lowers your level.")
+                 : "A short retake — it can only raise your level.")
                 .font(.callout).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
             VStack(spacing: 10) {
@@ -94,8 +94,8 @@ struct AssessmentView: View {
                     infoRow("signpost.right.fill", "Routes you to the right starting point")
                 } else {
                     // firstrun-10-2: a slip is weighed against practice, never promised to lose to it.
-                    infoRow("arrow.triangle.merge", "Blends with your evidence: one slip is weighed against the practice you've put in")
-                    infoRow("plus.circle", "Anything you miss becomes something to teach — nothing is wiped")
+                    infoRow("arrow.triangle.merge", "One slip is weighed against all the practice you've put in")
+                    infoRow("plus.circle", "Anything you miss gets added to your lessons")
                 }
             }
             .padding(Space.lg)
@@ -287,7 +287,7 @@ struct AssessmentView: View {
                     .accessibilityHidden(true)
                 Text(selected == q.correctAnswer ? "Correct!" : "Answer: \(q.correctAnswer)")
                     .scaledFont(15, weight: .semibold)
-                    .foregroundStyle(selected == q.correctAnswer ? Theme.success : Theme.text)
+                    .foregroundStyle(selected == q.correctAnswer ? Theme.successText : Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !q.explanation.isEmpty {
@@ -496,7 +496,7 @@ struct AssessmentView: View {
             return "No worries — we'll guide you from the very first words and build up step by step."
         }
         if !isFirstRun {
-            return "Blended with what you'd already shown: your level was not lowered, and what you slipped on joins your gaps."
+            return "Your level was not lowered, and anything you missed has been added to your lessons."
         }
         // A lead is claimed only on evidence — a real miss in the trailing
         // category (PlacementResult.leadingCategory, firstrun-10-1).

@@ -26,6 +26,26 @@ nonisolated enum HomeCopy {
     /// not weak spots the app diagnosed, and "Active gaps" claimed the latter.
     static let toLearnLabel = "To learn"
 
+    // MARK: One vocabulary (UX-12)
+    //
+    // The learner's own deck and the category map each have ONE learner-facing
+    // name. "Gap" is engine vocabulary; types and persisted keys keep it, the
+    // screens never say it.
+
+    /// The learner's deck: the Home card, the deck screen's title, capture copy.
+    static let myWordsTitle = "My words"
+    /// The per-category map (the Resources entry and its screen's title).
+    static let progressTitle = "Progress"
+
+    /// The stats chip unit for `masteredThisWeek` (UX-15): "week" alone read as a
+    /// unit of time, not as "mastered this week".
+    static let masteredThisWeekUnit = "mastered this wk"
+
+    /// The intro line on the Preferences screen when it is asked (UX-06). It is
+    /// only ever asked once Reading is open (`AppStore.shouldAskPreferences`), so
+    /// the line is always true when it shows.
+    static let preferencesAskIntro = "You've unlocked Reading — how do you want to spend your time?"
+
     /// A category row's two counts, for the Gap Map cards and the deck's category
     /// list. The unmastered half is the SAME quantity the overviews label with
     /// `toLearnLabel`, so it carries the same name: "active" named it twice over
@@ -41,6 +61,13 @@ nonisolated enum HomeCopy {
     static func learnCardStat(toLearn: Int, practised: Int) -> String {
         guard practised > 0 else { return "\(toLearn) to learn" }
         return "\(toLearn) to learn · \(practised) practised"
+    }
+
+    /// The My words card's stat line. Before any card has been reviewed the due
+    /// number is the freshly seeded batch, not a backlog (UX-15,
+    /// `HomeSurfaces.showsDueCount`), so it is not called "due".
+    static func deckCardStat(due: Int, showsDueCount: Bool) -> String {
+        showsDueCount ? "\(due) \(dueNowLabel.lowercased())" : "Reviews start after your first lesson"
     }
 
     /// Time-of-day greeting (French, as the Expo original).
@@ -59,9 +86,16 @@ nonisolated enum HomeCopy {
     /// is only "done" once that many are finished, otherwise the greeting would
     /// wave the learner off after the first of three while the card right below it
     /// still reads "Lesson 2 of 3 today".
+    ///
+    /// `firstLessonPending` (no lesson ever played, UX-15): the day-one queue is the
+    /// freshly seeded Foundation batch, so "20 due now" named a backlog the learner
+    /// never took on. The line names the one thing to do instead.
     static func subtitle(streak: Int, dueNow: Int, lessonsToday: Int,
-                         lessonTarget: Int, placed: Bool) -> String {
+                         lessonTarget: Int, placed: Bool, firstLessonPending: Bool = false) -> String {
         guard placed else { return "Take the short placement to start your plan." }
+        if firstLessonPending {
+            return "Your first lesson is ready — about \(Tuning.lessonEstimateMinutes) minutes."
+        }
         let target = max(1, lessonTarget)
         let dayComplete = lessonsToday >= target
         if streak >= Tuning.streakStrongDays {
@@ -161,12 +195,14 @@ nonisolated enum HomeCopy {
     /// The Foundation bar's caption: the track ends where reading opens, so the
     /// number the learner is counting to is the gate's, not every base skill. A full
     /// bar is only ever on screen while the retention governor is holding the gate
-    /// (otherwise the card has already been replaced by the open plan), so it says so.
+    /// (otherwise the card has already been replaced by the open plan), so it says so
+    /// — and says what to do (UX-25): coverage is met, so releasing the governor
+    /// opens reading live (`AppStore.readiness`).
     static func foundationProgress(done: Int, target: Int, governorHeld: Bool = false) -> String {
         let target = max(1, target)
         let done = min(max(0, done), target)
         guard done >= target else { return "\(done) of \(target) skills — reading opens here" }
-        return governorHeld ? "\(done) of \(target) skills — consolidating before reading opens"
+        return governorHeld ? "\(done) of \(target) skills — review what you've learned to open reading"
                             : "\(done) of \(target) skills — reading opens now"
     }
 
@@ -187,11 +223,11 @@ nonisolated enum HomeCopy {
     /// row is the freshly seeded Foundation batch, cards the learner has never been
     /// asked about, which is exactly the claim `toLearnLabel` exists to stop making.
     /// So the wording follows the evidence — never practised → "to learn", all
-    /// practised → "gaps to review", mixed → both halves named.
+    /// practised → "to review", mixed → both halves named.
     static func gapsToReview(_ count: Int, practised: Int) -> String {
         let practised = min(max(0, practised), max(0, count))
         if practised == 0 { return "\(count) to learn" }
-        if practised >= count { return "\(count) gap\(count == 1 ? "" : "s") to review" }
+        if practised >= count { return "\(count) to review" }
         return "\(count - practised) to learn · \(practised) to review"
     }
 

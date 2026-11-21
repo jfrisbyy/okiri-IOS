@@ -502,7 +502,7 @@ struct ScenariosView: View {
                     .accessibilityLabel("Close translator")
                 }
                 if let translateNotice {
-                    Text(translateNotice).font(.system(.footnote)).foregroundStyle(Theme.error)
+                    Text(translateNotice).font(.system(.footnote)).foregroundStyle(Theme.errorText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 10) {

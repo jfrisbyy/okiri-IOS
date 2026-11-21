@@ -52,6 +52,31 @@ nonisolated enum QuestionSource: Hashable {
     case local, ai
 }
 
+// MARK: - Accent keys
+
+/// The accented letters French spelling needs, offered as a key row above the
+/// keyboard on typed questions (UX-21): on an English keyboard each one is a
+/// long-press, so slips are frequent and land as "Almost — check the accents".
+/// Lower case only — typed answers are graded case-insensitively.
+nonisolated enum FrenchAccentKeys {
+    static let characters: [String] = ["é", "è", "ê", "ë", "à", "â", "ç", "ù", "û", "ô", "î", "ï", "œ"]
+
+    /// `text` with `key` typed over `selection` (an insertion point is an empty
+    /// range), and the cursor's character offset just after the key. A missing or
+    /// stale selection appends at the end.
+    static func insert(_ key: String, into text: String,
+                       replacing selection: Range<String.Index>?) -> (text: String, cursorOffset: Int) {
+        guard let selection,
+              selection.lowerBound >= text.startIndex, selection.upperBound <= text.endIndex else {
+            return (text + key, text.count + key.count)
+        }
+        let start = text.distance(from: text.startIndex, to: selection.lowerBound)
+        var out = text
+        out.replaceSubrange(selection, with: key)
+        return (out, start + key.count)
+    }
+}
+
 // MARK: - Question
 
 nonisolated struct LessonQuestion: Identifiable {

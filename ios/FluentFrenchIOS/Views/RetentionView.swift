@@ -299,9 +299,9 @@ struct ErrorPatternDetailView: View {
                                     Text(record.frenchWord).scaledFont(14, weight: .bold).foregroundStyle(Theme.text)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
-                                Text(record.userAnswer).scaledFont(14).strikethrough().foregroundStyle(Theme.error)
+                                Text(record.userAnswer).scaledFont(14).strikethrough().foregroundStyle(Theme.errorText)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text(record.correctAnswer).scaledFont(14, weight: .semibold).foregroundStyle(Theme.success)
+                                Text(record.correctAnswer).scaledFont(14, weight: .semibold).foregroundStyle(Theme.successText)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()

@@ -28,6 +28,9 @@ final class LessonViewModel {
 
     var selectedOption: String? = nil
     var textAnswer = ""
+    /// The typed field's cursor / selection, so an accent key inserts where the
+    /// learner is typing rather than at the end (UX-21).
+    var textSelection: TextSelection? = nil
     private(set) var arranged: [String] = []
     /// The match round's right column, shuffled ONCE when the round loads (C4).
     private(set) var matchRights: [GapItem] = []
@@ -50,6 +53,11 @@ final class LessonViewModel {
     private(set) var isNewBest = false
     /// The pipeline's headline when "Practice these now" had nothing to offer (C23).
     private(set) var followUpNotice: String? = nil
+    /// The day so far and whether a next lesson is on offer (UX-05). Set when a
+    /// lesson that recorded answers is booked; nil for an empty lesson.
+    private(set) var nextLessonOffer: NextLessonOffer? = nil
+    /// The pipeline's headline when "Next lesson" found nothing to teach (C23).
+    private(set) var nextLessonNotice: String? = nil
     /// AI teaching summaries — only for skill cards without a content `teaching` block (C17 fallback).
     private(set) var conceptExplanations: [String: String] = [:]
 
@@ -62,6 +70,9 @@ final class LessonViewModel {
     @ObservationIgnored private var masteryTask: Task<Void, Never>? = nil
     @ObservationIgnored private var popTask: Task<Void, Never>? = nil
     @ObservationIgnored private var timer = LessonTimer()
+    /// Whether today already counted toward the streak when practice started, so
+    /// the completion screen celebrates only the lesson that added today (UX-05).
+    @ObservationIgnored private var practisedBeforeLesson = false
 
     init(gaps: [GapItem], assembled: AssembledLesson?, isCapstone: Bool) {
         let lesson = LessonSession.lesson(for: gaps, assembled: assembled, isCapstone: isCapstone)
@@ -202,7 +213,9 @@ final class LessonViewModel {
             withAnimation(motion(.spring(response: 0.45, dampingFraction: 0.85))) { stage = .complete }
             return
         }
-        timer.start(at: Date())
+        let now = Date()
+        practisedBeforeLesson = store.practisedOn(now)
+        timer.start(at: now)
         loadQuestion()
         withAnimation(motion(.spring(response: 0.4, dampingFraction: 0.85))) { stage = .practice }
     }
@@ -210,6 +223,7 @@ final class LessonViewModel {
     private func loadQuestion() {
         selectedOption = nil
         textAnswer = ""
+        textSelection = nil
         arranged = []
         matchSelectedLeft = nil
         matchWrongRight = nil
@@ -231,6 +245,19 @@ final class LessonViewModel {
         guard !revealed else { return }
         Haptics.tap()
         selectedOption = option
+    }
+
+    /// An accent key (UX-21): type the letter at the cursor, over any selected
+    /// text, and leave the cursor just after it.
+    func insertAccent(_ key: String) {
+        guard !revealed, let q = current, q.kind.isTyped else { return }
+        var range: Range<String.Index>? = nil
+        if let selection = textSelection, case .selection(let r) = selection.indices { range = r }
+        let result = FrenchAccentKeys.insert(key, into: textAnswer, replacing: range)
+        textAnswer = result.text
+        let offset = min(result.cursorOffset, textAnswer.count)
+        textSelection = TextSelection(insertionPoint: textAnswer.index(textAnswer.startIndex, offsetBy: offset))
+        Haptics.tap()
     }
 
     func appendToken(_ word: String) {
@@ -387,6 +414,13 @@ final class LessonViewModel {
         cancelPending()
         let result = session.summary
         unlockedConcepts = book(result, store: store, now: now)
+        if result.answered > 0 {
+            let offer = store.nextLessonOffer(counted: result.isCompleted,
+                                              practisedBeforeLesson: practisedBeforeLesson, now: now)
+            nextLessonOffer = offer
+            // The one celebratory beat (UX-05): the streak ticked in this lesson.
+            if offer.celebrates { Haptics.success() }
+        }
         summary = result
         withAnimation(motion(.spring(response: 0.45, dampingFraction: 0.85))) { stage = .complete }
     }
@@ -482,6 +516,18 @@ final class LessonViewModel {
         }
     }
 
+    /// "Next lesson" on the completion screen (UX-05): the same Smart selection
+    /// Home's lesson button asks for, played in this cover so the learner does not
+    /// go back through Home. An empty outcome shows the selector's own headline.
+    func startNextLesson(store: AppStore) {
+        switch LessonPipeline(store: store).outcome(for: .smart()) {
+        case .lesson(let next):
+            restart(with: next)
+        case .empty(let headline):
+            nextLessonNotice = headline
+        }
+    }
+
     private func restart(with next: AssembledLesson) {
         cancelPending()
         lesson = next
@@ -491,6 +537,8 @@ final class LessonViewModel {
         unlockedConcepts = []
         isNewBest = false
         followUpNotice = nil
+        nextLessonOffer = nil
+        nextLessonNotice = nil
         conceptExplanations = [:]
         masteryFlash = nil
         timer = LessonTimer()

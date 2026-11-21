@@ -41,6 +41,11 @@ enum Theme {
     nonisolated static let purple = Color(named: "Theme.purple")
     nonisolated static let success = Color(named: "Theme.success")
     nonisolated static let warning = Color(named: "Theme.warning")
+    // Text-safe tokens (UX-08), mirrored so engine/copy files may name them.
+    nonisolated static let primaryText = Color(named: "Theme.primaryText")
+    nonisolated static let successText = Color(named: "Theme.successText")
+    nonisolated static let warningText = Color(named: "Theme.warningText")
+    nonisolated static let errorText = Color(named: "Theme.errorText")
 }
 
 // MARK: - Supabase (supabase-swift): the two PostgREST chains in CloudSync.swift

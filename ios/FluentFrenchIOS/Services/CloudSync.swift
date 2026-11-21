@@ -78,6 +78,49 @@ nonisolated enum SyncState: Equatable, Sendable {
     case localOnly
 }
 
+/// What the signed-in launch gate shows (UX-09). Decided by `CloudSync.launchGate`;
+/// ContentView only renders it.
+nonisolated enum LaunchGate: Equatable, Sendable {
+    /// Logo and spinner: the sign-in reconcile is running inside its budget.
+    case loading
+    /// The wait passed `Tuning.launchOfflineOfferDelay` with nothing on the device
+    /// to show: "Still syncing…" with "Continue offline".
+    case stillSyncing
+    /// The account could not be read and the device has nothing safe to show.
+    case accountUnreachable
+    /// The app.
+    case ready
+}
+
+/// The pure timing rule behind the launch wait (UX-09). A cold launch never
+/// blocks on the network for longer than the budget when the device can already
+/// show the learner's record; with nothing on the device it keeps waiting, and
+/// past the offer delay it offers to continue offline.
+nonisolated enum LaunchBudget {
+    enum Step: Equatable, Sendable {
+        /// Keep the loading screen up.
+        case keepWaiting
+        /// Open the app on the local record; the reconcile finishes in the background.
+        case enterWithLocalRecord
+        /// Show "Still syncing…" with "Continue offline".
+        case offerOfflineContinue
+    }
+
+    /// What the launch wait does `elapsed` seconds into the sign-in reconcile.
+    /// `hasUsableLocalRecord` is `CloudSync.canContinueWithoutAccount`.
+    static func step(
+        elapsed: TimeInterval,
+        hasUsableLocalRecord: Bool,
+        budget: TimeInterval = Tuning.launchReconcileBudget,
+        offerDelay: TimeInterval = Tuning.launchOfflineOfferDelay
+    ) -> Step {
+        if hasUsableLocalRecord {
+            return elapsed >= budget ? .enterWithLocalRecord : .keepWaiting
+        }
+        return elapsed >= offerDelay ? .offerOfflineContinue : .keepWaiting
+    }
+}
+
 /// Result of reading the account's snapshot row.
 nonisolated enum RemoteFetch: Sendable {
     /// The account has no snapshot row yet (first sign-in).
@@ -126,9 +169,14 @@ final class CloudSync {
 
     /// Backup status for the profile card.
     private(set) var syncState: SyncState = .localOnly
-    /// True only during the sign-in / launch reconcile — the UI shows a loading
-    /// state and RootView must not decide onboarding until this is false.
+    /// True only while the sign-in / launch reconcile blocks the UI — the UI shows
+    /// a loading state and RootView must not decide onboarding until this is
+    /// false. Cleared early when the launch budget lets the learner in on their
+    /// local record (UX-09); the pass then finishes in the background.
     private(set) var isReconciling = false
+    /// The launch wait passed `launchOfflineOfferDelay` with nothing on the
+    /// device: the loading screen offers "Continue offline" (UX-09).
+    private(set) var offersOfflineContinue = false
     /// The user whose sign-in reconcile has completed (success or failure).
     /// ContentView gates RootView on this matching the signed-in user so the
     /// onboarding decision is never made on pre-reconcile local state.
@@ -179,6 +227,22 @@ final class CloudSync {
     /// because the incomplete record outlives the process too (store-4-1).
     private let deferredRestore: DeferredRestoreMarker
 
+    /// UX-09 launch wait. Timings are instance values so tests can shorten them;
+    /// the app uses the Tuning values.
+    @ObservationIgnored var launchReconcileBudget: TimeInterval = Tuning.launchReconcileBudget
+    @ObservationIgnored var launchOfflineOfferDelay: TimeInterval = Tuning.launchOfflineOfferDelay
+    /// Test seam: false leaves the wait to be stepped through `launchCheckpoint`
+    /// alone, so a test never depends on wall-clock timing. True in the app.
+    @ObservationIgnored var runsLaunchTimer = true
+    /// The user whose launch wait is running, and the timer that drives it.
+    @ObservationIgnored private var launchWaitUserId: String?
+    @ObservationIgnored private var launchTimer: Task<Void, Never>?
+    /// Set once the learner entered the app while their sign-in pass was still
+    /// reading the row. That pass no longer runs behind a blocking screen, so it
+    /// loses the exemptions only a blocked pass may have (lesson in progress,
+    /// a raced upload).
+    @ObservationIgnored private var launchPassInBackgroundFor: String?
+
     // Sync markers: what this device last agreed with the cloud row on. They
     // are what makes the server-timestamp rule in SnapshotReconciler possible.
     private let markerUserKey = "ff.cloud.lastSyncedUserId.v1"
@@ -215,6 +279,7 @@ final class CloudSync {
             reconciledUserId = nil
             needsAccountBeforeContinuing = false
             lastReconcileAt = nil
+            endLaunchWait()
             // The record the markers (and a deferred restore) describe survives
             // only when the local record does.
             if !keepMarkers {
@@ -230,6 +295,111 @@ final class CloudSync {
         guard reconciledUserId == uid, !reconcileInFlight else { return false }
         guard let last = lastReconcileAt else { return true }
         return now.timeIntervalSince(last) >= Self.foregroundReconcileMinInterval
+    }
+
+    // MARK: - Launch wait (UX-09)
+
+    /// What the signed-in gate shows for `uid`: loading (or, past the offer delay,
+    /// "Still syncing…") until the sign-in reconcile has finished or the launch
+    /// budget let the learner in; then the retry screen when the account could not
+    /// be read and there is nothing to show, otherwise the app.
+    func launchGate(for uid: String) -> LaunchGate {
+        if isReconciling || reconciledUserId != uid {
+            return offersOfflineContinue && launchWaitUserId == uid ? .stillSyncing : .loading
+        }
+        return needsAccountBeforeContinuing ? .accountUnreachable : .ready
+    }
+
+    /// True when the device holds something the learner can use without the
+    /// account: a readable record with activity, or a restore they already
+    /// deferred to carry on here (store-1-6). This is exactly the case in which a
+    /// FAILED sign-in read lets them in anyway (`needsAccountBeforeContinuing`
+    /// stays false), so entering on it before the read returns shows nothing a
+    /// slow network would not have shown a minute later — and uploads stay off
+    /// until the read succeeds, as they would then.
+    func canContinueWithoutAccount(store: AppStore, userId uid: String) -> Bool {
+        store.loadError == nil && (store.localUpdatedAt != nil || deferredRestore.isPending(for: uid))
+    }
+
+    /// The sign-in / cold-launch reconcile with a budget (UX-09). The pass itself
+    /// is the ordinary `initial` pass; alongside it a timer lets a learner who can
+    /// continue without the account (`canContinueWithoutAccount`) into the app once
+    /// `launchReconcileBudget` has passed, while the read finishes in the
+    /// background. A learner with nothing on the device keeps waiting; past
+    /// `launchOfflineOfferDelay` the gate offers "Continue offline"
+    /// (`continueOfflineAtLaunch`). Returns when the pass has finished.
+    func reconcileAtLaunch(store: AppStore, userId uid: String) async {
+        endLaunchWait()
+        launchWaitUserId = uid
+        if runsLaunchTimer {
+            let checkpoints = [launchReconcileBudget, launchOfflineOfferDelay].sorted()
+            launchTimer = Task { [weak self, weak store] in
+                let start = ContinuousClock.now
+                for checkpoint in checkpoints {
+                    try? await Task.sleep(until: start.advanced(by: .seconds(checkpoint)), clock: .continuous)
+                    guard !Task.isCancelled, let self, let store else { return }
+                    self.launchCheckpoint(store: store, userId: uid, elapsed: checkpoint)
+                }
+            }
+        }
+        await reconcile(store: store, userId: uid, initial: true)
+        if launchWaitUserId == uid { endLaunchWait() }
+    }
+
+    /// "Continue offline" on the still-syncing screen. The device holds nothing of
+    /// this learner's, so whatever they do before the account is read must never
+    /// be compared with — let alone pushed over — the account's real record: a
+    /// fresh record is newer than any row and would win the client-clock rule.
+    /// The deferred-restore marker (store-1-6 / store-4-1) gives exactly the safe
+    /// behaviour: the pass still in flight, and every later one until a read
+    /// succeeds, applies the account copy when there is one and uploads the device
+    /// copy only into an account that has none (a brand-new learner). A failed read
+    /// no longer blocks them either, as for any deferred restore.
+    func continueOfflineAtLaunch(store: AppStore, userId uid: String) {
+        guard offersOfflineContinue, launchWaitUserId == uid, store.loadError == nil,
+              isReconciling || reconciledUserId != uid else { return }
+        deferredRestore.set(userId: uid)
+        enterBeforeReconcileFinishes(userId: uid)
+    }
+
+    /// One timer checkpoint of the launch wait, `elapsed` seconds in. Acts only
+    /// while the gate is still waiting on this user's sign-in pass. Internal so
+    /// tests can step the wait without depending on the main actor's timing.
+    func launchCheckpoint(store: AppStore, userId uid: String, elapsed: TimeInterval) {
+        guard launchWaitUserId == uid, store.loadError == nil,
+              isReconciling || reconciledUserId != uid else { return }
+        let step = LaunchBudget.step(
+            elapsed: elapsed,
+            hasUsableLocalRecord: canContinueWithoutAccount(store: store, userId: uid),
+            budget: launchReconcileBudget,
+            offerDelay: launchOfflineOfferDelay
+        )
+        switch step {
+        case .keepWaiting:
+            break
+        case .enterWithLocalRecord:
+            enterBeforeReconcileFinishes(userId: uid)
+        case .offerOfflineContinue:
+            offersOfflineContinue = true
+        }
+    }
+
+    /// Open the gate while the sign-in pass is still reading. Uploads stay
+    /// disabled (`userId` is only set once a pass has read the row), and the pass
+    /// now applies its result under the same guards as a foreground pass.
+    private func enterBeforeReconcileFinishes(userId uid: String) {
+        launchPassInBackgroundFor = uid
+        offersOfflineContinue = false
+        isReconciling = false
+        reconciledUserId = uid
+    }
+
+    private func endLaunchWait() {
+        launchTimer?.cancel()
+        launchTimer = nil
+        launchWaitUserId = nil
+        launchPassInBackgroundFor = nil
+        offersOfflineContinue = false
     }
 
     // MARK: - Reconcile
@@ -347,7 +517,7 @@ final class CloudSync {
                 progressDidChange(store)
             }
         }
-        guard client != nil else {
+        guard client != nil || fetchOverride != nil else {
             syncState = .failed(SupabaseManager.configurationMessage)
             if initial { reconciledUserId = uid }
             return
@@ -362,7 +532,9 @@ final class CloudSync {
         }
 
         reconcileInFlight = true
-        if initial { isReconciling = true }
+        // A launch pass the learner was already let past (UX-09) never puts the
+        // loading screen back up.
+        if initial, launchPassInBackgroundFor != uid { isReconciling = true }
         let generation = userGeneration
 
         /// False once the signed-in user changed underneath this pass: nothing
@@ -390,13 +562,21 @@ final class CloudSync {
 
         // Restored when the pass is abandoned before it changes anything, so the
         // profile card falls back to what it honestly knew rather than sticking
-        // on "Backing up…".
-        let stateBeforePass = syncState
+        // on "Backing up…". A pass only runs for a signed-in learner, so the
+        // launch's initial "not signed in" reads as "nothing has happened yet"
+        // (an abandoned launch pass the learner entered past, UX-09).
+        let stateBeforePass: SyncState = syncState == .localOnly ? .idle : syncState
         syncState = .syncing
         let uploadsBeforeRead = pushCompletions
 
         let fetch = await fetchRemoteWithRetry(userId: uid)
         guard stillCurrent() else { return }
+        // UX-09: the exemptions below are for a pass that runs behind the
+        // blocking launch screen. Once the launch budget let the learner in, the
+        // pass is guarded exactly like a foreground one; an abandoned launch pass
+        // has already set `reconciledUserId`, so the foreground / lesson-closed
+        // triggers run it again (no `lastReconcileAt` is recorded).
+        let blocksTheUI = initial && launchPassInBackgroundFor != uid
         // store-7-1, second half: an upload can still START during the read (a
         // background flush, or a debounced push already past its sleep). If one
         // finished while the read was in flight, the row and the markers describe
@@ -406,7 +586,7 @@ final class CloudSync {
         // recovery passes (`initial`) are exempt: uploads are not enabled until
         // they finish, so nothing can push underneath them, and returning here
         // would strand the app on its loading screen.
-        if !initial,
+        if !blocksTheUI,
            SnapshotReconciler.readRacedAnUpload(uploadsBeforeRead: uploadsBeforeRead,
                                                 uploadsAfterRead: pushCompletions) {
             // The upload that raced this pass reported its own outcome; only put
@@ -424,9 +604,17 @@ final class CloudSync {
         // ContentView's `onChange(of: store.isLessonInProgress)` runs it again the
         // moment the lesson closes. Sign-in / recovery passes (`initial`) are
         // exempt: they run behind a blocking screen, where no lesson can be open.
-        if !initial, store.isLessonInProgress {
+        if !blocksTheUI, store.isLessonInProgress {
             syncState = stateBeforePass
             return
+        }
+        // UX-09: "Continue offline" records a deferred restore while this pass's
+        // read is in flight. The device copy it guards is a fresh record, newer
+        // than any row, so the pass must honour the marker now — comparing would
+        // push it over the account's real progress.
+        let restoreOwedNow = deferredRestore.isPending(for: uid)
+        if restoreOwedNow, case .compare = mode {
+            mode = .takeRemote(discardUnreadableCopy: false, requireRemoteRow: false)
         }
 
         switch fetch {
@@ -441,7 +629,7 @@ final class CloudSync {
                 // what that choice opts out of. The deferred-restore marker keeps
                 // the recovery pending, so uploads stay disabled and the next
                 // successful pass still applies the account copy.
-                needsAccountBeforeContinuing = !restoreIsOwed && (store.localUpdatedAt == nil)
+                needsAccountBeforeContinuing = !restoreOwedNow && (store.localUpdatedAt == nil)
                 reconciledUserId = uid
             }
             lastReconcileAt = Date()
@@ -615,6 +803,10 @@ final class CloudSync {
     /// the row's `updated_at`. Nil in the app.
     @ObservationIgnored var uploadOverride: (@MainActor (ProgressSnapshot) async throws -> String?)?
 
+    /// Test seam: when set, a reconcile reads the row through this instead of the
+    /// Supabase client. Nil in the app.
+    @ObservationIgnored var fetchOverride: (@MainActor (String) async -> RemoteFetch)?
+
     /// Upload the current snapshot. Serialised: a second call while one is in
     /// flight waits for it, then uploads only if the record is still not fully
     /// in the row (store-10-3).
@@ -773,6 +965,7 @@ final class CloudSync {
     /// One read of the account row. `.none` is returned ONLY when the query
     /// succeeded and found no row; every error is `.failed`.
     func fetchRemote(userId uid: String) async -> RemoteFetch {
+        if let fetchOverride { return await fetchOverride(uid) }
         guard let client else { return .failed(SupabaseManager.ConfigurationError()) }
         do {
             let rows: [RemoteRow] = try await client

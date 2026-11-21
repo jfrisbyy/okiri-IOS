@@ -3491,3 +3491,131 @@ extension AppStore {
         return outcome
     }
 }
+
+// MARK: - Lesson completion: continue the day (UX-05)
+
+/// What the completion screen says about the day, read off the SAME data Home's
+/// daily target and streak use, so the two screens cannot disagree. Wording is
+/// `LessonCopy`; this is only the numbers and the one decision (offer a next lesson).
+nonisolated struct NextLessonOffer: Hashable {
+    /// Lessons completed (not abandoned) today — Home's `lessonsCompletedToday`.
+    var lessonsToday: Int
+    /// Today's prescribed lessons — the plan of record's `lessonItem`, the number
+    /// Home's greeting and Foundation pace line read.
+    var target: Int
+    /// Whether the lesson that just ended counted toward today.
+    var counted: Bool
+    /// Home's flame number (`currentStreak`).
+    var streak: Int
+    /// Today already holds a correct answer, so it counts toward the streak.
+    var practisedToday: Bool
+    /// Today joined the streak during this lesson: the one celebratory beat.
+    var streakTickedThisLesson: Bool
+    /// A "Next lesson" button is offered: the day's target is not met yet and the
+    /// selector has something to teach.
+    var nextAvailable: Bool
+
+    /// The completion screen celebrates exactly when the streak ticked.
+    var celebrates: Bool { streakTickedThisLesson && practisedToday && streak >= 1 }
+}
+
+extension AppStore {
+    /// Today's lesson target, exactly as Home reads it: the plan of record's pacing
+    /// item, falling back to the Foundation pace.
+    func todaysLessonTarget(now: Date = Date()) -> Int {
+        todaysPlan(now: now).lessonItem?.target ?? Tuning.foundationLessonsPerDay
+    }
+
+    /// The completion screen's day line, streak line and "Next lesson" decision.
+    /// `practisedBeforeLesson` is `practisedOn(now)` read when the lesson started,
+    /// so the streak beat fires only for the lesson that actually added today.
+    func nextLessonOffer(counted: Bool, practisedBeforeLesson: Bool, now: Date = Date()) -> NextLessonOffer {
+        let done = lessonsCompleted(on: now)
+        let target = max(1, todaysLessonTarget(now: now))
+        let practised = practisedOn(now)
+        let hasMore = done < target
+            && !LessonPipeline(store: self).preview(.smart(now: now)).isEmpty
+        return NextLessonOffer(lessonsToday: done, target: target, counted: counted,
+                               streak: currentStreak(now: now), practisedToday: practised,
+                               streakTickedThisLesson: practised && !practisedBeforeLesson,
+                               nextAvailable: hasMore)
+    }
+}
+
+// MARK: - Home surfaces and onboarding decisions (UX-06, UX-07, UX-14, UX-15)
+
+/// What Home shows, decided here so the view only renders it (UX-07, UX-15).
+nonisolated struct HomeSurfaces: Hashable {
+    /// A Foundation learner sees no padlocks: every entry point that is closed
+    /// right now (Explore cards, the reading card, Resources) is left out, and the
+    /// ONE `nextUnlock` line stands for all of them (UX-07).
+    var hidesLockedEntries: Bool
+    /// The modalities whose entry points are closed right now (`!canOpen`).
+    var lockedModalities: Set<LearningModality>
+    /// "Next unlock: Reading — 3 of 12 skills"; nil outside Foundation.
+    var nextUnlock: String?
+    /// The "due now" chip shows only once any card has been reviewed: before that
+    /// the due number is the freshly seeded batch, not a backlog (UX-15).
+    var showsDueCount: Bool
+    /// No lesson has been played yet: the header names the first lesson (UX-15).
+    var firstLessonPending: Bool
+
+    /// Whether an entry point gated on `modality` is on Home at all. Ungated
+    /// entries (nil) always are; a closed one only while padlocks are shown.
+    func shows(_ modality: LearningModality?) -> Bool {
+        guard let modality, hidesLockedEntries else { return true }
+        return !lockedModalities.contains(modality)
+    }
+}
+
+extension AppStore {
+    /// True once any learner-facing card has been answered at least once, mastered
+    /// ones included (probes never count). The seeded Foundation batch is all new.
+    var hasReviewedAnyCard: Bool {
+        gaps.contains { !$0.isProbe && !$0.isNew }
+    }
+
+    /// No lesson has been played yet — `sessionIndex` counts every lesson that
+    /// recorded an answer, and it is monotonic and never pruned.
+    var isFirstLessonPending: Bool { sessionIndex == 0 }
+
+    /// Home's surfaces, read off the gate (`canOpen`), the Foundation track and
+    /// the review history.
+    var homeSurfaces: HomeSurfaces {
+        let inFoundation = isInFoundation
+        let progress = foundationProgress()
+        return HomeSurfaces(
+            hidesLockedEntries: inFoundation,
+            lockedModalities: Set(LearningModality.allCases.filter { !canOpen($0) }),
+            nextUnlock: inFoundation
+                ? ReadinessCopy.nextUnlockLine(readingReadiness: readiness(for: .reading),
+                                               done: progress.done, target: progress.target,
+                                               readingHeldByGovernor: isReadingHeldByGovernor)
+                : nil,
+            showsDueCount: hasReviewedAnyCard,
+            firstLessonPending: isFirstLessonPending
+        )
+    }
+
+    /// Ask for the daily-practice preferences now (UX-06)? Never while the learner
+    /// is in Foundation — every activity is locked and the day is paced in lessons
+    /// whatever the budget (`DailyPlanEngine`), so the defaults stand — and asked
+    /// ONCE, when Reading opens. "Asked" is persisted as the answer itself: the
+    /// onboarding screen's only exit is saving (`PreferencesView`), which stores
+    /// and syncs `preferences`. Held while a lesson is open (Reading opens at a
+    /// lesson's end) so the prompt follows the lesson instead of fighting its cover.
+    var shouldAskPreferences: Bool {
+        hasCompletedAssessment && loadError == nil && !hasSetPreferences
+            && !isInFoundation && !isLessonInProgress
+    }
+
+    /// Whether the first-run placement is the root screen (UX-14). Never decided
+    /// while the account reconcile is in flight — a learner who placed on another
+    /// device must not be asked again — but once it is on screen
+    /// (`alreadyShowing`) a reconcile starting mid-placement does not pull Home in
+    /// under the learner. A reconciled record that already placed ends it.
+    func showsFirstRunPlacement(reconciling: Bool, alreadyShowing: Bool) -> Bool {
+        guard !hasCompletedAssessment, loadError == nil else { return false }
+        return alreadyShowing || !reconciling
+    }
+}

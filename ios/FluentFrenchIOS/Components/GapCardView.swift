@@ -90,7 +90,7 @@ struct GapCardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         Circle().fill(gap.category.color).frame(width: 8, height: 8).accessibilityHidden(true)
-                        Text(gap.frenchWord).font(.body.weight(.semibold)).foregroundStyle(Theme.primary)
+                        Text(gap.frenchWord).font(.body.weight(.semibold)).foregroundStyle(Theme.primaryText)
                         Spacer()
                         SpeakButton(text: gap.frenchWord)
                         Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.footnote).foregroundStyle(Theme.textSecondary)

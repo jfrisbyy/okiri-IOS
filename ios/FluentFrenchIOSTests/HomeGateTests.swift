@@ -113,7 +113,8 @@ struct HomeGateTests {
         #expect(s.canOpen(.reading))
         #expect(s.unlockCondition(for: .reading) == nil)
         #expect(!s.canOpen(.listening))
-        #expect(s.unlockCondition(for: .listening) == "Consolidating your base before opening listening.")
+        #expect(s.unlockCondition(for: .listening)
+                == "Review what you've learned before Listening opens — today's lessons focus on that.")
     }
 
     /// A `.locked` Reading verdict can only ever come from coverage below the
@@ -171,8 +172,9 @@ struct HomeGateTests {
             #expect(s.unlockCondition(for: m) == ReadinessCopy.governorCondition(for: m))
             #expect(s.unlockCondition(for: m) != "Unlocks after Reading — build the basics first.")
         }
-        #expect(ReadinessCopy.lockedActivitiesHeader(readingHeldByGovernor: true)
-                == "UNLOCKS AS YOU CONSOLIDATE")
+        // Home's one "Next unlock" line (UX-07): the skills are done, so it names
+        // the review that opens Reading, not a skill count to build.
+        #expect(s.homeSurfaces.nextUnlock == "Next unlock: the rest of Reading — review what you've learned to open it.")
 
         // Release the governor and Reading is really open: the higher gates go back
         // to the demonstrated-minutes sentence they actually depend on.
@@ -190,8 +192,8 @@ struct HomeGateTests {
         #expect(s.isGovernorActive)
         #expect(!s.isReadingHeldByGovernor, "coverage is below the unlock bar — coverage holds it")
         #expect(s.unlockCondition(for: .listening) == "Unlocks after Reading — build the basics first.")
-        #expect(ReadinessCopy.lockedActivitiesHeader(readingHeldByGovernor: false)
-                == "UNLOCKS AS YOU BUILD THE BASICS")
+        let (done, target) = s.foundationProgress()
+        #expect(s.homeSurfaces.nextUnlock == "Next unlock: the rest of Reading — \(done) of \(target) skills")
 
         // Reading recorded open is never "held by the governor" — nothing is holding it.
         s.unlockedModalities = [LearningModality.reading.rawValue]
@@ -566,8 +568,8 @@ struct HomeGateTests {
         #expect(HomeCopy.lessonPace(done: 1, target: 3) == "Lesson 2 of 3 today")
         #expect(HomeCopy.lessonPace(done: 3, target: 3) == "All 3 lessons done today — extra practice is welcome.")
         #expect(HomeCopy.lessonPace(done: 2, target: 1) == "Today's lesson is done — extra practice is welcome.")
-        #expect(HomeCopy.gapsToReview(1, practised: 1) == "1 gap to review")
-        #expect(HomeCopy.gapsToReview(3, practised: 3) == "3 gaps to review")
+        #expect(HomeCopy.gapsToReview(1, practised: 1) == "1 to review")
+        #expect(HomeCopy.gapsToReview(3, practised: 3) == "3 to review")
         #expect(HomeCopy.captured(1) == "Saved 1 thing you didn't know")
         #expect(HomeCopy.dueNowLabel == "Due now" && HomeCopy.upcomingLabel == "Coming up")
     }
@@ -579,10 +581,10 @@ struct HomeGateTests {
         #expect(HomeCopy.gapsToReview(24, practised: 0) == "24 to learn")
         #expect(!HomeCopy.gapsToReview(24, practised: 0).contains("review"))
         #expect(HomeCopy.gapsToReview(1, practised: 0) == "1 to learn")
-        #expect(HomeCopy.gapsToReview(6, practised: 6) == "6 gaps to review")
+        #expect(HomeCopy.gapsToReview(6, practised: 6) == "6 to review")
         #expect(HomeCopy.gapsToReview(6, practised: 2) == "4 to learn · 2 to review")
         // Nonsense inputs never produce a negative or over-claimed count.
-        #expect(HomeCopy.gapsToReview(3, practised: 9) == "3 gaps to review")
+        #expect(HomeCopy.gapsToReview(3, practised: 9) == "3 to review")
         #expect(HomeCopy.gapsToReview(3, practised: -1) == "3 to learn")
     }
 
@@ -597,7 +599,7 @@ struct HomeGateTests {
         #expect(HomeCopy.foundationProgress(done: 0, target: target) == "0 of \(target) skills — reading opens here")
         // A full bar is only ever on screen while the governor holds the gate.
         #expect(HomeCopy.foundationProgress(done: target, target: target, governorHeld: true)
-                == "\(target) of \(target) skills — consolidating before reading opens")
+                == "\(target) of \(target) skills — review what you've learned to open reading")
         #expect(HomeCopy.foundationProgress(done: target + 5, target: target) == "\(target) of \(target) skills — reading opens now")
 
         let base = Array(ConceptTaxonomy.baseConceptIds).sorted()

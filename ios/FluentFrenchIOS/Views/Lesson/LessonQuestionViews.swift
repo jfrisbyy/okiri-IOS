@@ -147,7 +147,7 @@ struct LessonTypedAnswer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField(placeholder, text: $model.textAnswer)
+            TextField(placeholder, text: $model.textAnswer, selection: $model.textSelection)
                 .font(.title3)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -162,6 +162,9 @@ struct LessonTypedAnswer: View {
                 .clipShape(.rect(cornerRadius: Radius.card))
                 .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(stroke, lineWidth: 1.5))
                 .accessibilityLabel(question.kind == .fillBlank ? "Missing word" : "French translation")
+            if !model.revealed {
+                accentKeys
+            }
             if let hint = question.hint, !hint.isEmpty, !model.revealed {
                 Text(hint).font(.footnote).italic().foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -171,6 +174,32 @@ struct LessonTypedAnswer: View {
         .onChange(of: model.revealed) { _, revealed in
             if revealed { typing = false }
         }
+    }
+
+    /// The accent key row (UX-21). Drawn right under the field, so it sits above
+    /// the keyboard while typing; a keyboard toolbar is not used because the lesson
+    /// is a full-screen cover with no navigation stack, where that toolbar is not
+    /// reliably shown. Each key inserts at the cursor and keeps the keyboard up.
+    private var accentKeys: some View {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
+            ForEach(FrenchAccentKeys.characters, id: \.self) { key in
+                Button {
+                    model.insertAccent(key)
+                    typing = true
+                } label: {
+                    Text(key).font(.title3.weight(.medium)).foregroundStyle(Theme.text)
+                        .frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
+                        .background(Theme.backgroundSecondary).clipShape(.rect(cornerRadius: Radius.chip))
+                        .overlay(RoundedRectangle(cornerRadius: Radius.chip).stroke(Theme.border, lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(key)
+                .accessibilityHint("Types this letter at the cursor")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Accented letters")
     }
 }
 
@@ -265,7 +294,7 @@ struct LessonMatchArea: View {
             if model.matchNeedsLeft {
                 Text("Pick a French word on the left first.")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.primary)
+                    .foregroundStyle(Theme.primaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

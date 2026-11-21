@@ -231,7 +231,7 @@ private struct AccentPracticeView: View {
                     Image(systemName: "checkmark.seal.fill").scaledFont(13).accessibilityHidden(true)
                     Text("Practiced").scaledFont(12, weight: .semibold)
                 }
-                .foregroundStyle(Theme.success)
+                .foregroundStyle(Theme.successText)
                 .accessibilityElement(children: .combine)
             }
             Text(word.word).scaledSerifDisplay(44, weight: .bold).foregroundStyle(Theme.text)
@@ -343,7 +343,7 @@ private struct AccentPracticeView: View {
                 Label(saveTitle(saved: saved, selfGlossed: selfGlossed),
                       systemImage: saveSymbol(saved: saved, selfGlossed: selfGlossed))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(saved ? Theme.success : (selfGlossed ? Theme.textSecondary : category.color))
+                    .foregroundStyle(saved ? Theme.successText : (selfGlossed ? Theme.textSecondary : category.color))
                     .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
                     .background(saved ? Theme.successLight : (selfGlossed ? Theme.borderLight : category.color.opacity(0.1)))
                     .clipShape(.rect(cornerRadius: Radius.chip))

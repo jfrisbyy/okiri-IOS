@@ -48,7 +48,7 @@ struct LessonView: View {
             }
 
             if let word = model.masteryFlash {
-                LessonFlashOverlay(title: "Mastered!", subtitle: word)
+                LessonFlashOverlay(title: LessonCopy.solidFlashTitle, subtitle: word)
             }
         }
         .confirmationDialog("Quit this lesson?", isPresented: $showQuitConfirmation, titleVisibility: .visible) {

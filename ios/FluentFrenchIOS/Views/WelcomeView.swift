@@ -15,7 +15,6 @@ import AuthenticationServices
 
 struct WelcomeView: View {
     @Environment(AuthManager.self) private var auth
-    @Environment(\.colorScheme) private var colorScheme
     /// The hero mark grows with the learner's text size so the glyph stays
     /// proportionate to the circle behind it.
     @ScaledMetric(relativeTo: .largeTitle) private var markScale: CGFloat = 1
@@ -81,7 +80,13 @@ struct WelcomeView: View {
                 Text("Okiri")
                     .scaledSerifDisplay(40, weight: .bold)
                     .foregroundStyle(Theme.text)
-                Text("Your progress, saved and synced everywhere.")
+                // UX-10: the first screen says what the app is for, then how.
+                Text("Learn the French you're missing")
+                    .scaledFont(20, weight: .semibold)
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 300)
+                Text("Short lessons that adapt to you — read, listen and speak as you unlock them.")
                     .scaledFont(17)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -136,7 +141,9 @@ struct WelcomeView: View {
             } onCompletion: { result in
                 handleApple(result)
             }
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            // Always the black style: the app is light-only (UIUserInterfaceStyle =
+            // Light, UX-01), and black is the one that reads on the cream backdrop.
+            .signInWithAppleButtonStyle(.black)
             .frame(height: buttonHeight)
             .clipShape(.rect(cornerRadius: 16))
             .disabled(auth.isSigningIn)
@@ -167,7 +174,7 @@ struct WelcomeView: View {
     }
 
     private var footnote: some View {
-        Text("By continuing you agree to keep your learning progress backed up to your account.")
+        Text("Your progress is saved to your account and synced across your devices.")
             .scaledFont(12)
             .foregroundStyle(Theme.textSecondary)
             .multilineTextAlignment(.center)

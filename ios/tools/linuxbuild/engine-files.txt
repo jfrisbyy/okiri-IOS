@@ -38,6 +38,7 @@ Services/HeuristicTagger.swift
 Services/HomeCopy.swift
 Services/KeyVocabulary.swift
 Services/LessonAssembler.swift
+Services/LessonCopy.swift
 Services/LessonPipeline.swift
 Services/LessonQuestionParser.swift
 Services/LessonScheduler.swift

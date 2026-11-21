@@ -16,7 +16,9 @@ struct PreferencesView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    /// True during first-run onboarding (hides the close button, different copy).
+    /// True when the app asks for preferences on its own — once, when Reading
+    /// opens (UX-06) — rather than from Profile: hides the close button, so saving
+    /// is the only way on, and leads with the unlock line.
     let isOnboarding: Bool
 
     @State private var modalities: Set<LearningModality> = []
@@ -74,6 +76,12 @@ struct PreferencesView: View {
             }
             .padding(.top, isOnboarding ? 16 : 0)
             .accessibilityHidden(true)
+            // Asked once, when Reading opens (UX-06, `AppStore.shouldAskPreferences`).
+            if isOnboarding {
+                Text(HomeCopy.preferencesAskIntro)
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text(isOnboarding ? "Shape your daily practice" : "Daily practice preferences")
                 .scaledSerifDisplay(28, weight: .bold).foregroundStyle(Theme.text)
             Text("Pick what you're up for and how much time you have. We'll prescribe the shape of each day — you always pick what to read, watch, or say.")
@@ -130,7 +138,7 @@ struct PreferencesView: View {
                     }
                     Text(m.subtitle).font(.footnote).foregroundStyle(Theme.textSecondary)
                     if selected, let note {
-                        Text(note).font(.caption).foregroundStyle(locked ? Theme.warning : Theme.textSecondary)
+                        Text(note).font(.caption).foregroundStyle(locked ? Theme.warningText : Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -240,7 +248,7 @@ struct PreferencesView: View {
         HStack(spacing: 6) {
             Text(text).font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
             if required {
-                Text("required").font(.caption2.weight(.semibold)).foregroundStyle(Theme.primary)
+                Text("required").font(.caption2.weight(.semibold)).foregroundStyle(Theme.primaryText)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Theme.primaryLight).clipShape(.capsule)
             }

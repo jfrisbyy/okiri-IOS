@@ -243,7 +243,7 @@ struct IdiomsView: View {
         } label: {
             Label(title, systemImage: symbol)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(saved ? Theme.success : accent)
+                .foregroundStyle(saved ? Theme.successText : accent)
                 .frame(maxWidth: .infinity).frame(minHeight: Theme.minimumHitTarget)
                 .background(saved ? Theme.successLight : accent.opacity(0.1))
                 .clipShape(.rect(cornerRadius: Radius.chip))

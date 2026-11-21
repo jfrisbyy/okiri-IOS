@@ -73,7 +73,7 @@ enum HomeResource: Int, Identifiable {
         case .tenses: return "Tenses"
         case .accent: return "Accent"
         case .idioms: return "Idioms"
-        case .gaps: return "Gaps"
+        case .gaps: return HomeCopy.progressTitle
         case .scenarios: return "Scenarios"
         }
     }
@@ -97,6 +97,29 @@ enum HomeResource: Int, Identifiable {
         case .tenses, .idioms: return .reading
         case .translator, .accent, .gaps: return nil
         }
+    }
+}
+
+/// The one way out of a full-screen Home section (UX-03). Each section draws it
+/// in its OWN header, laid out with the title, so it can never sit on top of the
+/// title or of a pushed screen's back button: a story pushed inside Read shows
+/// only the reader's own back button. Sized like `ResourceHeader`'s back button.
+struct SectionCloseButton: View {
+    let action: () -> Void
+    @ScaledMetric(relativeTo: .headline) private var typeScale: CGFloat = 1
+
+    var body: some View {
+        Button { Haptics.tap(); action() } label: {
+            Image(systemName: "xmark")
+                .scaledFont(16, weight: .semibold, relativeTo: .headline).foregroundStyle(.white)
+                .frame(width: 36 * Theme.chromeScale(typeScale), height: 36 * Theme.chromeScale(typeScale))
+                .background(.white.opacity(0.18), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
+                .minimumHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close")
+        .accessibilityHint("Returns to Home")
     }
 }
 
@@ -166,7 +189,8 @@ struct HomeView: View {
     private func greetingSubtitle(due: Int) -> String {
         HomeCopy.subtitle(streak: store.currentStreak, dueNow: due,
                           lessonsToday: store.lessonsCompletedToday,
-                          lessonTarget: lessonTarget, placed: placed)
+                          lessonTarget: lessonTarget, placed: placed,
+                          firstLessonPending: store.homeSurfaces.firstLessonPending)
     }
 
     private var kiriMood: KiriMood {
@@ -203,9 +227,12 @@ struct HomeView: View {
                     exploreSection(due: due)
                         .padding(.top, 24)
 
-                    headlinesSection
-                        .padding(.horizontal, 20)
-                        .padding(.top, 20)
+                    // Locked Reading is not shown to a Foundation learner (UX-07).
+                    if store.homeSurfaces.shows(.reading) {
+                        headlinesSection
+                            .padding(.horizontal, 20)
+                            .padding(.top, 20)
+                    }
 
                     resourcesSection
                         .padding(.horizontal, 20)
@@ -269,36 +296,44 @@ struct HomeView: View {
 
     // MARK: - Full-screen section presentation
 
+    /// Each section closes itself from its own header (UX-03) — Home no longer
+    /// draws a floating button over a section, which stacked on top of Read's
+    /// pushed readers' own back button.
     @ViewBuilder
     private func sectionView(_ section: HomeSection) -> some View {
-        Group {
-            switch section {
-            case .read: ReadView()
-            case .speak: SpeakView()
-            case .watch: WatchView()
-            case .deck: DeckView()
-            case .listen: ListenView()
-            case .converse: ConverseView()
-            }
+        let close = { activeSection = nil }
+        switch section {
+        case .read: ReadView(onClose: close)
+        case .deck: DeckView(onClose: close)
+        // TRANSITIONAL (UX-03): Speak, Watch, Listen and Converse do not draw a
+        // close button in their own headers yet, so Home still overlays one on
+        // them. None of the four pushes a screen with its own back button (their
+        // players and calls are full-screen covers of their own), so no two back
+        // affordances meet there. Drop this once each takes an `onClose`.
+        case .speak: SpeakView().overlay(alignment: .topLeading) { legacyCloseButton }
+        case .watch: WatchView().overlay(alignment: .topLeading) { legacyCloseButton }
+        case .listen: ListenView().overlay(alignment: .topLeading) { legacyCloseButton }
+        case .converse: ConverseView().overlay(alignment: .topLeading) { legacyCloseButton }
         }
-        .overlay(alignment: .topLeading) {
-            Button {
-                Haptics.tap()
-                activeSection = nil
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(width: max(Theme.minimumHitTarget, 44 * tile),
-                           height: max(Theme.minimumHitTarget, 44 * tile))
-                    .background(Color.black.opacity(0.22), in: Circle())
-                    .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to Home")
-            .padding(.top, 56)
-            .padding(.leading, 16)
+    }
+
+    private var legacyCloseButton: some View {
+        Button {
+            Haptics.tap()
+            activeSection = nil
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: max(Theme.minimumHitTarget, 44 * tile),
+                       height: max(Theme.minimumHitTarget, 44 * tile))
+                .background(Color.black.opacity(0.22), in: Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to Home")
+        .padding(.top, 56)
+        .padding(.leading, 16)
     }
 
     // MARK: - Gate + lesson entry (every entry point goes through these)
@@ -443,11 +478,15 @@ struct HomeView: View {
                             .lineLimit(2)
                             .minimumScaleFactor(0.6)
                             .foregroundStyle(.white)
+                        // White on the orange gradient measures 1.9–2.8:1 (UX-08):
+                        // the subtitle sits on a text-safe scrim (5.2:1).
                         Text(greetingSubtitle(due: due))
                             .font(.callout)
-                            .foregroundStyle(.white.opacity(0.88))
-                            .padding(.top, 6)
+                            .foregroundStyle(.white)
                             .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Theme.primaryText, in: .rect(cornerRadius: 10))
+                            .padding(.top, 8)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -495,11 +534,15 @@ struct HomeView: View {
                     chip(icon: "flame.fill", value: "\(store.currentStreak)", unit: "streak", tint: Theme.primary,
                          label: "\(store.currentStreak) day streak")
                     chipDivider
-                    chip(icon: "checkmark.seal.fill", value: "\(store.masteredThisWeek)", unit: "week", tint: Theme.success,
-                         label: "\(store.masteredThisWeek) mastered this week")
-                    chipDivider
-                    chip(icon: "brain.head.profile", value: "\(due)", unit: HomeCopy.dueNowLabel.lowercased(), tint: Theme.secondary,
-                         label: "\(due) \(HomeCopy.dueNowLabel.lowercased())")
+                    chip(icon: "checkmark.seal.fill", value: "\(store.masteredThisWeek)", unit: HomeCopy.masteredThisWeekUnit,
+                         tint: Theme.success, label: "\(store.masteredThisWeek) mastered this week")
+                    // Hidden until any card has been reviewed (UX-15): on day one the
+                    // due number is the seeded batch, not a backlog.
+                    if store.homeSurfaces.showsDueCount {
+                        chipDivider
+                        chip(icon: "brain.head.profile", value: "\(due)", unit: HomeCopy.dueNowLabel.lowercased(), tint: Theme.secondary,
+                             label: "\(due) \(HomeCopy.dueNowLabel.lowercased())")
+                    }
                     Spacer()
                     // No reviews yet → an empty ring and "—", never a full ring reading
                     // 100 over data that does not exist (D19).
@@ -511,7 +554,7 @@ struct HomeView: View {
                             .stroke(Theme.primary, style: .init(lineWidth: 3, lineCap: .round))
                             .rotationEffect(.degrees(-90)).frame(width: ring, height: ring)
                         Text(hasEvidence ? "\(store.overallRetention)" : "—")
-                            .font(.caption2.weight(.heavy)).foregroundStyle(Theme.primary)
+                            .font(.caption2.weight(.heavy)).foregroundStyle(Theme.primaryText)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Retention")
@@ -604,7 +647,7 @@ struct HomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Text(HomeCopy.weeklyGoalValue(done: done, goal: goal))
-                    .font(.caption).foregroundStyle(met ? Theme.success : Theme.textSecondary)
+                    .font(.caption).foregroundStyle(met ? Theme.successText : Theme.textSecondary)
                     .layoutPriority(1)
             }
             progressBar(progress, tint: met ? Theme.success : Theme.primary, height: 6)
@@ -686,7 +729,7 @@ struct HomeView: View {
                             Image(systemName: "clock.fill").font(.caption2)
                             Text(HomeCopy.dueNowLabel).font(.caption2.weight(.semibold))
                         }
-                        .foregroundStyle(Theme.warning)
+                        .foregroundStyle(Theme.warningText)
                         .padding(.horizontal, 9).padding(.vertical, 4)
                         .background(Theme.warning.opacity(0.12)).clipShape(.capsule)
                     }
@@ -803,7 +846,7 @@ struct HomeView: View {
             // The capstone cadence applies to Foundation learners too (C15).
             if capstoneReady { capstoneRow }
 
-            lockedActivitiesRow
+            nextUnlockRow
         }
         .padding(Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -813,41 +856,22 @@ struct HomeView: View {
         .softLift(radius: 22, y: 10)
     }
 
-    /// The activities still locked behind Foundation — shown so the path ahead is
-    /// visible without letting the beginner wander into overwhelming content.
-    /// Reading in the bridge state (D5) is offered here: short pieces only.
-    private var lockedActivitiesRow: some View {
-        let locked = LearningModality.allCases.filter { !store.canOpen($0) }
+    /// The path ahead for a Foundation learner, as ONE line (UX-07): everything
+    /// locked sits behind Reading, so the store's "Next unlock" line stands for all
+    /// of it instead of a row of padlocked chips. Reading in the bridge state (D5)
+    /// is offered here: short pieces only.
+    private var nextUnlockRow: some View {
         let bridgeOpen = store.readiness(for: .reading) == .foundation
         return VStack(alignment: .leading, spacing: 8) {
-            if !locked.isEmpty {
-                Text(ReadinessCopy.lockedActivitiesHeader(readingHeldByGovernor: store.isReadingHeldByGovernor))
-                    .font(.caption2.weight(.bold)).foregroundStyle(Theme.textSecondary).tracking(0.5)
-                    .accessibilityAddTraits(.isHeader)
-                HStack(spacing: 8) {
-                    ForEach(locked) { m in
-                        HStack(spacing: 6) {
-                            Image(systemName: "lock.fill").font(.caption2).foregroundStyle(Theme.textSecondary)
-                            Image(systemName: m.icon).font(.caption2).foregroundStyle(Theme.textSecondary)
-                            Text(m.label).font(.caption2.weight(.medium)).foregroundStyle(Theme.textSecondary)
-                        }
-                        .padding(.horizontal, 9).padding(.vertical, 6)
-                        .background(Theme.backgroundSecondary).clipShape(.capsule)
-                        .overlay(Capsule().stroke(Theme.border.opacity(0.5), lineWidth: 0.5))
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(m.label), locked")
-                    }
-                }
-                // The condition has to describe the chips above it. Reading's own
-                // note ("Almost there — short pieces at your level for now.") only
-                // belongs here while Reading is one of the locked chips; once the
-                // bridge opens Reading, the row shows the higher modalities' real
-                // condition instead.
-                if let next = locked.first, let condition = store.unlockCondition(for: next) {
-                    Text(condition)
-                        .font(.caption).foregroundStyle(Theme.textSecondary)
+            if let line = store.homeSurfaces.nextUnlock {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "lock.open.fill").font(.caption).foregroundStyle(Theme.textSecondary)
+                        .accessibilityHidden(true)
+                    Text(line)
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                .accessibilityElement(children: .combine)
             }
             if bridgeOpen {
                 Button { open(.read) } label: {
@@ -1224,7 +1248,7 @@ struct HomeView: View {
 
     private func featureCards(due: Int) -> [FeatureCard] {
         [
-            FeatureCard(id: "learn", title: "Learn", subtitle: "Practice your gaps",
+            FeatureCard(id: "learn", title: "Learn", subtitle: "Practice what you're learning",
                         description: "Master vocabulary, grammar & more with adaptive lessons",
                         icon: "graduationcap.fill", iconColor: Theme.secondary, iconBg: Theme.secondaryLight,
                         stats: HomeCopy.learnCardStat(toLearn: store.visibleGaps.count, practised: store.practisedGaps.count), modality: nil) {
@@ -1251,17 +1275,21 @@ struct HomeView: View {
                         description: "Learn French with immersive video transcripts",
                         icon: "play.rectangle.fill", iconColor: Theme.indigo, iconBg: Color(hex: "E0E7FF"),
                         stats: "Interactive transcripts", modality: .watching) { open(.watch) },
-            FeatureCard(id: "deck", title: "Deck", subtitle: "Spaced repetition",
-                        description: "Drill your gaps until mastery with smart review",
+            FeatureCard(id: "deck", title: HomeCopy.myWordsTitle, subtitle: "Spaced repetition",
+                        description: "Drill your words until mastery with smart review",
                         icon: "square.stack.3d.up.fill", iconColor: Theme.primary, iconBg: Theme.primaryLight,
-                        stats: "\(due) \(HomeCopy.dueNowLabel.lowercased())", modality: nil) { open(.deck) },
+                        stats: HomeCopy.deckCardStat(due: due, showsDueCount: store.homeSurfaces.showsDueCount),
+                        modality: nil) { open(.deck) },
         ]
     }
 
     private func carousel(due: Int) -> some View {
         // Built once and shared with the nav bar below: the list was previously
         // rebuilt for every card, every nav item and every width calculation.
-        let cards = featureCards(due: due)
+        // A Foundation learner sees only what they can open today (UX-07); the
+        // Foundation card's "Next unlock" line stands for the rest.
+        let surfaces = store.homeSurfaces
+        let cards = featureCards(due: due).filter { surfaces.shows($0.modality) }
         return VStack(spacing: 18) {
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
@@ -1392,7 +1420,7 @@ struct HomeView: View {
                         // A locked card states its unlock condition where the stat line would be.
                         Text(locked ? (condition ?? ReadinessCopy.lockedLabel) : card.stats)
                             .font(.footnote.weight(.medium))
-                            .foregroundStyle(locked ? Theme.textSecondary : Theme.primary)
+                            .foregroundStyle(locked ? Theme.textSecondary : Theme.primaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1458,7 +1486,7 @@ struct HomeView: View {
         let title = hasNews ? "Today's Headlines" : "Today's Reading"
         let headline = hasNews ? "Fresh French news at your level"
                                : (locked ? "French news unlocks with Reading" : ReadinessCopy.bridgeStat)
-        let detail = hasNews ? "Tap any word to save it as a gap"
+        let detail = hasNews ? "Tap any word to save it to \(HomeCopy.myWordsTitle)"
                              : (condition ?? (locked ? ReadinessCopy.lockedLabel : ReadinessCopy.bridgeCondition))
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -1474,7 +1502,7 @@ struct HomeView: View {
                 Spacer()
                 Button { open(.read) } label: {
                     Text("See All").font(.footnote.weight(.semibold))
-                        .foregroundStyle(locked ? Theme.textSecondary : Theme.primary)
+                        .foregroundStyle(locked ? Theme.textSecondary : Theme.primaryText)
                         .frame(minWidth: Theme.minimumHitTarget, minHeight: Theme.minimumHitTarget)
                         .contentShape(Rectangle())
                 }
@@ -1534,7 +1562,10 @@ struct HomeView: View {
                 .accessibilityAddTraits(.isHeader)
             ScrollView(.horizontal) {
                 HStack(spacing: 14) {
-                    ForEach([HomeResource.scenarios, .translator, .tenses, .accent, .idioms, .gaps]) { r in
+                    // A Foundation learner sees only the resources open today (UX-07).
+                    let surfaces = store.homeSurfaces
+                    ForEach([HomeResource.scenarios, .translator, .tenses, .accent, .idioms, .gaps]
+                        .filter { surfaces.shows($0.modality) }) { r in
                         resourceButton(r)
                     }
                 }
@@ -1623,7 +1654,7 @@ private struct CEFRSheet: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
                                 Text(item.level.rawValue)
-                                    .font(.subheadline.weight(.bold)).foregroundStyle(Theme.primary)
+                                    .font(.subheadline.weight(.bold)).foregroundStyle(Theme.primaryText)
                                     .padding(.horizontal, 10).padding(.vertical, 5)
                                     .background(Theme.primaryLight).clipShape(.rect(cornerRadius: 8))
                                 Text(item.name).font(.callout.weight(.semibold)).foregroundStyle(Theme.text)
@@ -1633,7 +1664,7 @@ private struct CEFRSheet: View {
                                         Image(systemName: "arrow.up.right").font(.caption2)
                                         Text("In Progress").font(.caption2.weight(.semibold))
                                     }
-                                    .foregroundStyle(Theme.primary)
+                                    .foregroundStyle(Theme.primaryText)
                                     .padding(.horizontal, 8).padding(.vertical, 3)
                                     .background(Theme.primaryLight).clipShape(.capsule)
                                 }

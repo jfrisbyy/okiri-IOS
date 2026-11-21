@@ -12,7 +12,6 @@ import SwiftUI
 struct LessonPracticeStage: View {
     let model: LessonViewModel
     let onClose: () -> Void
-    @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// VoiceOver focus moves to the feedback the moment an answer is checked —
     /// the explanation is the point of the loop, and it lands below the answer
@@ -85,18 +84,11 @@ struct LessonPracticeStage: View {
     private func header(_ q: LessonQuestion) -> some View {
         HStack(spacing: 8) {
             Pill(text: q.gap.category.label, color: q.gap.category.color)
-            if q.isRemedial { Pill(text: "Try again", color: Theme.warning) }
-            // A check-in that rides a probe item is a check-in: never both pills.
-            if q.isProbe && !q.isCheckIn { Pill(text: "Blind-spot check", color: Theme.purple) }
-            if q.isCheckIn { Pill(text: "Check-in", color: Theme.secondary) }
-            if q.isCapstone { Pill(text: "Capstone", color: Theme.secondary, filled: true) }
-            Spacer()
-            // Only when this question really carries the extra options: a probe —
-            // or a check-in riding a probe item — keeps the content's own four.
-            if store.optionCount >= 5 && q.kind == .multipleChoice && !q.isProbe
-                && q.options.count >= store.optionCount {
-                Pill(text: "Tuned to your level", color: Theme.secondary)
+            // At most one status pill, worded for the learner (UX-13).
+            if let pill = LessonCopy.statusPill(for: q) {
+                Pill(text: pill.text, color: pillColor(pill), filled: pill == .capstone)
             }
+            Spacer()
         }
 
         HStack(alignment: .top, spacing: 10) {
@@ -121,6 +113,13 @@ struct LessonPracticeStage: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Theme.card).clipShape(.rect(cornerRadius: Radius.card)).softLift(strength: 0.6)
+        }
+    }
+
+    private func pillColor(_ pill: LessonPill) -> Color {
+        switch pill {
+        case .tryAgain: return Theme.warning
+        case .quickCheck, .capstone: return Theme.secondary
         }
     }
 }
@@ -165,18 +164,16 @@ struct LessonPracticeBar: View {
         if model.isCapstone {
             return "\(min(total, model.session.position + 1)) of \(total)"
         }
-        let mastered = model.session.masteredGapIds.count
-        return masterable > 0 ? "\(mastered)/\(masterable) mastered" : "\(mastered) mastered"
+        return LessonCopy.solidProgress(solid: model.session.masteredGapIds.count, of: masterable)
     }
 
-    /// "3/8 mastered" would be read out as "three slash eight"; spell it out.
+    /// "3/8 solid" would be read out as "three slash eight"; spell it out.
     private var trailingAccessibilityLabel: String {
         let total = model.session.schedule.count
         if model.isCapstone {
             return "Question \(min(total, model.session.position + 1)) of \(total)"
         }
-        let mastered = model.session.masteredGapIds.count
-        return masterable > 0 ? "\(mastered) of \(masterable) mastered" : "\(mastered) mastered"
+        return LessonCopy.solidProgressSpoken(solid: model.session.masteredGapIds.count, of: masterable)
     }
 }
 
@@ -191,6 +188,16 @@ struct LessonFeedbackBox: View {
         case .correct: return Theme.success
         case .close: return Theme.warning
         case .incorrect, .revealed: return Theme.error
+        }
+    }
+
+    /// The title is text on the light tint: the text-safe token, never the
+    /// bright fill colour, which measures 2.1–3.4:1 there (UX-08).
+    private var titleColor: Color {
+        switch feedback.tone {
+        case .correct: return Theme.successText
+        case .close: return Theme.warningText
+        case .incorrect, .revealed: return Theme.errorText
         }
     }
 
@@ -216,7 +223,7 @@ struct LessonFeedbackBox: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: icon).font(.body).foregroundStyle(color).accessibilityHidden(true)
                 Text(feedback.title)
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(color)
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(titleColor)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if let speech = feedback.speech {

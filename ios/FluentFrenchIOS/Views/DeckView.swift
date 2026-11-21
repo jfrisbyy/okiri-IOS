@@ -2,7 +2,7 @@
 //  DeckView.swift
 //  FluentFrenchIOS
 //
-//  "My Gaps" — categories, SRS review entry, gap cards, mastered list.
+//  "My words" (UX-12) — categories, SRS review entry, word cards, mastered list.
 //  Mirrors the Expo deck screen's structure and teal-gradient header.
 //
 //  Every list and count reads `store.visibleGaps` (probes never show, A13); the
@@ -14,6 +14,8 @@
 import SwiftUI
 
 struct DeckView: View {
+    /// Closes the deck back to Home (UX-03), from the deck's own header.
+    let onClose: () -> Void
     @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// 1 at the default text size; the square icon badges grow with it so the
@@ -83,13 +85,14 @@ struct DeckView: View {
 
     private var header: some View {
         // The stat pill is the header's own bottom content, not an overlay on its
-        // frame: overlaid, it was drawn on top of the bottom-anchored "My Gaps"
-        // title and subtitle.
+        // frame: overlaid, it was drawn on top of the bottom-anchored title and
+        // subtitle. The close button is the header's own trailing control, laid
+        // out beside the title, never over it (UX-03).
         GradientHeader(
             gradient: Theme.tealGradient,
-            title: "My Gaps",
+            title: HomeCopy.myWordsTitle,
             subtitle: "Practice your weak spots until mastery",
-            trailing: { EmptyView() },
+            trailing: { SectionCloseButton(action: onClose) },
             bottom: {
                 HStack(spacing: 20) {
                     HeaderStat(systemImage: "clock.badge.exclamationmark", value: "\(dueNowCount)", label: HomeCopy.dueNowLabel)
@@ -174,7 +177,7 @@ struct DeckView: View {
                 .background(h.score >= healthy ? Color(hex: "D1FAE5") : h.score >= attention ? Color(hex: "FEF3C7") : Color(hex: "FEE2E2"))
                 .clipShape(.rect(cornerRadius: 8))
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Gap health: \(h.label)")
+                .accessibilityLabel("Health: \(h.label)")
                 if due > 0 {
                     Text("\(due) due now").font(.caption2.weight(.semibold)).foregroundStyle(Color(hex: "DC2626"))
                         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -266,7 +269,7 @@ struct DeckView: View {
                         }
                     }
                     .accessibilityAddTraits(active ? .isSelected : [])
-                    .accessibilityHint("Filters the gaps below by this category")
+                    .accessibilityHint("Filters the words below by this category")
                 }
             }
         }
@@ -274,16 +277,16 @@ struct DeckView: View {
 
     private var gapsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: selectedCategory?.label ?? "All Gaps", trailing: "\(displayedGaps.count) gaps")
+            SectionHeader(title: selectedCategory?.label ?? "All words", trailing: "\(displayedGaps.count) word\(displayedGaps.count == 1 ? "" : "s")")
             if displayedGaps.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "square.stack.3d.up").scaledFont(32).foregroundStyle(Theme.textSecondary)
                         .frame(width: 64 * Theme.chromeScale(typeScale), height: 64 * Theme.chromeScale(typeScale))
                         .background(Theme.backgroundSecondary).clipShape(.circle)
                         .accessibilityHidden(true)
-                    Text("No gaps yet").font(.headline).foregroundStyle(Theme.text)
+                    Text("No words yet").font(.headline).foregroundStyle(Theme.text)
                     Text(selectedCategory == nil
-                         ? "Your lessons and captures fill this deck as you go."
+                         ? "Your lessons and captures fill \(HomeCopy.myWordsTitle) as you go."
                          : "Nothing in \(selectedCategory?.label ?? "this category") yet — capture words while reading or speaking.")
                         .font(.subheadline).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -298,11 +301,11 @@ struct DeckView: View {
                 }
                 // The header counts the whole filter, so the rest of the deck has to
                 // be reachable — the preview is never the only way in. It expands in
-                // place rather than pushing a screen: Home presents this view inside
-                // a full-screen cover with its own floating "Back to Home" button
-                // drawn over everything this stack pushes, so a pushed list would
-                // show two back affordances, the visible one leaving the deck
-                // entirely instead of returning to it.
+                // place rather than pushing a screen: Home presents this view as a
+                // full-screen cover that the header's close button leaves, so a
+                // pushed list would need a back button of its own and the screen
+                // would show two ways out — one back to the deck, one out of it
+                // entirely — one back affordance per screen (UX-03).
                 if displayedGaps.count > Tuning.deckPreviewCount {
                     Button {
                         Haptics.tap()
@@ -321,10 +324,10 @@ struct DeckView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(showAllGaps ? "Show fewer gaps" : "See all \(displayedGaps.count) gaps")
+                    .accessibilityLabel(showAllGaps ? "Show fewer words" : "See all \(displayedGaps.count) words")
                     .accessibilityHint(showAllGaps
                                        ? "Collapses the list back to the first \(Tuning.deckPreviewCount)"
-                                       : "Shows every gap in this filter")
+                                       : "Shows every word in this filter")
                 }
             }
         }

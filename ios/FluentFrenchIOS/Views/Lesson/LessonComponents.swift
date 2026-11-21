@@ -3,7 +3,7 @@
 //  FluentFrenchIOS
 //
 //  Small pieces shared by the lesson stages: buttons, the hearts row, the
-//  progress bar, the mastery flash, the missed-items list and highlighted
+//  progress bar, the "Got it!" flash, the missed-items list and highlighted
 //  example text. Relative fonts and accessibility labels throughout (C21).
 //
 
@@ -52,7 +52,7 @@ struct LessonSecondaryButton: View {
                 }
                 Text(title).font(.subheadline.weight(.semibold))
             }
-            .foregroundStyle(Theme.primary)
+            .foregroundStyle(Theme.primaryText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .frame(minHeight: Theme.minimumHitTarget)
@@ -205,7 +205,7 @@ struct LessonHighlightedText: View {
     private var highlighted: Text {
         guard let range = AnswerGrader.highlightRange(in: sentence, for: gap) else { return Text(sentence) }
         return Text(sentence[..<range.lowerBound])
-            + Text(sentence[range]).fontWeight(.heavy).foregroundStyle(Theme.primary)
+            + Text(sentence[range]).fontWeight(.heavy).foregroundStyle(Theme.primaryText)
             + Text(sentence[range.upperBound...])
     }
 

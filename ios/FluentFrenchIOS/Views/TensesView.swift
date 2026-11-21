@@ -311,7 +311,7 @@ struct TensesView: View {
         }
         return Text(text)
             .font(.footnote)
-            .foregroundStyle(savedCount >= unique.count ? Theme.success : Theme.textSecondary)
+            .foregroundStyle(savedCount >= unique.count ? Theme.successText : Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

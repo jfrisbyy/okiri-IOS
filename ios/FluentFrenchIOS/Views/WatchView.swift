@@ -96,21 +96,27 @@ struct WatchView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                    if searching {
-                        searchResultsView
-                    } else {
-                        feed
+            // The header (title, close, search) is pinned ABOVE the scroll view, as
+            // in Read, Speak and Listen: Watch is a full-screen cover with no
+            // swipe-back, so its one way out must never scroll off screen (UX-03
+            // re-review).
+            VStack(spacing: 0) {
+                header
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if searching {
+                            searchResultsView
+                        } else {
+                            feed
+                        }
                     }
                 }
+                .scrollIndicators(.hidden)
+                .refreshable { await model.load() }
             }
             .background(Color(hex: "120A07"))
             .ignoresSafeArea(edges: .top)
-            .scrollIndicators(.hidden)
             .navigationBarHidden(true)
-            .refreshable { await model.load() }
         }
         .fullScreenCover(item: $playingVideo) { video in
             WatchPlayerView(video: video)

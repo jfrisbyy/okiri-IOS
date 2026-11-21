@@ -54,9 +54,12 @@ struct DeckView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
+            // The header is pinned ABOVE the scroll view, as in Read, Speak and
+            // Listen: My words is a full-screen cover with no swipe-back, so its one
+            // way out must never scroll off screen (UX-03 re-review).
+            VStack(spacing: 0) {
+                header
+                ScrollView {
                     VStack(spacing: 20) {
                         if dueNowCount > 0 || upcomingCount > 0 { srsCard }
                         if !store.visibleGaps.isEmpty { practiceSection }

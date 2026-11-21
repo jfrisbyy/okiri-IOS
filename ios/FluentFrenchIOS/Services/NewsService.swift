@@ -26,7 +26,10 @@ nonisolated struct NewsArticle: Identifiable, Hashable {
     /// rather than claiming it is European.
     let region: ReadRegionGroup?
     let imageUrl: String?
-    let publishedAt: Date
+    /// When the story was published. Nil for an app-written sample, which was
+    /// never published, and for a live story whose service sent no readable date:
+    /// the card then prints no time rather than an invented "4h ago" (read-10-6).
+    let publishedAt: Date?
     let body: String
     /// The article's web address (also the basis of `id`); nil for curated pieces.
     var url: String? = nil
@@ -43,7 +46,9 @@ nonisolated struct NewsArticle: Identifiable, Hashable {
     /// the body's opening.
     var contextSummary: String? { ArticleText.contextSummary(summary: summary, body: body) }
 
-    var timeAgo: String {
+    /// "4h ago", or nil when there is no publication date to defend (read-10-6).
+    var timeAgo: String? {
+        guard let publishedAt else { return nil }
         let diff = Date().timeIntervalSince(publishedAt)
         let hours = Int(diff / 3600)
         let days = Int(diff / 86_400)
@@ -235,17 +240,21 @@ nonisolated enum NewsService {
     /// again: attribute app-written text to the app. Real journalism reaches the
     /// learner through a real source with a real link, or as a clearly labelled
     /// summary of it — never as words put in a publisher's mouth.
+    ///
+    /// They carry NO publication time (read-10-6). Each used to be stamped "1h
+    /// ago" … "8h ago" from the moment the feed loaded, so invented events ("Les
+    /// Bleus ont décroché leur place en finale") read as this morning's news.
+    /// They were never published; the feed orders them by level alone.
     static func curated(for category: NewsCategory) -> [NewsArticle] {
-        let now = Date()
         let base: [NewsArticle] = [
-            NewsArticle(id: "n1", title: "La France investit massivement dans l'énergie renouvelable", summary: "Un nouveau plan vise à doubler la capacité solaire et éolienne du pays d'ici 2030.", source: "Okiri (sample)", category: .environment, region: .europe, imageUrl: nil, publishedAt: now.addingTimeInterval(-3600), body: "Le gouvernement français a annoncé un investissement record dans les énergies renouvelables. Ce plan ambitieux prévoit la construction de nouveaux parcs solaires et éoliens partout dans le pays. Les experts estiment que cela pourrait créer des milliers d'emplois tout en réduisant les émissions de carbone.", level: .B1),
-            NewsArticle(id: "n2", title: "Une nouvelle exposition au Louvre attire les foules", summary: "Le musée présente des œuvres jamais montrées au public.", source: "Okiri (sample)", category: .culture, region: .europe, imageUrl: nil, publishedAt: now.addingTimeInterval(-7200), body: "Le musée du Louvre inaugure une exposition exceptionnelle cet été. Les visiteurs peuvent y découvrir des chefs-d'œuvre rarement exposés. La file d'attente s'étend déjà sur plusieurs centaines de mètres dès l'ouverture.", level: .B1),
-            NewsArticle(id: "n3", title: "La technologie transforme notre quotidien", summary: "Les nouvelles intelligences artificielles changent la façon dont nous travaillons.", source: "Okiri (sample)", category: .technology, region: .europe, imageUrl: nil, publishedAt: now.addingTimeInterval(-10800), body: "Les avancées technologiques récentes bouleversent de nombreux secteurs. Des entreprises françaises développent des outils innovants qui simplifient le travail quotidien. Cependant, certains s'inquiètent de l'impact sur l'emploi.", level: .B1),
-            NewsArticle(id: "n4", title: "L'équipe de France se qualifie pour la finale", summary: "Une victoire spectaculaire en demi-finale.", source: "Okiri (sample)", category: .sports, region: .europe, imageUrl: nil, publishedAt: now.addingTimeInterval(-14400), body: "Les Bleus ont décroché leur place en finale après un match palpitant. Les supporters ont envahi les rues pour célébrer cette victoire historique. Le sélectionneur a salué l'esprit d'équipe de ses joueurs.", level: .A2),
-            NewsArticle(id: "n5", title: "Le Sénégal accueille un sommet sur l'éducation", summary: "Des dirigeants africains se réunissent à Dakar.", source: "Okiri (sample)", category: .society, region: .africa, imageUrl: nil, publishedAt: now.addingTimeInterval(-18000), body: "Dakar accueille cette semaine un sommet majeur sur l'avenir de l'éducation en Afrique francophone. Les participants discutent des moyens d'améliorer l'accès à l'école pour tous les enfants du continent.", level: .B1),
-            NewsArticle(id: "n6", title: "Le Québec lance un programme d'immersion française", summary: "Une initiative pour attirer les nouveaux arrivants.", source: "Okiri (sample)", category: .society, region: .canada, imageUrl: nil, publishedAt: now.addingTimeInterval(-21600), body: "Le gouvernement québécois met en place un nouveau programme pour faciliter l'apprentissage du français. Les nouveaux arrivants pourront suivre des cours gratuits afin de mieux s'intégrer dans la société québécoise.", level: .A2),
-            NewsArticle(id: "n7", title: "L'économie française montre des signes de reprise", summary: "La croissance dépasse les prévisions ce trimestre.", source: "Okiri (sample)", category: .economy, region: .europe, imageUrl: nil, publishedAt: now.addingTimeInterval(-25200), body: "Les derniers chiffres économiques sont encourageants. La consommation des ménages repart à la hausse et le chômage recule légèrement. Les analystes restent toutefois prudents face aux incertitudes mondiales.", level: .B2),
-            NewsArticle(id: "n8", title: "Découverte scientifique majeure à Paris", summary: "Des chercheurs annoncent une avancée prometteuse.", source: "Okiri (sample)", category: .science, region: .europe, imageUrl: nil, publishedAt: now.addingTimeInterval(-28800), body: "Une équipe de chercheurs parisiens a réalisé une découverte qui pourrait révolutionner la médecine. Leurs travaux, publiés dans une revue internationale, ouvrent de nouvelles perspectives thérapeutiques.", level: .B2),
+            NewsArticle(id: "n1", title: "La France investit massivement dans l'énergie renouvelable", summary: "Un nouveau plan vise à doubler la capacité solaire et éolienne du pays d'ici 2030.", source: "Okiri (sample)", category: .environment, region: .europe, imageUrl: nil, publishedAt: nil, body: "Le gouvernement français a annoncé un investissement record dans les énergies renouvelables. Ce plan ambitieux prévoit la construction de nouveaux parcs solaires et éoliens partout dans le pays. Les experts estiment que cela pourrait créer des milliers d'emplois tout en réduisant les émissions de carbone.", level: .B1),
+            NewsArticle(id: "n2", title: "Une nouvelle exposition au Louvre attire les foules", summary: "Le musée présente des œuvres jamais montrées au public.", source: "Okiri (sample)", category: .culture, region: .europe, imageUrl: nil, publishedAt: nil, body: "Le musée du Louvre inaugure une exposition exceptionnelle cet été. Les visiteurs peuvent y découvrir des chefs-d'œuvre rarement exposés. La file d'attente s'étend déjà sur plusieurs centaines de mètres dès l'ouverture.", level: .B1),
+            NewsArticle(id: "n3", title: "La technologie transforme notre quotidien", summary: "Les nouvelles intelligences artificielles changent la façon dont nous travaillons.", source: "Okiri (sample)", category: .technology, region: .europe, imageUrl: nil, publishedAt: nil, body: "Les avancées technologiques récentes bouleversent de nombreux secteurs. Des entreprises françaises développent des outils innovants qui simplifient le travail quotidien. Cependant, certains s'inquiètent de l'impact sur l'emploi.", level: .B1),
+            NewsArticle(id: "n4", title: "L'équipe de France se qualifie pour la finale", summary: "Une victoire spectaculaire en demi-finale.", source: "Okiri (sample)", category: .sports, region: .europe, imageUrl: nil, publishedAt: nil, body: "Les Bleus ont décroché leur place en finale après un match palpitant. Les supporters ont envahi les rues pour célébrer cette victoire historique. Le sélectionneur a salué l'esprit d'équipe de ses joueurs.", level: .A2),
+            NewsArticle(id: "n5", title: "Le Sénégal accueille un sommet sur l'éducation", summary: "Des dirigeants africains se réunissent à Dakar.", source: "Okiri (sample)", category: .society, region: .africa, imageUrl: nil, publishedAt: nil, body: "Dakar accueille cette semaine un sommet majeur sur l'avenir de l'éducation en Afrique francophone. Les participants discutent des moyens d'améliorer l'accès à l'école pour tous les enfants du continent.", level: .B1),
+            NewsArticle(id: "n6", title: "Le Québec lance un programme d'immersion française", summary: "Une initiative pour attirer les nouveaux arrivants.", source: "Okiri (sample)", category: .society, region: .canada, imageUrl: nil, publishedAt: nil, body: "Le gouvernement québécois met en place un nouveau programme pour faciliter l'apprentissage du français. Les nouveaux arrivants pourront suivre des cours gratuits afin de mieux s'intégrer dans la société québécoise.", level: .A2),
+            NewsArticle(id: "n7", title: "L'économie française montre des signes de reprise", summary: "La croissance dépasse les prévisions ce trimestre.", source: "Okiri (sample)", category: .economy, region: .europe, imageUrl: nil, publishedAt: nil, body: "Les derniers chiffres économiques sont encourageants. La consommation des ménages repart à la hausse et le chômage recule légèrement. Les analystes restent toutefois prudents face aux incertitudes mondiales.", level: .B2),
+            NewsArticle(id: "n8", title: "Découverte scientifique majeure à Paris", summary: "Des chercheurs annoncent une avancée prometteuse.", source: "Okiri (sample)", category: .science, region: .europe, imageUrl: nil, publishedAt: nil, body: "Une équipe de chercheurs parisiens a réalisé une découverte qui pourrait révolutionner la médecine. Leurs travaux, publiés dans une revue internationale, ouvrent de nouvelles perspectives thérapeutiques.", level: .B2),
         ]
         if category == .all { return base }
         let filtered = base.filter { $0.category == category }
@@ -272,7 +281,8 @@ nonisolated struct NewsAPIArticle: Decodable {
     func toArticle(category: NewsCategory) -> NewsArticle? {
         guard let title, !title.isEmpty, title != "[Removed]" else { return nil }
         let formatter = ISO8601DateFormatter()
-        let date = formatter.date(from: publishedAt ?? "") ?? Date()
+        // No readable date is no date, not "Just now" (read-10-6).
+        let date = formatter.date(from: publishedAt ?? "")
         let summary = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         // No readable text means a blank reader — drop the headline instead (E22).
         guard let text = ArticleText.body(content: content, description: description) else { return nil }

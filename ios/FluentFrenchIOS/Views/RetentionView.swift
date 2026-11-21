@@ -249,15 +249,14 @@ struct ErrorPatternDetailView: View {
     @State private var scopedLesson: AssembledLesson? = nil
     @State private var emptyHeadline: String? = nil
 
-    private var explanation: String {
-        switch pattern.category {
-        case .grammar:
-            return "These mistakes share a grammar rule. When the rule's trigger appears, you tend to default to the more familiar form. Slow down at that trigger and recall the contrast."
-        case .pronunciation:
-            return "You're substituting a sound from English (or another habit) for the French target. Listen, then exaggerate the French articulation a few times."
-        default:
-            return "You confuse the meaning of this item with a similar word. Practicing them side-by-side fixes the interference."
-        }
+    /// What the record shows — counts only, never a diagnosis it cannot defend (firstrun-10-4).
+    private var summary: String {
+        HomeCopy.errorPatternSummary(patternId: pattern.id, label: pattern.conceptLabel, count: pattern.count)
+    }
+
+    /// The concept's authored common mistake, when it has one (firstrun-10-4).
+    private var commonMistake: String? {
+        HomeCopy.errorPatternCommonMistake(patternId: pattern.id) { FoundationContentLoader.teaching(for: $0) }
     }
 
     var body: some View {
@@ -271,9 +270,16 @@ struct ErrorPatternDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("HERE'S WHY").scaledFont(11, weight: .semibold).foregroundStyle(Theme.textSecondary).tracking(0.4)
-                    Text(explanation).scaledFont(15).foregroundStyle(Theme.textSecondary)
+                    Text("WHAT WE'VE SEEN").scaledFont(11, weight: .semibold).foregroundStyle(Theme.textSecondary).tracking(0.4)
+                    Text(summary).scaledFont(15).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let commonMistake {
+                        Text("A COMMON MISTAKE WITH THIS SKILL").scaledFont(11, weight: .semibold)
+                            .foregroundStyle(Theme.textSecondary).tracking(0.4)
+                            .padding(.top, 6)
+                        Text(commonMistake).scaledFont(15).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cardStyle(padding: 16)

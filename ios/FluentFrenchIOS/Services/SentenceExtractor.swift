@@ -75,21 +75,60 @@ nonisolated enum SentenceExtractor {
         return ""
     }
 
+    /// The sentence holding the `occurrence`-th match of `term` (0 = the first) —
+    /// the sentence the learner actually met it in, when the reader knows which
+    /// copy was tapped (read-10-7). Falls back to the first sentence when there
+    /// are fewer matches than that.
+    ///
+    /// The first-match rule alone glossed the second "café" of a story against
+    /// the first sentence that has one: the sheet's "Where you met it", the
+    /// translator's disambiguation context and the saved card all named a
+    /// sentence the learner had not tapped in.
+    static func sentence(containing term: String, in text: String, occurrence: Int) -> String {
+        let needle = normalizeTerm(term)
+        guard !needle.isEmpty else { return "" }
+        var seen = 0
+        for sentence in sentences(in: text) {
+            let count = matchCount(of: needle, in: sentence)
+            if count > 0, occurrence < seen + count { return sentence }
+            seen += count
+        }
+        return sentence(containing: term, in: text)
+    }
+
+    /// How many times `term` occurs, as whole words, in `text` — sentence by
+    /// sentence, so it counts exactly what `sentence(containing:in:occurrence:)`
+    /// indexes. Given the text BEFORE a tapped word, it is that word's occurrence.
+    static func occurrences(of term: String, in text: String) -> Int {
+        let needle = normalizeTerm(term)
+        guard !needle.isEmpty else { return 0 }
+        return sentences(in: text).reduce(0) { $0 + matchCount(of: needle, in: $1) }
+    }
+
     /// Whether `sentence` contains `term` as whole words (accent- and case-insensitive).
     static func contains(_ sentence: String, term: String) -> Bool {
         let needle = normalizeTerm(term)
         guard !needle.isEmpty else { return false }
+        return matchCount(of: needle, in: sentence, stopAtFirst: true) > 0
+    }
+
+    /// Whole-word matches of an already-normalised needle in one sentence.
+    private static func matchCount(of needle: String, in sentence: String, stopAtFirst: Bool = false) -> Int {
         let words = tokens(in: sentence)
         let needleWords = needle.split(separator: " ").map(String.init)
-        guard !needleWords.isEmpty, words.count >= needleWords.count else { return false }
+        guard !needleWords.isEmpty, words.count >= needleWords.count else { return 0 }
+        var count = 0
         for start in 0...(words.count - needleWords.count) {
             var matched = true
             for (offset, w) in needleWords.enumerated() where words[start + offset] != w {
                 matched = false; break
             }
-            if matched { return true }
+            if matched {
+                count += 1
+                if stopAtFirst { return count }
+            }
         }
-        return false
+        return count
     }
 
     /// Lower-cased, accent-folded, punctuation-stripped words of a sentence.

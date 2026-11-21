@@ -271,6 +271,86 @@ struct DailyPlanEngineTests {
         #expect(mixed.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
     }
 
+    // MARK: firstrun-10-6 — the Foundation rationale names the governor only when it holds reading
+
+    /// Below the bridge, coverage keeps reading shut and the rest of the Foundation
+    /// card says so ("Unlocks as you build the basics", "N of 14 skills — reading
+    /// opens here"). The plan rationale used to say "Consolidating your base before
+    /// opening reading" whenever the governor was active, blaming it for a gate it
+    /// was not holding.
+    @Test func foundationRationaleBlamesTheGovernorOnlyWhenItHoldsReading() {
+        let s = EngineFixtures.store()
+        s.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive && s.readiness(for: .reading) == .locked && !s.isReadingHeldByGovernor)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.isLessonPaced)
+        #expect(plan.rationale == ReadinessCopy.governorConsolidating)
+        #expect(!plan.rationale.contains("before opening reading"), "coverage, not the governor, holds reading here")
+    }
+
+    // MARK: firstrun-10-5 — the plan rationale says only what the data shows
+
+    @Test func rationaleNeverCallsANeverPractisedSkillAWeakSpot() {
+        let s = planStore()
+        let engine = DailyPlanEngine(store: s)
+        let fresh = EngineFixtures.concept("new-vocab", category: .vocabulary)
+        #expect(fresh.state == .neverObserved)
+        let weak = EngineFixtures.learning("weak-gram", mastery: 0.5, category: .grammar)
+        let uneven = [DailyPlanItem(modality: .reading, targetMinutes: 10), DailyPlanItem(modality: .watching, targetMinutes: 5)]
+
+        let onlyNew = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: fresh, score: 1, isFrontier: true)])
+        #expect(!onlyNew.contains("weak spots"), "\(onlyNew)")
+        #expect(onlyNew == "Today's new skills are vocabulary-heavy, so today leans reading.")
+
+        // The weak spot is the first PRACTISED, still-learning concept — not the frontier one ranked above it.
+        let mixed = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: fresh, score: 1, isFrontier: true),
+                                                           ScoredConcept(concept: weak, score: 0.5, isFrontier: false)])
+        #expect(mixed == "Your weak spots lately are grammar-heavy, so today leans reading.")
+
+        // A mastered concept (ranked for its check-in) is neither a weak spot nor a new skill.
+        let held = EngineFixtures.mastered("held", category: .pronunciation)
+        let checkIn = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: held, score: 1, isFrontier: false)])
+        #expect(checkIn == "Today leans reading.")
+    }
+
+    @Test func rationaleSaysLeansOnlyWhenTheRowsAreUneven() {
+        let s = planStore()
+        let engine = DailyPlanEngine(store: s)
+        let weak = [ScoredConcept(concept: EngineFixtures.learning("w", mastery: 0.5, category: .vocabulary), score: 1, isFrontier: false)]
+        let even = [LearningModality.reading, .watching, .listening].map { DailyPlanItem(modality: $0, targetMinutes: 5) }
+        let flat = engine.rationale(for: even, ranked: weak)
+        #expect(!flat.contains("leans"), "\(flat)")
+        #expect(flat == "Your weak spots lately are vocabulary-heavy — today's an even spread across your activities.")
+
+        let twoLead = [DailyPlanItem(modality: .reading, targetMinutes: 10), DailyPlanItem(modality: .watching, targetMinutes: 10),
+                       DailyPlanItem(modality: .listening, targetMinutes: 5)]
+        #expect(engine.rationale(for: twoLead, ranked: weak) == "Your weak spots lately are vocabulary-heavy, so today leans reading and watching.")
+        let single = [DailyPlanItem(modality: .reading, targetMinutes: 20)]
+        #expect(engine.rationale(for: single, ranked: weak) == "Your weak spots lately are vocabulary-heavy, so today's time goes to reading.")
+        #expect(engine.rationale(for: single, ranked: []) == "Today's time goes to reading.")
+    }
+
+    // MARK: firstrun-10-8 — the plan's and the gate's numbers live in Tuning
+
+    @Test func planAndGateConstantsComeFromTuning() {
+        let plan = DailyPlanConfig.tuning
+        #expect(plan.topConceptCount == Tuning.planTopConceptCount)
+        #expect(plan.observedBlendMax == Tuning.planObservedBlendMax)
+        #expect(plan.observedSmoothing == Tuning.planObservedSmoothing)
+        #expect(plan.uniformFloor == Tuning.planUniformFloor)
+        let gate = ReadinessConfig.tuning
+        #expect(gate.readingUnlock == Tuning.readingUnlockCoverage && gate.readingBridge == Tuning.readingBridgeCoverage)
+        #expect(gate.higherUnlock == Tuning.higherUnlockCoverage && gate.higherDemonstratedMinutes == Tuning.higherDemonstratedMinutes)
+        #expect(TimeBudget.light.minutes == Tuning.timeBudgetLightMinutes)
+        #expect(TimeBudget.standard.minutes == Tuning.timeBudgetStandardMinutes)
+        #expect(TimeBudget.intense.minutes == Tuning.timeBudgetIntenseMinutes)
+        for prior in [Tuning.planPriorVocabulary, Tuning.planPriorGrammar, Tuning.planPriorPronunciation,
+                      Tuning.planPriorPhrasing, Tuning.planPriorRegister] {
+            #expect(abs(prior.values.reduce(0, +) - 1) < 1e-9, "each category prior is a distribution")
+        }
+    }
+
     // MARK: Codable (D14) — the plan of record survives a relaunch with every item kind
 
     @Test func planRoundTripsThroughCodable() throws {

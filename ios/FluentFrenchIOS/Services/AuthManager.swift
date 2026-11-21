@@ -68,7 +68,9 @@ final class AuthManager {
         Task { [weak self] in
             for await change in client.auth.authStateChanges {
                 guard let self else { return }
-                await self.handle(event: change.event, session: change.session)
+                // The Task inherits the main actor and `handle` is synchronous
+                // on it, so no `await` here (compile-10-2).
+                self.handle(event: change.event, session: change.session)
             }
         }
     }

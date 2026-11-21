@@ -97,6 +97,9 @@ struct TranslatorView: View {
                     .overlay(Circle().stroke(Theme.secondary.opacity(0.15), lineWidth: 0.5))
             }
             .buttonStyle(.plain)
+            // No swap while a request is out: its answer is in the OLD target
+            // language and would land under the new label (read-10-8).
+            .disabled(isTranslating)
             .accessibilityLabel("Swap languages")
             .accessibilityValue("\(source.displayName) to \(target.displayName)")
             .accessibilityHint("Translates in the other direction")
@@ -237,7 +240,15 @@ struct TranslatorView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isTranslating else { return }
         phase = .translating
-        let outcome = await TranslationService.translation(of: text, from: source, to: target)
+        let from = source, to = target
+        let outcome = await TranslationService.translation(of: text, from: from, to: to)
+        // The answer belongs to the direction and the text it was asked for. If
+        // either changed while it was out, it is not this screen's translation:
+        // printed now, French would sit under the ENGLISH label (read-10-8).
+        guard source == from, inputText.trimmingCharacters(in: .whitespacesAndNewlines) == text else {
+            if phase == .translating { phase = .idle }
+            return
+        }
         withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
             switch outcome {
             case .translated(let result): phase = .translated(result)

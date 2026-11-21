@@ -1268,7 +1268,10 @@ struct HomeView: View {
                     ForEach(cards) { card in
                         featureCardView(card, due: due)
                             .frame(width: cardWidth)
-                            .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            // The transition closure is @Sendable and nonisolated:
+                            // capture the Reduce Motion value, never read the
+                            // main-actor @Environment property inside it (compile-10-3).
+                            .scrollTransition(.interactive, axis: .horizontal) { [reduceMotion] content, phase in
                                 content
                                     // Reduce Motion: the neighbouring cards dim
                                     // instead of shrinking as they scroll past.

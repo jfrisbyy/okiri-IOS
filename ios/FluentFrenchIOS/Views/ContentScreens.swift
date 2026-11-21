@@ -35,7 +35,8 @@ struct ArticleReaderView: View {
     var body: some View {
         WordReader(
             title: article.title,
-            subtitle: "\(article.source) · \(article.timeAgo)",
+            // No time for a sample that was never published (read-10-6).
+            subtitle: article.timeAgo.map { "\(article.source) · \($0)" } ?? article.source,
             level: article.level,
             levelLabel: article.levelLabel,
             tint: article.category.map { Color(hex: $0.hex) } ?? Theme.primary,
@@ -127,7 +128,6 @@ struct WordReader: View {
     /// started in (token ids run through the whole article, so without this a
     /// drag could sweep paragraphs into one "word").
     @State private var anchorSpan: ClosedRange<Int>? = nil
-    @State private var clearTask: Task<Void, Never>? = nil
     @State private var tokenFrames: [Int: CGRect] = [:]
 
     private var blocks: [ContentBlock] { Self.parse(text) }
@@ -177,7 +177,9 @@ struct WordReader: View {
                 context: t.context,
                 sourceTab: sourceTab,
                 sourceLevel: level,
-                alreadySaved: savedTerms.contains(t.term.lowercased()) || store.hasGap(forWord: t.term)
+                // With or without its article: "matin" is the deck's "le matin" (read-10-5).
+                alreadySaved: savedTerms.contains(t.term.lowercased())
+                    || KeyVocabulary.isSaved(t.term, in: store.savedHeadwordKeys())
             ) {
                 savedTerms.insert(t.term.lowercased())
             }
@@ -449,8 +451,9 @@ struct WordReader: View {
         let highlighted = isHighlighted(token.id)
         // Saved in THIS reading, or already in the deck from an earlier one — a word
         // the learner owns is marked wherever it is met (read-6-3).
+        // "matin" is saved when the deck holds "le matin" (read-10-5).
         let saved = lookupable && (savedTerms.contains(headword.lowercased())
-                                   || savedKeys.contains(AppStore.captureKey(headword)))
+                                   || KeyVocabulary.isSaved(headword, in: savedKeys))
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
         let wordView = Text(token.text)
             .font(Theme.scaledFontValue(size, weight: weight, for: sizeCategory))
@@ -505,7 +508,7 @@ struct WordReader: View {
                 FlowLayout(spacing: 8, lineSpacing: 8) {
                     ForEach(keyVocab, id: \.self) { word in
                         let saved = savedTerms.contains(word.lowercased())
-                            || savedKeys.contains(AppStore.captureKey(word))
+                            || KeyVocabulary.isSaved(word, in: savedKeys)
                         Button {
                             Haptics.tap()
                             present(term: word)
@@ -568,14 +571,14 @@ struct WordReader: View {
     // MARK: Gesture handlers
 
     private func handleTap(token: Token, blockId: Int) {
-        present(term: token.text, opensSentence: token.opensSentence)
+        present(term: token.text, opensSentence: token.opensSentence, at: token.id)
     }
 
     /// Long-press-then-drag: hold briefly, then sweep your finger across the
     /// text to highlight a continuous phrase. The short hold lets the article
     /// scroll normally without being mistaken for a selection.
     private var phraseDragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.16)
+        LongPressGesture(minimumDuration: Tuning.readerPhraseHoldSeconds)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("reader")))
             .onChanged { value in
                 if case .second(true, let drag) = value, let drag {
@@ -600,7 +603,6 @@ struct WordReader: View {
         guard let id = tokenId(at: point) else { return }
         if !selectionMode {
             Haptics.select()
-            clearTask?.cancel()
             let span = selectableSpan(containing: id)
             withAnimation(Theme.motion(.spring(response: 0.25, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                 selectionMode = true
@@ -655,9 +657,9 @@ struct WordReader: View {
         // A one-word selection is a tap by another name and takes the same
         // headword rule; a phrase is kept exactly as it was swept.
         if lo == hi, let hit = token(withId: lo) {
-            present(term: hit.text, opensSentence: hit.opensSentence)
+            present(term: hit.text, opensSentence: hit.opensSentence, at: lo)
         } else if lo != hi {
-            present(term: Self.phrase(in: blocks, from: lo, to: hi))
+            present(term: Self.phrase(in: blocks, from: lo, to: hi), at: lo)
         }
     }
 
@@ -682,8 +684,10 @@ struct WordReader: View {
     }
 
     /// Open the gloss for a term with the sentence it was met in as context
-    /// (E5) — never the whole article.
-    private func present(term: String, opensSentence: Bool = false) {
+    /// (E5) — never the whole article. `tokenId` is where the learner tapped or
+    /// started the sweep; a Key Vocabulary chip has none and takes the first
+    /// sentence the word appears in.
+    private func present(term: String, opensSentence: Bool = false, at tokenId: Int? = nil) {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
         // One word goes through the SAME headword rule as a Key Vocabulary chip,
         // so a body tap on "d'experts" and the "experts" chip save one card
@@ -696,24 +700,25 @@ struct WordReader: View {
         // and neither is a run of text longer than a phrase (the drag is clamped,
         // this is the backstop).
         guard Self.isLookupable(clean), CaptureBuilder.isAcceptableHeadword(clean) else { return }
-        target = GlossTarget(term: clean, context: SentenceExtractor.sentence(containing: clean, in: text))
+        // The sentence of THIS copy of the word, not the first sentence that has
+        // one: count the copies before the tapped token and take that match
+        // (read-10-7).
+        let context: String
+        if let tokenId {
+            let before = SentenceExtractor.occurrences(of: clean, in: Self.bodyText(in: blocks, before: tokenId))
+            context = SentenceExtractor.sentence(containing: clean, in: text, occurrence: before)
+        } else {
+            context = SentenceExtractor.sentence(containing: clean, in: text)
+        }
+        target = GlossTarget(term: clean, context: context)
     }
 
     private func endSelection() {
-        clearTask?.cancel()
         withAnimation(Theme.motion(.easeOut(duration: 0.2), reduceMotion: reduceMotion)) {
             selectionMode = false
             anchorId = nil
             focusId = nil
             anchorSpan = nil
-        }
-    }
-
-    private func scheduleAutoClear() {
-        clearTask?.cancel()
-        clearTask = Task {
-            try? await Task.sleep(for: .seconds(4))
-            if !Task.isCancelled { endSelection() }
         }
     }
 
@@ -761,6 +766,19 @@ struct WordReader: View {
             blockId += 1
         }
         return blocks
+    }
+
+    /// The body's words before token `id`, one line per block — the same words, in
+    /// the same lines, that `SentenceExtractor` reads in the article text, so the
+    /// matches counted here index its sentences (read-10-7).
+    fileprivate static func bodyText(in blocks: [ContentBlock], before id: Int) -> String {
+        var lines: [String] = []
+        for block in blocks {
+            let words = block.tokens.filter { $0.id < id }.map(\.text)
+            guard !words.isEmpty else { break }
+            lines.append(words.joined(separator: " "))
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Join the raw token texts in a contiguous id range into a phrase.
@@ -986,7 +1004,7 @@ struct GlossSheet: View {
         SaveToDeckButton(draft: draft, accent: Theme.primary, alreadySaved: alreadySaved, isBusy: lookup == .loading) { outcome in
             if case .saved = outcome {
                 onSave()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.glossSavedDismissDelaySeconds) { dismiss() }
             }
         }
         .padding(.horizontal, Space.xl)

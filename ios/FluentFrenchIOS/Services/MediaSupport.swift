@@ -282,6 +282,42 @@ nonisolated enum TranscriptLanguage: Equatable, Sendable {
     case english
 }
 
+/// The language a caption transport says it actually returned, checked against
+/// the language that was asked for. Both transports fall back to another
+/// language when the requested one is missing (the backend retries with the
+/// first available language; the provider returns its first available track),
+/// so a French request for a video with only English captions comes back with
+/// English lines. Those must never be tagged the video's own French
+/// (talkmedia-10-1): a line is accepted for a stage only when its reported
+/// language is the one the stage asked for. An unreported language is
+/// unverified, and is refused.
+nonisolated enum CaptionLanguage {
+    /// Whether a reported language code ("fr", "fr-CA", "en-US") is `requested`.
+    static func matches(_ reported: String?, requested: String) -> Bool {
+        guard let reported = primary(reported), let wanted = primary(requested) else { return false }
+        return reported == wanted
+    }
+
+    /// The language named in the backend's `source` field ("supadata:fr",
+    /// "supadata_translate:fr-FR"); nil for "none", "supadata:empty" or a
+    /// missing field.
+    static func fromBackendSource(_ source: String?) -> String? {
+        guard let source, let colon = source.lastIndex(of: ":") else { return nil }
+        let code = String(source[source.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+        guard let primary = primary(code), primary.count >= 2, primary.count <= 3,
+              primary.allSatisfy({ $0.isLetter }) else { return nil }
+        return code
+    }
+
+    /// The primary subtag, lowercased: "fr-CA" → "fr", "EN_us" → "en".
+    private static func primary(_ code: String?) -> String? {
+        guard let code else { return nil }
+        let head = code.trimmingCharacters(in: .whitespaces).lowercased()
+            .split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? ""
+        return head.isEmpty ? nil : head
+    }
+}
+
 /// What a transcript fetch resolved to. `.noCaptions` is a real answer (the
 /// service worked, the video has nothing), distinct from a failure. Lines come
 /// back tagged with their language: `.english` means the captions still need

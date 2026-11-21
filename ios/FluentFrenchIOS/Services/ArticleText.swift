@@ -43,24 +43,33 @@ nonisolated enum ArticleText {
     /// cut no word, and only the ellipsis is normalised.
     private static func droppingCutWord(_ text: String) -> String {
         var core = text
-        while let last = core.last, ellipsis.contains(last) { core.removeLast() }
-        guard core.count < text.count || !core.isEmpty else { return text }
+        if core.hasSuffix("…") {
+            core.removeLast()
+        } else if core.hasSuffix("...") {
+            core.removeLast(3)
+        }
+        // A cut after whitespace or a closing mark went through no word.
         if let last = core.last, last.isWhitespace || sentenceEnds.contains(last) {
-            core = core.trimmingCharacters(in: .whitespacesAndNewlines)
-            return core.isEmpty ? "" : core + " …"
+            return withEllipsis(core.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         guard let space = core.lastIndex(where: { $0.isWhitespace }) else { return "" }
-        core = String(core[..<space]).trimmingCharacters(in: danglingPunctuation)
-        guard !core.isEmpty else { return "" }
-        if let last = core.last, sentenceEnds.contains(last) { return core + " …" }
-        return core + "…"
+        var kept = String(core[..<space])
+        while let last = kept.unicodeScalars.last, danglingPunctuation.contains(last) {
+            kept.unicodeScalars.removeLast()
+        }
+        return withEllipsis(kept)
     }
 
-    /// The characters a service writes for "the text goes on".
-    private static let ellipsis: Set<Character> = ["…", "."]
-    /// Characters that close a sentence, so the word before them is whole.
+    /// The excerpt with the "…" that says it goes on: straight after a word, or
+    /// after a space when the excerpt ends on a closing mark ("prêt. …").
+    private static func withEllipsis(_ core: String) -> String {
+        guard let last = core.last else { return "" }
+        return sentenceEnds.contains(last) ? core + " …" : core + "…"
+    }
+
+    /// Characters that close a sentence or a quotation, so the word before them is whole.
     private static let sentenceEnds: Set<Character> = [".", "!", "?", "»", "\"", ")"]
-    /// What a dropped word can leave hanging at the end of the excerpt.
+    /// What a dropped word can leave hanging at the END of the excerpt (only the end is trimmed).
     private static let danglingPunctuation = CharacterSet(charactersIn: " ,;:-–—«(\n\t'’")
 
     /// The summary to show above the body, or nil when showing it would just

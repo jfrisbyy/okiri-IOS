@@ -136,11 +136,17 @@ nonisolated enum TranscriptService {
                    !retry.segments.isEmpty {
                     return retry.segments
                 }
+                // The provider answered: there is no French to find on the
+                // backup path, which asks the same provider and then falls back
+                // to ANY available language (talkmedia-10-1).
+                return []
             case .failure(let f):
                 _ = tracker.note(.failure(f))
             }
         }
-        // Backend backup (it does its own availableLangs fallback internally).
+        // Backend backup, used only when the provider could not answer. It does
+        // its own availableLangs fallback internally, so its lines count only
+        // when its `source` names French (talkmedia-10-1).
         return tracker.note(await backendTranscript(videoId: videoId, lang: "fr"))
     }
 
@@ -173,7 +179,11 @@ nonisolated enum TranscriptService {
         case .failure(let f): return .failure(f)
         case .success(let data):
             guard let decoded = try? JSONDecoder().decode(ProviderResponse.self, from: data) else { return .failure(.serviceError) }
-            let segments = mapProvider(decoded.content ?? [], videoId: videoId)
+            // The provider returns its first available track when the requested
+            // language is missing: lines in another language are no lines for
+            // this request (talkmedia-10-1).
+            let segments = CaptionLanguage.matches(decoded.lang, requested: lang)
+                ? mapProvider(decoded.content ?? [], videoId: videoId) : []
             return .success((segments, decoded.availableLangs ?? []))
         }
     }
@@ -227,7 +237,7 @@ nonisolated enum TranscriptService {
         guard let encoded = videoId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(base)/youtube-transcript?videoId=\(encoded)&lang=\(lang)")
         else { return .failure(.serviceError) }
-        return await decodeBackend(url)
+        return await decodeBackend(url, requiredLanguage: lang)
     }
 
     private static func backendTranslate(videoId: String) async -> Result<[TranscriptSegment], MediaServiceFailure> {
@@ -235,10 +245,13 @@ nonisolated enum TranscriptService {
         guard let encoded = videoId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(base)/youtube-transcript-translate?videoId=\(encoded)&lang=fr")
         else { return .failure(.serviceError) }
-        return await decodeBackend(url)
+        return await decodeBackend(url, requiredLanguage: nil)
     }
 
-    private static func decodeBackend(_ url: URL) async -> Result<[TranscriptSegment], MediaServiceFailure> {
+    /// `requiredLanguage`: when set, the reply's lines count only if its
+    /// `source` names that language — the transcript endpoint falls back to the
+    /// first available language on its own (talkmedia-10-1).
+    private static func decodeBackend(_ url: URL, requiredLanguage: String?) async -> Result<[TranscriptSegment], MediaServiceFailure> {
         var request = URLRequest(url: url)
         request.timeoutInterval = Tuning.transcriptRequestTimeout
         do {
@@ -247,6 +260,10 @@ nonisolated enum TranscriptService {
             if http.statusCode == 404 { return .success([]) }
             if let failure = MediaServiceFailure.classify(statusCode: http.statusCode) { return .failure(failure) }
             let decoded = try JSONDecoder().decode(BackendTranscriptResponse.self, from: data)
+            if let requiredLanguage,
+               !CaptionLanguage.matches(CaptionLanguage.fromBackendSource(decoded.source), requested: requiredLanguage) {
+                return .success([])
+            }
             return .success(decoded.segments.compactMap { seg in
                 let text = TranscriptText.cleanHTML(seg.text)
                 guard !text.isEmpty else { return nil }

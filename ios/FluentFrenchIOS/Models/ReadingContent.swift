@@ -33,13 +33,16 @@ nonisolated enum ReadDifficulty: String, CaseIterable, Identifiable {
 }
 
 nonisolated enum ReadRegion: String, CaseIterable, Identifiable {
-    case france, senegal, morocco, quebec, haiti, martinique, ivoryCoast, belgium, switzerland
+    // `tunisia` files "Histoire de Carthage" where Carthage stood, not under
+    // France and the Europe filter (read-10-9).
+    case france, senegal, morocco, tunisia, quebec, haiti, martinique, ivoryCoast, belgium, switzerland
     var id: String { rawValue }
     var label: String {
         switch self {
         case .france: return "France"
         case .senegal: return "Senegal"
         case .morocco: return "Morocco"
+        case .tunisia: return "Tunisia"
         case .quebec: return "Quebec"
         case .haiti: return "Haiti"
         case .martinique: return "Martinique"
@@ -53,6 +56,7 @@ nonisolated enum ReadRegion: String, CaseIterable, Identifiable {
         case .france: return "🇫🇷"
         case .senegal: return "🇸🇳"
         case .morocco: return "🇲🇦"
+        case .tunisia: return "🇹🇳"
         case .quebec: return "🇨🇦"
         case .haiti: return "🇭🇹"
         case .martinique, .ivoryCoast: return "🌍"
@@ -63,7 +67,7 @@ nonisolated enum ReadRegion: String, CaseIterable, Identifiable {
     var group: ReadRegionGroup {
         switch self {
         case .france, .belgium, .switzerland: return .europe
-        case .senegal, .morocco, .ivoryCoast: return .africa
+        case .senegal, .morocco, .tunisia, .ivoryCoast: return .africa
         case .haiti, .martinique: return .caribbean
         case .quebec: return .canada
         }
@@ -254,7 +258,7 @@ nonisolated enum ReadingLibrary {
                      body: "— Allô, bonjour, je voudrais parler à Marie. — C'est de la part de qui ? — De la part de Paul. — Un instant, je vous la passe. — Merci beaucoup. — Je vous en prie, bonne journée !"),
         ReadingPiece(id: "r6", title: "L'hiver à Québec", subtitle: "A Canadian winter", category: .culture, region: .quebec, difficulty: .medium, minutes: 6, level: .B1,
                      body: "À Québec, l'hiver n'est pas une saison qu'on subit : c'est une fête. Les gens patinent sur les rivières gelées, dégustent de la tire d'érable sur la neige, et le Carnaval illumine la ville. Malgré le froid, l'ambiance est toujours chaleureuse."),
-        ReadingPiece(id: "r8", title: "Histoire de Carthage", subtitle: "Ancient history", category: .history, region: .france, difficulty: .university, minutes: 8, level: .C1,
+        ReadingPiece(id: "r8", title: "Histoire de Carthage", subtitle: "Ancient history", category: .history, region: .tunisia, difficulty: .university, minutes: 8, level: .C1,
                      body: "Fondée au IXe siècle avant notre ère, Carthage devint l'une des plus grandes puissances de la Méditerranée. Sa rivalité avec Rome aboutit aux guerres puniques, dont l'issue détermina le destin du monde antique pour des siècles."),
         ReadingPiece(id: "r9", title: "Une journée à Bruxelles", subtitle: "City guide", category: .travel, region: .belgium, difficulty: .easy, minutes: 4, level: .A2,
                      body: "À Bruxelles, on commence par une gaufre chaude sur la Grand-Place. Ensuite, on visite les musées, on admire l'Atomium, et on termine la journée avec des frites et du chocolat. La ville mélange les langues et les cultures avec élégance."),

@@ -485,6 +485,35 @@ nonisolated extension Tuning {
     /// falling due, which is pure clock — so this bounds how stale the Foundation
     /// card's target name can get while Home re-renders.
     static let smartTargetCacheSeconds: Double = 60
+
+    // firstrun-10-8: the daily plan's tilt and the readiness gate's thresholds used to
+    // be literals in DailyPlanConfig, DailyPlanEngine.categoryPrior and ReadinessConfig.
+    /// Top-ranked concepts whose modality affinities tilt the day's plan.
+    static let planTopConceptCount: Int = 6
+    /// Ceiling on how far a concept's observed gap sources can tilt it away from its category prior.
+    static let planObservedBlendMax: Double = 0.7
+    /// Gaps a concept needs before its observed gap sources dominate its category prior.
+    static let planObservedSmoothing: Double = 3.0
+    /// Share of the day spread evenly over every chosen activity, so none gets nothing (non-punitive).
+    static let planUniformFloor: Double = 0.2
+    /// Category prior: where vocabulary is best practised (share per activity, sums to 1).
+    static let planPriorVocabulary: [LearningModality: Double] = [.reading: 0.7, .listening: 0.15, .watching: 0.15]
+    /// Category prior: where grammar is best practised (share per activity, sums to 1).
+    static let planPriorGrammar: [LearningModality: Double] = [.reading: 0.7, .watching: 0.2, .speaking: 0.1]
+    /// Category prior: where pronunciation is best practised (share per activity, sums to 1).
+    static let planPriorPronunciation: [LearningModality: Double] = [.speaking: 0.5, .listening: 0.5]
+    /// Category prior: where phrasing is best practised (share per activity, sums to 1).
+    static let planPriorPhrasing: [LearningModality: Double] = [.reading: 0.4, .watching: 0.4, .speaking: 0.2]
+    /// Category prior: where register is best practised (share per activity, sums to 1).
+    static let planPriorRegister: [LearningModality: Double] = [.reading: 0.4, .watching: 0.4, .speaking: 0.2]
+    /// Verified base-concept coverage at which Reading unlocks for authentic content.
+    static let readingUnlockCoverage: Double = 0.5
+    /// Verified base-concept coverage at which Reading enters the scaffolded bridge.
+    static let readingBridgeCoverage: Double = 0.3
+    /// Verified base-concept coverage at which the higher activities open outright (a strong knower skips ahead).
+    static let higherUnlockCoverage: Double = 0.85
+    /// Demonstrated Reading minutes that open the higher activities once Reading is unlocked.
+    static let higherDemonstratedMinutes: Int = 15
 }
 
 nonisolated extension Tuning {
@@ -510,6 +539,12 @@ nonisolated extension Tuning {
     /// however strong, could ever place a learner above the highest band the content
     /// covers. Two clean answers on the only items that exist is the bar.
     static let placementThinBandMinItems: Int = 2
+    /// Minutes a day the "light" time budget lets the plan prescribe (firstrun-10-8).
+    static let timeBudgetLightMinutes: Int = 10
+    /// Minutes a day the "standard" time budget lets the plan prescribe (firstrun-10-8).
+    static let timeBudgetStandardMinutes: Int = 20
+    /// Minutes a day the "intense" time budget lets the plan prescribe (firstrun-10-8).
+    static let timeBudgetIntenseMinutes: Int = 35
 }
 
 nonisolated extension Tuning {

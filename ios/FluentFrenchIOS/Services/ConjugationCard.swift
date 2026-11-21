@@ -61,6 +61,60 @@ nonisolated enum ConjugationCard {
         return old.isEmpty ? new : "\(old) \(new)"
     }
 
+    /// The answers a card saved from one table row accepts: each pronoun phrase
+    /// that shares the form ("j'étais", "tu étais"), and — for a form written in
+    /// agreement notation ("suis allé(e)", "êtes allé(e)(s)") — every spelled-out
+    /// agreement, bare and with its pronoun (read-10-2). The grader strips "(e)"
+    /// as a tag, so without them "suis allée", which the passé-composé-with-être
+    /// skill this card is filed under teaches, was graded a miss on that skill.
+    static func acceptedAnswers(form: String, phrases: [String]) -> [String] {
+        var answers: [String] = []
+        for phrase in phrases where !answers.contains(phrase) { answers.append(phrase) }
+        let agreed = agreementVariants(of: form)
+        guard agreed.count > 1 else { return answers }
+        for variant in phrases.flatMap({ agreementVariants(of: $0) }) + agreed where !answers.contains(variant) {
+            answers.append(variant)
+        }
+        return answers
+    }
+
+    /// Every spelled-out form of a table entry written in agreement notation
+    /// (read-10-2): "allé(e)" → allé, allée; "allé(e)s" → allés, allées;
+    /// "allé(e)(s)" → allé, allée, allés, allées. A "(…)" group counts as an
+    /// optional ending only when it is glued to the word before it and holds
+    /// letters alone; a spaced tag ("vais (informal)") is not expanded. A form with
+    /// no such group comes back unchanged, as the only element.
+    ///
+    /// The grader strips every "(…)" as a tag, so a card saved from the row
+    /// "je suis allé(e)" accepted only "suis allé": the feminine "suis allée" —
+    /// which the passé-composé-with-être skill itself teaches — was booked as a
+    /// miss on that skill.
+    static func agreementVariants(of form: String) -> [String] {
+        var variants = [""]
+        var rest = Substring(form)
+        // "(s)" straight after "(e)" is glued to the same word.
+        var followsEnding = false
+        while let open = rest.firstIndex(of: "(") {
+            guard let close = rest[open...].firstIndex(of: ")") else { break }
+            let ending = rest[rest.index(after: open)..<close]
+            let glued = open > rest.startIndex ? rest[rest.index(before: open)].isLetter : followsEnding
+            let head = String(rest[..<open])
+            if glued, !ending.isEmpty, ending.allSatisfy({ $0.isLetter }) {
+                variants = variants.flatMap { [$0 + head, $0 + head + ending] }
+                followsEnding = true
+            } else {
+                followsEnding = false
+                // Not an ending: kept verbatim, text and group alike.
+                let verbatim = String(rest[...close])
+                variants = variants.map { $0 + verbatim }
+            }
+            rest = rest[rest.index(after: close)...]
+        }
+        var out: [String] = []
+        for v in variants.map({ $0 + rest }) where !out.contains(v) { out.append(v) }
+        return out
+    }
+
     /// Accent- and case-insensitive containment, so "Imparfait of parler" is not
     /// added twice because one copy was capitalised differently.
     private static func contains(_ haystack: String, _ needle: String) -> Bool {

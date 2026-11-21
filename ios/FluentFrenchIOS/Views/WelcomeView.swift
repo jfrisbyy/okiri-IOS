@@ -179,17 +179,26 @@ struct WelcomeView: View {
 
     private func handleApple(_ result: Result<ASAuthorization, Error>) {
         switch result {
-        case .failure:
-            // Cancellation or system error — silently allow retry.
-            return
+        case .failure(let error):
+            // Only the learner's own cancel is silent (firstrun-10-7). Any other
+            // failure on the app's only door used to do nothing visible either, so
+            // the tap looked dead; it now reaches the same alert AuthManager uses.
+            if (error as? ASAuthorizationError)?.code == .canceled { return }
+            showAppleFailure()
         case .success(let authorization):
             guard
                 let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                 let tokenData = credential.identityToken,
                 let idToken = String(data: tokenData, encoding: .utf8)
-            else { return }
+            else { showAppleFailure(); return }
             let fullName = credential.fullName?.formatted()
             Task { await auth.signInWithApple(idToken: idToken, fullName: fullName) }
         }
+    }
+
+    /// The "Sign-in failed" alert for an Apple failure that never reached AuthManager.
+    private func showAppleFailure() {
+        auth.errorMessage = "Sign in with Apple didn't complete. Try again, or continue with Google."
+        auth.showError = true
     }
 }

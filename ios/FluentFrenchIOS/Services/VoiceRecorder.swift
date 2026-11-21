@@ -135,7 +135,11 @@ final class VoiceRecorder {
         ) { [weak self] note in
             guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-            Task { @MainActor in self?.noteInterrupted() }
+            // The observer block is @Sendable: bind the weak reference to a
+            // constant before the hop, never read the captured `self` var from
+            // inside the Task (compile-10-1).
+            let recorder = self
+            Task { @MainActor in recorder?.noteInterrupted() }
         }
     }
 

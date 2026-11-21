@@ -380,6 +380,9 @@ nonisolated enum TensesData {
         ]),
         .init(infinitive: "aller", meaning: "to go", group: "irregular", tenses: [
             "Present": .init(je: "vais", tu: "vas", il: "va", nous: "allons", vous: "allez", ils: "vont"),
+            // HUMAN REVIEW (read-10-2): the il/elle/on row prints "est allé" and the
+            // ils/elles row "sont allés", the masculine forms only, although the rows
+            // stand for elle and elles too. Left as authored: the fix is French content.
             "Passé Composé": .init(je: "suis allé(e)", tu: "es allé(e)", il: "est allé", nous: "sommes allé(e)s", vous: "êtes allé(e)(s)", ils: "sont allés"),
             "Imparfait": .init(je: "allais", tu: "allais", il: "allait", nous: "allions", vous: "alliez", ils: "allaient"),
             "Futur Simple": .init(je: "irai", tu: "iras", il: "ira", nous: "irons", vous: "irez", ils: "iront"),

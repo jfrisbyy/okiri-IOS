@@ -97,7 +97,10 @@ struct ReadCaptureTests {
             FoundationSkillContent(id: "food-drink-vocab", category: "vocabulary",
                                    items: [FoundationItemContent(fr: "le pain", en: "bread", note: "", ex: "Je mange du pain.", exEn: "I eat bread.", diff: "okay")]),
         ]))
-        #expect(lexicon["pain"] == "food-drink-vocab", "article-stripped form is indexed too")
+        // The article-stripped form is indexed alongside the item's meaning, not on
+        // its own: a bare "pain" is this skill's only when it means bread (read-10-1).
+        #expect(lexicon[HeuristicTagger.meaningKey("pain", side: "bread")] == "food-drink-vocab")
+        #expect(lexicon["le pain"] == "food-drink-vocab", "the exact item names its skill")
         let result = HeuristicTagger.tag(gap: captured("pain", english: "bread"), concepts: taxonomy, lexicon: lexicon)
         guard case .existing(let id, let confidence) = result else { Issue.record("expected a tag, got \(result)"); return }
         #expect(id == "food-drink-vocab")
@@ -1266,5 +1269,220 @@ struct ReadCaptureTests {
         probe.isProbe = true
         s.gaps.append(probe)
         #expect(!s.savedHeadwordKeys().contains(AppStore.captureKey("probe-fr")))
+    }
+
+    // MARK: - read-10-1 A bare noun is not filed on the article skill it was stripped from
+
+    /// The shipped FoundationContent.json, decoded, from the source tree.
+    private func shippedContent() throws -> FoundationContentFile {
+        let here = URL(fileURLWithPath: #filePath)
+        let candidates = [
+            here.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("FluentFrenchIOS/Resources/FoundationContent.json"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/FoundationContent.json"),
+        ]
+        let data = try #require(candidates.lazy.compactMap { try? Data(contentsOf: $0) }.first,
+                                "FoundationContent.json must be reachable from the test host")
+        return try JSONDecoder().decode(FoundationContentFile.self, from: data)
+    }
+
+    private func item(_ fr: String, _ en: String) -> FoundationItemContent {
+        FoundationItemContent(fr: fr, en: en, note: "", ex: "\(fr).", exEn: "\(en).", diff: "okay")
+    }
+
+    @Test func aBareNounIsNotFiledOnTheGrammarSkillWhoseItemCarriesItsArticle() {
+        // Grammar first, as in the shipped file: it used to claim the bare key.
+        let lexicon = HeuristicTagger.lexicon(from: FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: "indefinite-articles", category: "grammar", items: [item("un café", "a coffee")]),
+            FoundationSkillContent(id: "spoken-fillers", category: "phrasing", items: [item("du coup", "so / as a result")]),
+            FoundationSkillContent(id: "food-drink-vocab", category: "vocabulary", items: [item("le café", "coffee")]),
+        ]))
+        #expect(HeuristicTagger.lexiconConcept(for: captured("café", english: "coffee"), lexicon: lexicon) == "food-drink-vocab",
+                "the vocabulary skill whose item means the same, not Indefinite articles")
+        #expect(HeuristicTagger.lexiconConcept(for: captured("coup", english: "blow"), lexicon: lexicon) == nil,
+                "'coup' is not the filler 'du coup'")
+        // The exact item still names its own skill, whatever the skill.
+        #expect(HeuristicTagger.lexiconConcept(for: captured("un café", english: "a coffee"), lexicon: lexicon) == "indefinite-articles")
+        #expect(HeuristicTagger.lexiconConcept(for: captured("du coup", english: "so"), lexicon: lexicon) == "spoken-fillers")
+        // A grammar item alone never speaks for its bare noun.
+        let grammarOnly = HeuristicTagger.lexicon(from: FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: "indefinite-articles", category: "grammar", items: [item("des amis", "some friends")]),
+        ]))
+        #expect(HeuristicTagger.lexiconConcept(for: captured("amis", english: "friends"), lexicon: grammarOnly) == nil)
+    }
+
+    @Test func aStrippedLexiconHitNeedsTheSameMeaning() {
+        let lexicon = HeuristicTagger.lexicon(from: FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: "days-months-seasons", category: "vocabulary", items: [item("l'été", "summer")]),
+        ]))
+        #expect(HeuristicTagger.lexiconConcept(for: captured("été", english: "summer"), lexicon: lexicon) == "days-months-seasons")
+        #expect(HeuristicTagger.lexiconConcept(for: captured("été", english: "the summer"), lexicon: lexicon) == "days-months-seasons",
+                "an English article is not a different meaning")
+        #expect(HeuristicTagger.lexiconConcept(for: captured("été", english: "been"), lexicon: lexicon) == nil,
+                "the past participle is a homograph, not the season")
+        // Nor does it reach the AI path's shortcut at full confidence.
+        let been = HeuristicTagger.tag(gap: captured("été", english: "been", pos: "verb"), concepts: taxonomy, lexicon: lexicon)
+        #expect(been != .existing(id: "days-months-seasons", confidence: Tuning.tagLexiconWeight))
+    }
+
+    @Test func shippedContentFilesReaderNounsOnTheirThemeNotOnArticleSkills() throws {
+        let lexicon = HeuristicTagger.lexicon(from: try shippedContent())
+        func hit(_ fr: String, _ en: String) -> String? {
+            HeuristicTagger.lexiconConcept(for: captured(fr, english: en), lexicon: lexicon)
+        }
+        #expect(hit("café", "coffee") == "food-drink-vocab")
+        #expect(hit("lundi", "Monday") == "days-months-seasons")
+        #expect(hit("été", "summer") == "days-months-seasons")
+        for (fr, en, wrong) in [("café", "coffee", "indefinite-articles"), ("amis", "friends", "indefinite-articles"),
+                                ("lundi", "Monday", "definite-articles"), ("français", "French", "definite-articles"),
+                                ("musique", "music", "partitive-articles"), ("coup", "blow", "spoken-fillers"),
+                                ("été", "been", "days-months-seasons"), ("matin", "morning", "nasal-vowels")] {
+            #expect(hit(fr, en) != wrong, "\(fr) must not be filed on \(wrong)")
+        }
+    }
+
+    // MARK: - read-10-2 A saved être passé-composé row accepts every agreement
+
+    @Test func agreementNotationExpandsToEverySpelledOutForm() {
+        #expect(ConjugationCard.agreementVariants(of: "suis allé(e)") == ["suis allé", "suis allée"])
+        #expect(ConjugationCard.agreementVariants(of: "sommes allé(e)s") == ["sommes allés", "sommes allées"])
+        #expect(Set(ConjugationCard.agreementVariants(of: "êtes allé(e)(s)"))
+                == ["êtes allé", "êtes allée", "êtes allés", "êtes allées"])
+        #expect(ConjugationCard.agreementVariants(of: "étais") == ["étais"])
+        #expect(ConjugationCard.agreementVariants(of: "vais (informal)") == ["vais (informal)"],
+                "a spaced tag is not an ending")
+        // A form with no notation gains nothing.
+        #expect(ConjugationCard.acceptedAnswers(form: "étais", phrases: ["j'étais", "tu étais"]) == ["j'étais", "tu étais"])
+    }
+
+    @Test func aFeminineOrPluralAgreementIsGradedCorrectOnASavedAllerRow() throws {
+        let s = quietStore()
+        let aller = try #require(TensesData.verbs.first { $0.infinitive == "aller" })
+        let pc = try #require(TensesData.tenses.first { $0.name == "Passé Composé" })
+        let je = try #require(aller.tenses[pc.name]?.je)
+        #expect(je == "suis allé(e)")
+        var draft = conjugationDraft(je, pronouns: ["je"], verb: aller, tense: pc, example: "je \(je)")
+        draft.acceptedAnswers = ConjugationCard.acceptedAnswers(form: je, phrases: ["je \(je)"])
+        draft.conceptId = "passe-compose-etre"
+        guard case .saved(let saved) = s.capture(draft, now: now) else { Issue.record("expected a save"); return }
+
+        for typed in ["suis allée", "je suis allée", "suis allé", "je suis allé"] {
+            #expect(AnswerGrader.grade(typed: typed, against: saved, expected: saved.frenchWord, kind: .translation) == .correct,
+                    "\(typed) is a correct translation")
+        }
+        var card = saved
+        card.reviewCount = 1
+        card.consecutiveCorrect = 1
+        var config = LessonSchedulerConfig.tuning
+        config.seed = 3
+        let scheduler = LessonScheduler(config: config)
+        var rng = LessonRandom(seed: 3)
+        let q = try #require(scheduler.question(for: card, kind: .fillBlank, pool: [card], optionCount: 4, rng: &rng))
+        #expect(q.prompt == "je _____")
+        #expect(AnswerGrader.grade(typed: "suis allée", against: card, expected: q.correctAnswer, kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "suis allé", against: card, expected: q.correctAnswer, kind: .fillBlank) == .correct)
+        #expect(AnswerGrader.grade(typed: "suis allées", against: card, expected: q.correctAnswer, kind: .fillBlank) == .incorrect,
+                "je is one person: the plural is still wrong")
+
+        // vous: singular or plural, masculine or feminine.
+        let vous = try #require(aller.tenses[pc.name]?.vous)
+        var vousDraft = conjugationDraft(vous, pronouns: ["vous"], verb: aller, tense: pc, example: "vous \(vous)")
+        vousDraft.acceptedAnswers = ConjugationCard.acceptedAnswers(form: vous, phrases: ["vous \(vous)"])
+        guard case .saved(let vousCard) = s.capture(vousDraft, now: now) else { Issue.record("expected a save"); return }
+        for typed in ["êtes allés", "vous êtes allés", "êtes allées", "êtes allée", "êtes allé"] {
+            #expect(AnswerGrader.grade(typed: typed, against: vousCard, expected: vousCard.frenchWord, kind: .translation) == .correct,
+                    "\(typed) is a correct translation")
+        }
+    }
+
+    // MARK: - read-10-3 An indicative "que"/"qu'il" clause is not subjunctive evidence
+
+    @Test func anIndicativeQueClauseIsNotTaggedSubjunctive() {
+        for phrase in ["je pense qu'il est", "il dit que je suis", "parce qu'il pleut"] {
+            for category in [GapCategory.phrasing, .grammar] {
+                let result = HeuristicTagger.tag(gap: captured(phrase, category: category, level: .B1), concepts: taxonomy)
+                if case .existing(let id, _) = result { #expect(id != "subjunctive-intro", "\(phrase) is indicative") }
+            }
+        }
+        guard case .existing(let because, _) = HeuristicTagger.tag(gap: captured("parce qu'il pleut", english: "because it is raining",
+                                                                                   category: .phrasing, level: .A2),
+                                                                    concepts: taxonomy) else {
+            Issue.record("the elided connector should still be a connector"); return
+        }
+        #expect(because == "everyday-connectors")
+        guard case .existing(let faut, _) = HeuristicTagger.tag(gap: captured("il faut que je parte", category: .grammar, level: .B1),
+                                                                concepts: taxonomy) else {
+            Issue.record("a true subjunctive marker still tags"); return
+        }
+        #expect(faut == "subjunctive-intro")
+    }
+
+    // MARK: - read-10-5 A word the deck holds with its article is already saved
+
+    @Test func aReaderWordIsSavedWhenTheDeckHoldsItWithItsArticle() {
+        let s = quietStore()
+        s.capture(CaptureDraft(frenchWord: "le matin", englishTranslation: "the morning",
+                               sourceType: .reading, sourceTab: "read"), now: now)
+        s.capture(CaptureDraft(frenchWord: "l’école", englishTranslation: "school",
+                               sourceType: .reading, sourceTab: "read"), now: now)
+        s.capture(CaptureDraft(frenchWord: "pain", englishTranslation: "bread",
+                               sourceType: .reading, sourceTab: "read"), now: now)
+        let keys = s.savedHeadwordKeys()
+        #expect(!keys.contains(AppStore.captureKey("matin")), "the deck really keys it with its article")
+        #expect(KeyVocabulary.isSaved("matin", in: keys))
+        #expect(KeyVocabulary.isSaved("Matin", in: keys))
+        #expect(KeyVocabulary.isSaved("école", in: keys))
+        #expect(KeyVocabulary.isSaved("le pain", in: keys), "a swept article phrase is the bare card")
+        #expect(!KeyVocabulary.isSaved("matins", in: keys))
+        #expect(!KeyVocabulary.isSaved("soir", in: keys))
+        #expect(!KeyVocabulary.isSaved("", in: keys))
+    }
+
+    // MARK: - read-10-7 The context is the sentence the word was tapped in
+
+    @Test func theContextIsTheSentenceOfTheTappedCopy() throws {
+        let r1 = try #require(ReadingLibrary.pieces.first { $0.id == "r1" })
+        let text = r1.body
+        // The reader counts the copies before the tapped one in the text before it.
+        let second = try #require(text.range(of: "J'ai commandé un "))
+        let before = String(text[..<second.upperBound])
+        let n = SentenceExtractor.occurrences(of: "café", in: before)
+        #expect(n == 1)
+        #expect(SentenceExtractor.sentence(containing: "café", in: text, occurrence: n).hasPrefix("J'ai commandé un café crème"))
+        #expect(SentenceExtractor.sentence(containing: "café", in: text, occurrence: 0).hasPrefix("Ce matin"))
+        // Two copies in one sentence, and an index past the last copy.
+        let doubled = "Un café, puis un autre café. Plus de café ce soir."
+        #expect(SentenceExtractor.sentence(containing: "café", in: doubled, occurrence: 1) == "Un café, puis un autre café.")
+        #expect(SentenceExtractor.sentence(containing: "café", in: doubled, occurrence: 2) == "Plus de café ce soir.")
+        #expect(SentenceExtractor.sentence(containing: "café", in: doubled, occurrence: 9) == "Un café, puis un autre café.",
+                "falls back to the first sentence")
+        #expect(SentenceExtractor.occurrences(of: "café", in: doubled) == 3)
+        #expect(SentenceExtractor.sentence(containing: "du coup", in: text, occurrence: 0).hasPrefix("Du coup"))
+    }
+
+    // MARK: - read-10-6 An app-written sample carries no publication time
+
+    @Test func sampleNewsHasNoPublicationTime() {
+        let samples = NewsService.curated(for: .all)
+        #expect(!samples.isEmpty)
+        #expect(samples.allSatisfy { $0.publishedAt == nil && $0.timeAgo == nil },
+                "a sample was never published, so no '4h ago'")
+        let undated = NewsAPIArticle(title: "Titre", description: "Résumé.", content: "Le texte.", url: "https://example.fr/a",
+                                     urlToImage: nil, publishedAt: nil, source: .init(name: "Exemple"))
+            .toArticle(category: .all)
+        #expect(undated?.publishedAt == nil && undated?.timeAgo == nil, "no readable date is not 'Just now'")
+        let dated = NewsAPIArticle(title: "Titre", description: "Résumé.", content: "Le texte.", url: "https://example.fr/b",
+                                   urlToImage: nil, publishedAt: "2026-01-01T10:00:00Z", source: .init(name: "Exemple"))
+            .toArticle(category: .all)
+        #expect(dated?.timeAgo != nil)
+    }
+
+    // MARK: - read-10-9 Carthage is filed under Africa
+
+    @Test func theCarthagePieceIsFiledWhereCarthageStood() throws {
+        let r8 = try #require(ReadingLibrary.pieces.first { $0.id == "r8" })
+        #expect(r8.region == .tunisia)
+        #expect(r8.region.group == .africa)
+        #expect(r8.region.label != "France")
     }
 }

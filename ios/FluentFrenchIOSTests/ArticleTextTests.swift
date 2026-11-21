@@ -18,8 +18,46 @@ struct ArticleTextTests {
     // MARK: - Body
 
     @Test func stripsTheTruncationMarkerFromTheBody() {
+        // Rewritten for read-10-4: this used to expect "… un plan…", keeping the word
+        // the cut went through. Whether "plan" is whole cannot be told from the text
+        // (the next one cut is "ferroviai…"), so the last word before the cut goes.
         let body = ArticleText.body(content: "Le gouvernement a annoncé un plan… [+2145 chars]", description: "Un plan.")
-        #expect(body == "Le gouvernement a annoncé un plan…")
+        #expect(body == "Le gouvernement a annoncé un…")
+        #expect(body?.contains("[+") == false)
+    }
+
+    // MARK: - read-10-4 The half-word at the service's cut never reaches the reader
+
+    @Test func dropsTheHalfWordTheServiceCutThrough() {
+        let rail = ArticleText.body(content: "Des retards sont prévus dans les infrastructures ferroviai… [+2100 chars]",
+                                    description: nil)
+        #expect(rail == "Des retards sont prévus dans les infrastructures…")
+        let urgent = ArticleText.body(content: "Le gouvernement prépare des mesures d'urgen… [+1800 chars]", description: nil)
+        #expect(urgent == "Le gouvernement prépare des mesures…", "the elided fragment goes with its article")
+        let comma = ArticleText.body(content: "Il a parlé du budget, de l'éduc… [+900 chars]", description: nil)
+        #expect(comma == "Il a parlé du budget, de…")
+        let dangling = ArticleText.body(content: "Il a parlé du budget, l'éduc… [+900 chars]", description: nil)
+        #expect(dangling == "Il a parlé du budget…", "no comma left hanging before the ellipsis")
+        // Neither Key Vocabulary nor a tap can reach the fragment any more.
+        let words = KeyVocabulary.words(in: rail ?? "")
+        #expect(!words.contains("ferroviai"))
+        #expect(words.contains("infrastructures"))
+    }
+
+    @Test func aCutBetweenSentencesKeepsEveryWord() {
+        #expect(ArticleText.body(content: "Le plan est prêt. … [+300 chars]", description: nil) == "Le plan est prêt. …")
+        #expect(ArticleText.body(content: "Le plan est prêt. [+300 chars]", description: nil) == "Le plan est prêt. …")
+        #expect(ArticleText.body(content: "« Nous avons un plan », a-t-il dit. … [+300 chars]", description: nil)
+                == "« Nous avons un plan », a-t-il dit. …", "an opening guillemet is never trimmed")
+    }
+
+    @Test func anExcerptThatIsOnlyAFragmentFallsBackToTheDescription() {
+        #expect(ArticleText.body(content: "ferroviai… [+2100 chars]", description: "Un plan.") == "Un plan.")
+    }
+
+    @Test func aBodyWithoutTheMarkerIsLeftWhole() {
+        #expect(ArticleText.body(content: "Le texte entier se termine ici", description: nil) == "Le texte entier se termine ici",
+                "only a body the service marked as cut loses its last word")
     }
 
     @Test func fallsBackToTheDescriptionWhenThereIsNoContent() {

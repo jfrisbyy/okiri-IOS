@@ -88,6 +88,41 @@ nonisolated enum KeyVocabulary {
         return lowercasingFirst(stripped)
     }
 
+    /// Whether the deck already holds this reader headword, with or without an
+    /// article (read-10-5). `savedKeys` is `AppStore.savedHeadwordKeys()`.
+    ///
+    /// The deck keys cards by headword with its article kept ("le matin", "le
+    /// café" — Foundation seeds every item that way), while the reader looks a
+    /// tapped word up bare. So "matin" in a story was offered as unsaved, saved as
+    /// a second card beside "le matin", and the two then sat in one lesson where
+    /// "the morning" was a second right answer graded wrong. A headword counts as
+    /// saved under its bare key, under each article it may carry in the deck, and
+    /// — for a swept "le matin" — without its own article.
+    static func isSaved(_ headword: String, in savedKeys: Set<String>) -> Bool {
+        deckKeys(for: headword).contains { savedKeys.contains($0) }
+    }
+
+    /// The `AppStore.captureKey` spellings a headword may be saved under (read-10-5).
+    static func deckKeys(for headword: String) -> [String] {
+        let key = AppStore.captureKey(headword)
+        guard !key.isEmpty else { return [] }
+        var bare = key
+        for article in deckArticles where key.hasPrefix(article) && key.count > article.count {
+            bare = String(key.dropFirst(article.count))
+            break
+        }
+        var keys = [key]
+        if bare != key { keys.append(bare) }
+        for article in deckArticles {
+            let prefixed = article + bare
+            if !keys.contains(prefixed) { keys.append(prefixed) }
+        }
+        return keys
+    }
+
+    /// The articles a deck headword may open with (read-10-5).
+    private static let deckArticles = ["le ", "la ", "les ", "l'", "un ", "une "]
+
     /// The words of a sentence as the learner reads them: original spelling and
     /// accents kept (a chip becomes a headword, so "découvert" must not fold to
     /// "decouvert"), edge punctuation dropped, elided articles split off.

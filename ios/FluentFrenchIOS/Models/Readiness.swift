@@ -24,17 +24,17 @@ nonisolated enum ModalityReadiness: String, Codable, Hashable {
 }
 
 /// Coverage thresholds for the readiness gate. NOT FINAL — these only reveal
-/// themselves once the loop runs on a real learner, so they live here, clearly
-/// labeled for live tuning, like the other engine configs.
+/// themselves once the loop runs on a real learner. The values live in
+/// `Tuning` (firstrun-10-8); the struct exists so tests can override them.
 nonisolated struct ReadinessConfig {
     /// Base-concept coverage at which Reading unlocks for authentic content.
-    var readingUnlock: Double = 0.5
+    var readingUnlock: Double = Tuning.readingUnlockCoverage
     /// Coverage at which Reading enters the scaffolded "bridge" (foundation) state.
-    var readingBridge: Double = 0.3
+    var readingBridge: Double = Tuning.readingBridgeCoverage
     /// Coverage at which higher modalities open outright (a strong knower skips ahead).
-    var higherUnlock: Double = 0.85
+    var higherUnlock: Double = Tuning.higherUnlockCoverage
     /// Demonstrated reading minutes that open higher modalities once Reading is unlocked.
-    var higherDemonstratedMinutes: Int = 15
+    var higherDemonstratedMinutes: Int = Tuning.higherDemonstratedMinutes
 
     static let tuning = ReadinessConfig()
 }

@@ -87,6 +87,8 @@ struct TensesView: View {
             if !answers.contains(candidate) { answers.append(candidate) }
         }
         if !answers.contains(phrase) { answers.insert(phrase, at: 0) }
+        // "suis allé(e)" also accepts "suis allée", bare and with "je" (read-10-2).
+        answers = ConjugationCard.acceptedAnswers(form: word, phrases: answers)
         let meaning = ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
                                               tense: tense.name)
         return CaptureDraft(

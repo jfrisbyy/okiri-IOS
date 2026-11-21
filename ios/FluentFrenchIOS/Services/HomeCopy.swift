@@ -195,6 +195,34 @@ nonisolated enum HomeCopy {
         return "\(count - practised) to learn · \(practised) to review"
     }
 
+    // MARK: Error-pattern detail (firstrun-10-4)
+    //
+    // The detail screen used to explain every pattern with a fixed sentence picked by
+    // category ("You confuse the meaning of this item with a similar word…") — a
+    // diagnosis nothing in the error record measures, shown even for one mistake and
+    // for word groups with no concept. Like the headline (`AppStore.errorPatterns`),
+    // it now states only what the data shows, plus the concept's AUTHORED common
+    // mistake when the group has a concept whose content carries one.
+
+    /// "3 mistakes on Definite articles so far — your answers are below." A word
+    /// group (`word:<french>`) quotes the word.
+    static func errorPatternSummary(patternId: String, label: String, count: Int) -> String {
+        let count = max(1, count)
+        let mistakes = count == 1 ? "1 mistake" : "\(count) mistakes"
+        let subject = patternId.hasPrefix("word:") ? "“\(label)”" : label
+        return "\(mistakes) on \(subject) so far — your answers are below."
+    }
+
+    /// The concept's authored `teaching.commonMistake`, or nil — always nil for a
+    /// word group, which has no concept to speak for.
+    static func errorPatternCommonMistake(patternId: String,
+                                          teaching: (String) -> FoundationTeachingContent?) -> String? {
+        guard !patternId.hasPrefix("word:"),
+              let text = teaching(patternId)?.commonMistake?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        return text
+    }
+
     /// The capture toast after an activity: "Saved 3 things you didn't know".
     static func captured(_ count: Int) -> String {
         "Saved \(count) thing\(count == 1 ? "" : "s") you didn't know"

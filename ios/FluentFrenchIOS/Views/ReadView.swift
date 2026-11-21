@@ -22,7 +22,7 @@ final class ReadModel {
     var isLoading = false
     var category: NewsCategory = .all
     var regionGroup: ReadRegionGroup = .all
-    var displayLimit = 8
+    var displayLimit = Tuning.newsFeedPageSize
     /// The level the feed is sorted around (the learner's level at load time).
     var sortLevel: CEFRLevel = .B1
 
@@ -44,15 +44,20 @@ final class ReadModel {
         return present.count > 1 ? [.all] + present : []
     }
 
-    /// Region-filtered, closest-to-level first, newest first within a level.
+    /// Region-filtered, closest-to-level first, newest first within a level. A
+    /// story with no publication date (every app-written sample) sorts by level
+    /// alone and keeps its place in the list (read-10-6).
     var filtered: [NewsArticle] {
         let base = regionGroup == .all ? articles : articles.filter { $0.region == regionGroup }
-        return base.sorted { a, b in
+        return base.enumerated().sorted { x, y in
+            let (a, b) = (x.element, y.element)
             let da = abs(ReadingShelf.rank(a.level) - ReadingShelf.rank(sortLevel))
             let db = abs(ReadingShelf.rank(b.level) - ReadingShelf.rank(sortLevel))
             if da != db { return da < db }
-            return a.publishedAt > b.publishedAt
-        }
+            if let pa = a.publishedAt, let pb = b.publishedAt, pa != pb { return pa > pb }
+            if (a.publishedAt == nil) != (b.publishedAt == nil) { return a.publishedAt != nil }
+            return x.offset < y.offset
+        }.map(\.element)
     }
     var displayed: [NewsArticle] { Array(filtered.prefix(displayLimit)) }
 
@@ -100,7 +105,7 @@ final class ReadModel {
     func load(level: CEFRLevel, reset: Bool = true) async {
         loadToken &+= 1
         let token = loadToken
-        if reset { displayLimit = 8 }
+        if reset { displayLimit = Tuning.newsFeedPageSize }
         sortLevel = level
         isLoading = true
         let fetched = await NewsService.fetch(category: category)
@@ -383,7 +388,7 @@ struct ReadView: View {
                         if model.filtered.count > model.displayLimit {
                             Button {
                                 Haptics.tap()
-                                model.displayLimit += 8
+                                model.displayLimit += Tuning.newsFeedPageSize
                             } label: {
                                 Label("Load more", systemImage: "arrow.down.circle")
                                     .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
@@ -581,8 +586,11 @@ struct ReadView: View {
                     }
                     HStack(spacing: 6) {
                         Text(article.source).font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.9))
-                        Circle().fill(.white.opacity(0.5)).frame(width: 3, height: 3)
-                        Text(article.timeAgo).font(.caption).foregroundStyle(.white.opacity(0.75))
+                        // A sample was never published: no time is printed for it (read-10-6).
+                        if let timeAgo = article.timeAgo {
+                            Circle().fill(.white.opacity(0.5)).frame(width: 3, height: 3)
+                            Text(timeAgo).font(.caption).foregroundStyle(.white.opacity(0.75))
+                        }
                     }
                 }
                 .padding(14)

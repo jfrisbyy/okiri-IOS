@@ -18,15 +18,17 @@ import Foundation
 
 // MARK: - Tuning (NOT FINAL — tune live during testing)
 
+/// The plan's tilt knobs. The values live in `Tuning` (firstrun-10-8); the struct
+/// exists so tests can override them.
 nonisolated struct DailyPlanConfig {
     /// How many top priority concepts feed the plan's tilt.
-    var topConceptCount: Int = 6
+    var topConceptCount: Int = Tuning.planTopConceptCount
     /// Ceiling on how far observed gap-source data can tilt away from the prior.
-    var observedBlendMax: Double = 0.7
+    var observedBlendMax: Double = Tuning.planObservedBlendMax
     /// Gaps a concept needs before observed data dominates its prior.
-    var observedSmoothing: Double = 3.0
+    var observedSmoothing: Double = Tuning.planObservedSmoothing
     /// Uniform floor so every chosen activity still gets some time (non-punitive).
-    var uniformFloor: Double = 0.2
+    var uniformFloor: Double = Tuning.planUniformFloor
 
     static let tuning = DailyPlanConfig()
 }
@@ -150,9 +152,18 @@ struct DailyPlanEngine {
         // them. Progress is read live from `store.lessonsCompletedToday`.
         if store.readiness(for: .reading) != .unlocked {
             let count = Tuning.foundationLessonsPerDay
-            let rationale = store.isGovernorActive
-                ? "Consolidating your base before opening reading."
-                : "\(count) short lessons today — each one builds toward unlocking reading."
+            // Name the governor as what stands before reading only when it IS what
+            // holds reading shut (firstrun-10-6). Below the bridge, coverage holds it
+            // — the rest of the Foundation card says so — and an active governor only
+            // tilts the lessons toward review.
+            let rationale: String
+            if store.isReadingHeldByGovernor {
+                rationale = ReadinessCopy.governorHeadline(for: [.reading])
+            } else if store.isGovernorActive {
+                rationale = ReadinessCopy.governorConsolidating
+            } else {
+                rationale = "\(count) short lessons today — each one builds toward unlocking reading."
+            }
             return DailyPlan(items: [.lessons(count)], rationale: rationale, isColdStart: false)
         }
 
@@ -282,14 +293,14 @@ struct DailyPlanEngine {
         return blended
     }
 
-    /// Static prior: where each gap category is best practiced.
+    /// Static prior: where each gap category is best practiced (values in `Tuning`, firstrun-10-8).
     private func categoryPrior(_ category: GapCategory) -> [LearningModality: Double] {
         switch category {
-        case .vocabulary:    return [.reading: 0.7, .listening: 0.15, .watching: 0.15]
-        case .grammar:       return [.reading: 0.7, .watching: 0.2, .speaking: 0.1]
-        case .pronunciation: return [.speaking: 0.5, .listening: 0.5]
-        case .phrasing:      return [.reading: 0.4, .watching: 0.4, .speaking: 0.2]
-        case .register:      return [.reading: 0.4, .watching: 0.4, .speaking: 0.2]
+        case .vocabulary:    return Tuning.planPriorVocabulary
+        case .grammar:       return Tuning.planPriorGrammar
+        case .pronunciation: return Tuning.planPriorPronunciation
+        case .phrasing:      return Tuning.planPriorPhrasing
+        case .register:      return Tuning.planPriorRegister
         }
     }
 
@@ -391,19 +402,42 @@ struct DailyPlanEngine {
             .map { $0.item }
     }
 
-    private func rationale(for items: [DailyPlanItem], ranked: [ScoredConcept]) -> String {
+    /// The plan's one-line reason. Every claim in it is read off the data
+    /// (firstrun-10-5): "weak spots" names the category of the top-ranked concept the
+    /// learner has actually practised and is still learning — a never-observed
+    /// frontier concept is a NEW skill, not a weak spot — and "leans" is said only
+    /// when the rows really are uneven.
+    func rationale(for items: [DailyPlanItem], ranked: [ScoredConcept]) -> String {
         guard let lead = items.first, let leadModality = lead.modality else { return "Here's today's plan." }
-        // Name the dominant weak category for color.
-        let topCategory = ranked.first?.concept.category.label.lowercased()
         let leadLabel = leadModality.label.lowercased()
-        let secondLabel = items.count > 1 ? items[1].modality?.label.lowercased() : nil
+        let minutes = items.map { $0.targetMinutes }
 
-        if let cat = topCategory, let second = secondLabel {
-            return "Your weak spots lately are \(cat)-heavy, so today leans \(leadLabel) and \(second)."
+        let tilt: String?
+        if items.count == 1 {
+            tilt = "today's time goes to \(leadLabel)"
+        } else if minutes[0] > minutes[1] {
+            tilt = "today leans \(leadLabel)"
+        } else if let second = items[1].modality?.label.lowercased(), items.count == 2 || minutes[1] > minutes[2] {
+            tilt = "today leans \(leadLabel) and \(second)"
+        } else {
+            tilt = nil                                              // every row the same: no lean to explain
         }
-        if let cat = topCategory {
-            return "Your weak spots lately are \(cat)-heavy, so today leans \(leadLabel)."
+
+        let weak = ranked.first { !$0.isFrontier && $0.concept.state == .learning }
+        let cause: String?
+        if let weak {
+            cause = "Your weak spots lately are \(weak.concept.category.label.lowercased())-heavy"
+        } else if let next = ranked.first(where: { $0.isFrontier }) {
+            cause = "Today's new skills are \(next.concept.category.label.lowercased())-heavy"
+        } else {
+            cause = nil
         }
-        return "Today leans \(leadLabel) to work on your weak spots."
+
+        switch (cause, tilt) {
+        case let (cause?, tilt?): return "\(cause), so \(tilt)."
+        case let (cause?, nil): return "\(cause) — today's an even spread across your activities."
+        case let (nil, tilt?): return "\(tilt.prefix(1).uppercased())\(tilt.dropFirst())."
+        case (nil, nil): return "Today's an even spread across your activities."
+        }
     }
 }

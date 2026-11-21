@@ -426,6 +426,29 @@ struct HomeGateTests {
         #expect(HomeCopy.cefrSheetLine(placed: false, assessedLevel: .A1, learnerLevel: .A1, inFoundation: true) == nil)
     }
 
+    /// firstrun-10-4: the error-pattern detail used to tell every vocabulary learner
+    /// "You confuse the meaning of this item with a similar word" — a diagnosis no
+    /// error record measures — even for one mistake on a word with no concept. It
+    /// now states counts, and the concept's AUTHORED common mistake when there is one.
+    @Test func errorPatternDetailStatesOnlyWhatTheRecordShows() {
+        let word = HomeCopy.errorPatternSummary(patternId: "word:pomme", label: "pomme", count: 1)
+        #expect(word == "1 mistake on “pomme” so far — your answers are below.")
+        let concept = HomeCopy.errorPatternSummary(patternId: "definite-articles", label: "Definite articles", count: 3)
+        #expect(concept == "3 mistakes on Definite articles so far — your answers are below.")
+        for line in [word, concept] {
+            #expect(!line.contains("confuse") && !line.contains("These mistakes") && !line.contains("You tend"))
+        }
+
+        let authored: (String) -> FoundationTeachingContent? = { id in
+            id == "definite-articles" ? FoundationTeachingContent(rule: "r", commonMistake: "  Dropping the article.  ") : nil
+        }
+        #expect(HomeCopy.errorPatternCommonMistake(patternId: "definite-articles", teaching: authored) == "Dropping the article.")
+        #expect(HomeCopy.errorPatternCommonMistake(patternId: "food-drink-vocab", teaching: authored) == nil,
+                "a concept with no authored mistake gets no explanation")
+        #expect(HomeCopy.errorPatternCommonMistake(patternId: "word:definite-articles", teaching: authored) == nil,
+                "a word group has no concept to speak for")
+    }
+
     /// The category rows on the Gap Map and in the deck count the same
     /// unmastered gaps the overviews label `toLearnLabel`, so they must not
     /// invent a second name for it ("180 active" under "343 To learn").

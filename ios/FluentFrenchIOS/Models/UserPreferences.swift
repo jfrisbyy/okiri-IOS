@@ -49,12 +49,12 @@ nonisolated enum TimeBudget: String, Codable, CaseIterable, Identifiable {
     case light, standard, intense
     var id: String { rawValue }
 
-    /// Total minutes the plan is allowed to prescribe per day.
+    /// Total minutes the plan is allowed to prescribe per day (values in `Tuning`, firstrun-10-8).
     var minutes: Int {
         switch self {
-        case .light: return 10
-        case .standard: return 20
-        case .intense: return 35
+        case .light: return Tuning.timeBudgetLightMinutes
+        case .standard: return Tuning.timeBudgetStandardMinutes
+        case .intense: return Tuning.timeBudgetIntenseMinutes
         }
     }
 

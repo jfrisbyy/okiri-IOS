@@ -17,8 +17,9 @@ never as a refutation.
 | 8 | 16 | 2 | `53c9393` |
 | 9 | 18 | 0 | `4bd041a` |
 | 10 | 52 | 5 | `e37f0a2`, `5f37b9b`, `de8d29e` |
+| 11 | 44 | 4 | `2d0f5b8` |
 
-**Total confirmed: 260; fixed: 260.**
+**Total confirmed: 304; fixed: 304.**
 
 > **Rounds 1–4:** the per-finding entries were in the ledger file that was lost with the session
 > scratch directory (November 2026). Each round's commit message describes its findings in full;
@@ -292,3 +293,75 @@ The ceiling is now 600 s.
 
 Open: the true-beginner mastered-count drift sits exactly at the band (6). It is seeded and
 deterministic, so it does not flake, but further content could push it over.
+
+## Round 11 — 44 confirmed of 44 raw, 0 refuted, 0 unverified (all fixed)
+
+The first round against the 82-concept curriculum. **44 against round 10's 52, with 4 highs
+against 5: lower, but not converged.** Verification was lenient again: 2 of 132 refuter
+verdicts refuted, and no finding lost its majority. Three of the four highs were spot-checked against
+the pre-fix tree and are genuine (lesson-11-2, and read-11-2 with engine-11-1, which share one seeding guard;
+read-11-1 rests on its verifiers). More than half the findings (25) are low severity. Many are follow-ups that an
+earlier fix left incomplete (lesson-8-1, lesson-7-3, firstrun-10-5, store-3-2, engine-10-6),
+or interactions between the new content and older code.
+
+Fixes landed in one commit (`2d0f5b8`). The workflow's recheck was clean, and I re-ran it
+independently: 739 tests in 28 suites, 0 warnings, both lints clean, validator OK
+(82 skills, 998 items), and every changed view parses.
+
+**Highs**
+- **lesson-11-2.** In 66 shipped items, "Translate to French" accepted a fragment of the
+  answer as fully correct ("fini" for "he finished", "été" for "she was"). The grader now
+  refuses an alternative that is only a proper suffix of the headword. *Open for content
+  review:* the 66 fragment alternatives are still in `FoundationContent.json`. They are
+  harmless now, but whether to remove them is a content decision, so the validator does not
+  flag them.
+- **read-11-1.** Words saved from reading were filed on a skill whose item only shared an
+  accent-folded spelling ("sûr" under Basic prepositions, "si" under Negation). Lexicon keys
+  now keep accents, and every match also needs the meanings to agree.
+- **read-11-2.** Saving one idiom or one imparfait form from reading permanently blocked that
+  skill's 12 authored items. Captured cards no longer count toward the seeding guard.
+- **engine-11-1.** The general case of read-11-2: a concept holding a single card (a reading
+  capture or a placement miss) never received the rest of its curriculum. A concept now counts
+  as seeded only once it holds `Tuning.foundationTopUpSeededShare` of its items, which is the
+  same line the launch top-up uses.
+
+**Mediums (15).** These cover the following.
+- Lessons: the release backfill re-asked new words until a fill-blank gave the answer away;
+  the release fired on words the lesson had just taught; AI translations could ask for a whole
+  sentence while accepting only the headword; AI questions removed the reversed meaning round.
+- Reading: no-break spaces, pronoun routing, and false "Saved" marks.
+- Watch: duplicate article cards.
+- Speak: misses booked against unchanged lines; "Solid" ratings certifying mastery with no
+  graded answer.
+- Converse: replies sent after the call ended.
+- Cloud: an empty first-sign-in row wiped offline work, and sign-out was refused after a
+  failed launch read.
+- Engine: placement seeds verified on one repeated item; A2 skills announced inside
+  Foundation that no lesson could offer.
+
+**Lows (25).** These include copy honesty (placement promises, weak-spot lines, reading-minute
+credit), constants moved into `Tuning.swift` (placement, talk/media, FSRS and ranker), the
+level latch and content refresh carried through cloud restore, and all 181 concept ids frozen
+in a test.
+
+**Tests that encoded defects and were rewritten.** Fix agents changed these assertions because
+each one asserted the bug:
+- the `gradingTable` row that accepted "ai" for "j'ai";
+- two release-backfill tests;
+- the read-10-5 article-match test;
+- the engine-10-5 announce-on-band test;
+- the `le pain` meaning-free lexicon key.
+
+Each rewrite is described in the fix notes and was checked against its finding.
+
+**Open, for owner attention.**
+- **engine-11-5.** The simulations now place learners on the app's real 200-item bank instead
+  of a private 221-item copy. On that bank, seed 3 (the old false beginner) places at A2 with
+  nothing to verify. The agent scanned seeds 1–40 and chose seed 14 (A1, two seeds). Seed 4
+  also passes, but **seed 7 fails the mastered-count band (drift 7 against a band of 6).**
+  Taken with the true-beginner drift that already sits exactly at 6, this is now the clearest
+  sign that the engine over-credits mastery by a margin at the edge of tolerance on the
+  larger curriculum. It needs a decision: widen the band with a stated reason, or tighten
+  certification. Re-picking seeds is not a decision.
+- `Tuning.lessonCreditCapMinutes` still has a comment calling lessons "the activity rule".
+  Lessons now use a different rule from Read and Watch (cosmetic).

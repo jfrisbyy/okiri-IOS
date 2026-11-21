@@ -115,6 +115,41 @@ nonisolated enum ConjugationCard {
         return out
     }
 
+    /// The taxonomy concept a form saved from a tense table is evidence of, or nil
+    /// when none fits. `verbGroup` is the verb's group ("er", "ir", "re",
+    /// "irregular") and `passeComposeJe` its passé-composé "je" form, which tells
+    /// an être verb ("suis allé(e)") from an avoir one.
+    ///
+    /// -ir/-re presents (finir, prendre) and the simple future map to the skills
+    /// that teach them; they were nil, so a saved future paradigm was credited to
+    /// nothing while the curriculum taught it as Simple future (read-11-6).
+    static func conceptId(tense: String, verbGroup: String, passeComposeJe: String?) -> String? {
+        switch tense {
+        case "Present":
+            switch verbGroup {
+            case "er": return "present-er-verbs"
+            case "ir", "re": return "present-ir-re-verbs"
+            case "irregular": return "present-irregular"
+            default: return nil
+            }
+        case "Passé Composé": return passeComposeJe?.hasPrefix("suis") == true ? "passe-compose-etre" : "passe-compose-avoir"
+        case "Imparfait": return "imparfait"
+        case "Futur Simple": return "futur-simple"
+        case "Subjonctif": return "subjunctive-intro"
+        default: return nil
+        }
+    }
+
+    /// The level a form saved from a tense table is filed at: its concept's
+    /// taxonomy level, so the card is never graded above the skill it belongs to
+    /// (read-11-6 — every future form was filed at B1 against Simple future's A2).
+    /// A tense with no concept stays at B1, where the tables' later tenses sit.
+    static func level(tense: String, verbGroup: String, passeComposeJe: String?) -> CEFRLevel {
+        guard let id = conceptId(tense: tense, verbGroup: verbGroup, passeComposeJe: passeComposeJe),
+              let concept = ConceptTaxonomy.seed().first(where: { $0.id == id }) else { return .B1 }
+        return concept.cefrLevel
+    }
+
     /// Accent- and case-insensitive containment, so "Imparfait of parler" is not
     /// added twice because one copy was capitalised differently.
     private static func contains(_ haystack: String, _ needle: String) -> Bool {

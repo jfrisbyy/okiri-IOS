@@ -65,7 +65,7 @@ nonisolated enum FoundationCurriculum {
                 cefrLevel: .A1,
                 easeFactor: 2.5,
                 currentInterval: 0,
-                irtDifficulty: -0.9,
+                irtDifficulty: Tuning.fallbackCurriculumIrtDifficulty,   // engine-11-6
                 fsrs: nil,
                 originalContext: nil,
                 confusionLinks: [],

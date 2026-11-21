@@ -103,7 +103,7 @@ struct TensesView: View {
             exampleTranslation: meaning,
             sourceType: .reading,
             sourceTab: "tenses",
-            sourceLevel: Self.level(for: tense),
+            sourceLevel: Self.level(for: tense, verb: verb),
             category: .grammar,
             partOfSpeech: "verb",
             conceptId: Self.conceptId(for: tense, verb: verb),
@@ -126,22 +126,16 @@ struct TensesView: View {
     }
 
     /// The taxonomy concept a tense/verb pair is evidence of (nil when none fits).
+    /// The rule lives in `ConjugationCard`, view-free (read-11-6).
     private static func conceptId(for tense: FrenchTense, verb: FrenchVerb) -> String? {
-        switch tense.name {
-        case "Present": return verb.group == "er" ? "present-er-verbs" : (verb.group == "irregular" ? "present-irregular" : nil)
-        case "Passé Composé": return verb.tenses[tense.name]?.je.hasPrefix("suis") == true ? "passe-compose-etre" : "passe-compose-avoir"
-        case "Imparfait": return "imparfait"
-        case "Subjonctif": return "subjunctive-intro"
-        default: return nil
-        }
+        ConjugationCard.conceptId(tense: tense.name, verbGroup: verb.group,
+                                  passeComposeJe: verb.tenses["Passé Composé"]?.je)
     }
 
-    private static func level(for tense: FrenchTense) -> CEFRLevel {
-        switch tense.name {
-        case "Present": return .A1
-        case "Passé Composé": return .A2
-        default: return .B1
-        }
+    /// The level a saved form is filed at: its concept's level (read-11-6).
+    private static func level(for tense: FrenchTense, verb: FrenchVerb) -> CEFRLevel {
+        ConjugationCard.level(tense: tense.name, verbGroup: verb.group,
+                              passeComposeJe: verb.tenses["Passé Composé"]?.je)
     }
 
     private var header: some View {

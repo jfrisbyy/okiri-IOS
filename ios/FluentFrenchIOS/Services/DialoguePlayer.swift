@@ -191,7 +191,7 @@ final class DialoguePlayer: NSObject {
             let p = try AVAudioPlayer(data: data)
             p.delegate = self
             p.enableRate = true
-            p.rate = max(0.5, min(2.0, rate))
+            p.rate = min(max(rate, Tuning.voicePlaybackRateRange.lowerBound), Tuning.voicePlaybackRateRange.upperBound)
             p.prepareToPlay()
             p.play()
             audioPlayer = p
@@ -206,7 +206,7 @@ final class DialoguePlayer: NSObject {
         let utterance = AVSpeechUtterance(string: turn.french)
         utterance.voice = turn.speaker == "B" ? voiceB : voiceA
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * rate
-        utterance.postUtteranceDelay = 0.35
+        utterance.postUtteranceDelay = Tuning.dialoguePostUtteranceDelay
         synthesizer.speak(utterance)
     }
 

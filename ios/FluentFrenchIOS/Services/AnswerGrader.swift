@@ -79,12 +79,14 @@ nonisolated enum AnswerGrader {
     ///     "où") — that is an accent slip, and `.closeAccents` says so;
     ///   • in a fill-blank, one that cannot stand in the blank (see `fitsBlank`);
     ///   • outside a fill-blank, the item's own BLANK form (see `isBlankOnlyForm`) —
-    ///     it was authored to fill a hole, not to translate the headword.
+    ///     it was authored to fill a hole, not to translate the headword;
+    ///   • outside a fill-blank, a FRAGMENT of the headword (see `isHeadwordFragment`)
+    ///     — "fini" for "il a fini", "aille" for "que j'aille" (lesson-11-2).
     static func acceptedForms(for gap: GapItem, expected: String, kind: QuestionKind) -> [(display: String, normalized: String)] {
         var raw: [String] = [expected]
         raw.append(contentsOf: (gap.acceptedAnswers ?? []).filter {
             kind == .fillBlank ? fitsBlank($0, gap: gap, expected: expected)
-                               : !isBlankOnlyForm($0, gap: gap)
+                               : !isBlankOnlyForm($0, gap: gap) && !isHeadwordFragment($0, gap: gap, expected: expected)
         })
         // The headword is an article-leniency alternative ("le pain" for "pain"), so
         // like every other alternative it has to fit the blank: in a fill-blank the
@@ -104,6 +106,7 @@ nonisolated enum AnswerGrader {
             raw.append(contentsOf: ellipsisForms(of: form))
         }
         let expectedNorm = normalize(expected)
+        let expectedBare = strippingArticle(expectedNorm)
         var out: [(display: String, normalized: String)] = []
         var seen = Set<String>()
         for form in raw {
@@ -113,9 +116,46 @@ nonisolated enum AnswerGrader {
             guard !norm.isEmpty, seen.insert(norm).inserted else { continue }
             // An accent-stripped spelling is not a second correct spelling.
             guard norm == expectedNorm || fold(norm) != fold(expectedNorm) else { continue }
+            // …and neither is one of the expected answer WITHOUT its article: "mere"
+            // under "la mère" folds to the bare noun, not to "la mère", so the guard
+            // above let it through — graded fully correct with no accent warning and
+            // printed as "Also accepted: mère, mere" (lesson-11-6, lesson-7-3 incomplete).
+            if let expectedBare, norm != expectedBare, fold(norm) == fold(expectedBare) { continue }
             out.append((display: display.isEmpty ? form : display, normalized: norm))
         }
         return out
+    }
+
+    /// Whether a content alternative is a FRAGMENT of the dictionary headword: its
+    /// words are the headword's last words with something other than a leading
+    /// article dropped — the subject ("parle" for "je parle"), the auxiliary ("fini"
+    /// for "il a fini", "été" for "elle a été"), the conjunction ("aille" for "que
+    /// j'aille"), or the verb of an idiom ("dans les pommes").
+    ///
+    /// The A1/A2 content carries such alts on 66 items. None translates the English
+    /// it sits under, yet the translation format graded the fragment fully correct —
+    /// a first-try `.easy` production grade and positive concept evidence for the
+    /// very error the conjugation and passé composé skills exist to correct — and
+    /// printed it as "Also accepted: fini" under "he finished" (lesson-11-2, the
+    /// lesson-8-1 fix covered only alternatives equal to the blank form). The bare
+    /// noun under an articled headword ("pain" for "le pain") is not a fragment: that
+    /// is article leniency, which `isArticleLenient` governs.
+    static func isHeadwordFragment(_ form: String, gap: GapItem, expected: String) -> Bool {
+        let candidate = normalize(form)
+        guard !candidate.isEmpty, !isHeadwordSpelling(candidate, of: gap) else { return false }
+        let alt = words(candidate).map(fold)
+        guard !alt.isEmpty else { return false }
+        var wholes = [gap.frenchWord, expected]
+        for whole in [gap.frenchWord, expected] where whole.contains("/") {
+            wholes.append(contentsOf: whole.split(separator: "/").map(String.init))
+        }
+        for whole in wholes {
+            let wholeNorm = normalize(whole)
+            if let bare = strippingArticle(wholeNorm), fold(bare) == fold(candidate) { continue }
+            let target = words(wholeNorm).map(fold)
+            if alt.count < target.count, Array(target.suffix(alt.count)) == alt { return true }
+        }
+        return false
     }
 
     /// The accepted forms worth SHOWING after a typed answer ("Also accepted: …").
@@ -178,10 +218,18 @@ nonisolated enum AnswerGrader {
     /// the blank only when it has the same shape as the expected form — the same
     /// number of words, an elision counting as two — and is not the dictionary
     /// headword standing in for the form the item exists to teach.
+    ///
+    /// An alternative that ends in an elision ("il n'y a pas d'") fits only before a
+    /// word that can take one — a vowel, h or y. "Désolé, _____ wifi ici." printed
+    /// "Also accepted: il n'y a pas d'" and credited "d'wifi", which is not French,
+    /// on the very item that teaches when de becomes d' (lesson-11-7).
     static func fitsBlank(_ alternative: String, gap: GapItem, expected: String) -> Bool {
-        let alt = words(normalize(alternative)).map(fold)
+        let altNorm = normalize(alternative)
+        let alt = words(altNorm).map(fold)
         let target = words(normalize(expected))
         guard !alt.isEmpty, !target.isEmpty, alt.count == target.count else { return false }
+        if altNorm.hasSuffix("'"), !normalize(expected).hasSuffix("'"),
+           !elisionFits(beforeTextAfterBlankOf: gap) { return false }
         // The dictionary headword — whole, or its opening words ("se brosser" for
         // "se brosser les dents") — is not the form the item teaches.
         let headword = words(normalize(gap.frenchWord)).map(fold)
@@ -189,6 +237,20 @@ nonisolated enum AnswerGrader {
            !acceptsHeadword(gap, expected: expected) { return false }
         return true
     }
+
+    /// Whether the word right after the gap's blank, in its example sentence, can
+    /// follow an elided form: it starts with a vowel, h or y. False when the blank
+    /// cannot be located, so an unverifiable elision is never accepted (lesson-11-7).
+    static func elisionFits(beforeTextAfterBlankOf gap: GapItem) -> Bool {
+        let sentence = gap.exampleSentence
+        guard let range = highlightRange(in: sentence, for: gap) else { return false }
+        guard let next = sentence[range.upperBound...].first(where: { !$0.isWhitespace }) else { return false }
+        guard let letter = fold(String(next)).first else { return false }
+        return elisionFollowers.contains(letter)
+    }
+
+    /// The (folded) first letters a word may have for an elided form to precede it.
+    private static let elisionFollowers: Set<Character> = ["a", "e", "i", "o", "u", "y", "h"]
 
     /// Whether a form is the item's BLANK surface form and nothing else: the spelling
     /// the content authored to fill the hole in its example sentence, DIFFERENT from

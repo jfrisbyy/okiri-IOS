@@ -323,7 +323,7 @@ nonisolated enum TranscriptService {
         let payload: [String: Any] = [
             "model": "openai/gpt-4o-mini",
             "messages": [["role": "user", "content": prompt]],
-            "temperature": 0.3,
+            "temperature": Tuning.transcriptTranslationTemperature,
         ]
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

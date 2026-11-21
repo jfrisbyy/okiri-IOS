@@ -34,9 +34,10 @@ struct WatchPlayerView: View {
     @State private var controller: YouTubePlayerController
     @State private var transcript: TranscriptState = .loading
     @State private var activeIndex = -1
+    /// Headwords saved from this video, under `AppStore.captureKey`.
     @State private var savedWords: Set<String> = []
     @State private var selectedWord: SelectedWord? = nil
-    @State private var speedIndex = 1
+    @State private var speedIndex = Tuning.watchDefaultSpeedIndex
     @State private var userScrolling = false
     @State private var showFollowPill = false
     @State private var scrollResumeWork: DispatchWorkItem? = nil
@@ -56,7 +57,7 @@ struct WatchPlayerView: View {
     /// and refetched from zero (talkmedia-4-2). `-1` so the first pass runs.
     @State private var loadRunFor = -1
 
-    private let speeds: [Double] = [0.75, 1.0, 1.25]
+    private let speeds: [Double] = Tuning.watchPlaybackSpeeds
 
     init(video: YTVideo) {
         self.video = video
@@ -105,6 +106,13 @@ struct WatchPlayerView: View {
         return segments[activeIndex]
     }
 
+    /// What the transcript highlights as saved: the deck's headwords as well as
+    /// this session's, so a word saved before is marked the first time it is met
+    /// (talkmedia-11-1). Read once per render, never once per word (read-6-3).
+    private var savedKeys: Set<String> {
+        savedWords.union(store.savedHeadwordKeys())
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             topBar
@@ -128,7 +136,7 @@ struct WatchPlayerView: View {
                 title: video.title,
                 activeSegment: activeSegment,
                 origin: transcript.origin,
-                savedWords: savedWords,
+                savedKeys: savedKeys,
                 speedIndex: $speedIndex,
                 speeds: speeds,
                 onSaved: { outcome in noteSaved(outcome) },
@@ -182,7 +190,7 @@ struct WatchPlayerView: View {
                 if let seg = activeSegment {
                     FloatingSubtitle(
                         text: seg.text,
-                        savedWords: savedWords,
+                        savedKeys: savedKeys,
                         fontSize: 15,
                         lookupEnabled: seg.allowsWordLookup,
                         onWordTap: { word in openWord(word, context: seg.text) }
@@ -271,12 +279,13 @@ struct WatchPlayerView: View {
     }
 
     private var transcriptList: some View {
-        ScrollViewReader { proxy in
+        let keys = savedKeys
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     transcriptHeader
                     ForEach(Array(segments.enumerated()), id: \.element.id) { idx, seg in
-                        segmentRow(seg, index: idx)
+                        segmentRow(seg, index: idx, savedKeys: keys)
                             .id(idx)
                     }
                 }
@@ -369,7 +378,7 @@ struct WatchPlayerView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func segmentRow(_ seg: TranscriptSegment, index: Int) -> some View {
+    private func segmentRow(_ seg: TranscriptSegment, index: Int, savedKeys: Set<String>) -> some View {
         let isActive = index == activeIndex
         return HStack(alignment: .top, spacing: 10) {
             VStack(spacing: 4) {
@@ -387,7 +396,7 @@ struct WatchPlayerView: View {
             FlowWords(
                 text: seg.text,
                 isActive: isActive,
-                savedWords: savedWords,
+                savedKeys: savedKeys,
                 lookupEnabled: seg.allowsWordLookup,
                 onWordTap: { word in openWord(word, context: seg.text) }
             )
@@ -587,7 +596,8 @@ struct WatchPlayerView: View {
     private func openWord(_ raw: String, context: String) {
         let clean = raw.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-"))
             .trimmingCharacters(in: .whitespaces)
-        guard clean.count >= 2 else { return }
+        // A number is text, not a word: no lookup, no pause (talkmedia-11-6).
+        guard clean.count >= 2, TranscriptCapture.isLookupable(clean) else { return }
         if controller.isPlaying { controller.pause() }
         Haptics.select()
         selectedWord = SelectedWord(word: clean, context: context, origin: transcript.origin)
@@ -598,7 +608,7 @@ struct WatchPlayerView: View {
     private func noteSaved(_ outcome: CaptureOutcome) {
         switch outcome {
         case .saved(let gap), .duplicate(let gap):
-            savedWords.insert(gap.frenchWord.lowercased())
+            savedWords.insert(AppStore.captureKey(gap.frenchWord))
         case .rejected:
             break
         }
@@ -616,7 +626,7 @@ struct WatchPlayerView: View {
             withAnimation(Theme.motion(.default, reduceMotion: reduce)) { showFollowPill = false }
         }
         scrollResumeWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.watchFollowAlongResumeSeconds, execute: work)
     }
 
     private func followAlong() {
@@ -650,7 +660,7 @@ private struct FullscreenPlayerView: View {
     /// Provenance of the transcript on screen, carried into every capture made
     /// from the floating subtitle (talkmedia-7-1).
     let origin: TranscriptOrigin
-    let savedWords: Set<String>
+    let savedKeys: Set<String>
     @Binding var speedIndex: Int
     let speeds: [Double]
     let onSaved: (CaptureOutcome) -> Void
@@ -667,7 +677,7 @@ private struct FullscreenPlayerView: View {
         title: String,
         activeSegment: TranscriptSegment?,
         origin: TranscriptOrigin,
-        savedWords: Set<String>,
+        savedKeys: Set<String>,
         speedIndex: Binding<Int>,
         speeds: [Double],
         onSaved: @escaping (CaptureOutcome) -> Void,
@@ -677,7 +687,7 @@ private struct FullscreenPlayerView: View {
         self.title = title
         self.activeSegmentValue = activeSegment
         self.origin = origin
-        self.savedWords = savedWords
+        self.savedKeys = savedKeys
         self._speedIndex = speedIndex
         self.speeds = speeds
         self.onSaved = onSaved
@@ -709,7 +719,7 @@ private struct FullscreenPlayerView: View {
                 if let seg = activeSegmentValue {
                     FloatingSubtitle(
                         text: seg.text,
-                        savedWords: savedWords,
+                        savedKeys: savedKeys,
                         fontSize: 20,
                         lookupEnabled: seg.allowsWordLookup,
                         onWordTap: { word in openWord(word, context: seg.text) }
@@ -762,7 +772,8 @@ private struct FullscreenPlayerView: View {
     private func openWord(_ raw: String, context: String) {
         let clean = raw.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-"))
             .trimmingCharacters(in: .whitespaces)
-        guard clean.count >= 2 else { return }
+        // A number is text, not a word: no lookup, no pause (talkmedia-11-6).
+        guard clean.count >= 2, TranscriptCapture.isLookupable(clean) else { return }
         if controller.isPlaying { controller.pause() }
         Haptics.select()
         selectedWord = WatchPlayerView.SelectedWord(word: clean, context: context, origin: origin)
@@ -821,7 +832,7 @@ private struct FullscreenPlayerView: View {
             withAnimation(Theme.motion(.easeInOut(duration: 0.3), reduceMotion: reduce)) { controlsVisible = false }
         }
         hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.watchControlsAutoHideSeconds, execute: work)
     }
 
     private func timeLabel(_ seconds: Double) -> String {
@@ -966,7 +977,7 @@ private struct PlayerButtons: View {
 /// (French lines only — an English line is shown but not looked up).
 private struct FloatingSubtitle: View {
     let text: String
-    let savedWords: Set<String>
+    let savedKeys: Set<String>
     var fontSize: CGFloat = 18
     var lookupEnabled: Bool = true
     let onWordTap: (String) -> Void
@@ -975,7 +986,7 @@ private struct FloatingSubtitle: View {
         FlowWords(
             text: text,
             isActive: true,
-            savedWords: savedWords,
+            savedKeys: savedKeys,
             fontSize: fontSize,
             baseColor: .white.opacity(0.95),
             activeColor: .white,
@@ -1005,7 +1016,8 @@ private struct FloatingSubtitle: View {
 private struct FlowWords: View {
     let text: String
     let isActive: Bool
-    let savedWords: Set<String>
+    /// `AppStore.captureKey` spellings to highlight as saved (talkmedia-11-1).
+    let savedKeys: Set<String>
     var fontSize: CGFloat = 16
     var baseColor: Color = .white.opacity(0.72)
     var activeColor: Color = .white
@@ -1025,17 +1037,19 @@ private struct FlowWords: View {
                 // capital off, the reader's rule — so a tap saves "école", never
                 // "l'école", and the highlight finds it either way (talkmedia-10-4).
                 let headword = TranscriptCapture.headword(tokenAt: index, in: text)
-                let bare = headword.lowercased()
-                let saved = lookupEnabled && !bare.isEmpty && savedWords.contains(bare)
+                // A number ("2024") is shown but never offered: it has no letter
+                // to look up, and the save button could only refuse it (talkmedia-11-6).
+                let lookupable = lookupEnabled && TranscriptCapture.isLookupable(headword)
+                let saved = lookupable && TranscriptCapture.isHighlighted(headword, savedKeys: savedKeys)
                 Text(token)
                     .scaledFont(fontSize, weight: isActive ? .semibold : .regular)
                     .foregroundStyle(saved ? Theme.primary : (isActive ? activeColor : baseColor))
                     .padding(.horizontal, saved ? 5 : 0).padding(.vertical, saved ? 1 : 0)
                     .background(saved ? Theme.primary.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
                     .contentShape(Rectangle())
-                    .onTapGesture { if lookupEnabled { onWordTap(headword) } }
-                    .accessibilityAddTraits(lookupEnabled ? .isButton : [])
-                    .accessibilityHint(lookupEnabled ? (saved ? HomeCopy.savedToMyWords : "Look up this word") : "")
+                    .onTapGesture { if lookupable { onWordTap(headword) } }
+                    .accessibilityAddTraits(lookupable ? .isButton : [])
+                    .accessibilityHint(lookupable ? (saved ? HomeCopy.savedToMyWords : "Look up this word") : "")
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment == .center ? .center : .leading)
@@ -1061,7 +1075,14 @@ private struct WordCaptureSheet: View {
     @State private var attempt = 0
     @State private var path: [WordRoute] = []
 
-    private var alreadySaved: Bool { store.hasGap(forWord: word) }
+    /// Saved under the word's own key, or under an article form the deck holds
+    /// with the same meaning: "eau" is the deck's "l'eau" — the read-10-5 rule,
+    /// which Watch never applied (talkmedia-11-1, read-11-5).
+    private var alreadySaved: Bool {
+        store.hasGap(forWord: word)
+            || TranscriptCapture.isAlreadySaved(word, gloss: lookup.gloss,
+                                                savedMeanings: store.savedHeadwordMeanings())
+    }
 
     private var draft: CaptureDraft? {
         switch lookup {
@@ -1102,7 +1123,7 @@ private struct WordCaptureSheet: View {
                     }
                     Spacer()
                     HStack(spacing: 8) {
-                        Button { Haptics.tap(); NaturalVoice.shared.speak(word, rate: 0.6) } label: {
+                        Button { Haptics.tap(); NaturalVoice.shared.speak(word, rate: Tuning.slowVoiceRate) } label: {
                             Image(systemName: "tortoise.fill").font(.subheadline).foregroundStyle(accent)
                                 .frame(width: 44, height: 44).background(accent.opacity(0.10)).clipShape(.circle)
                         }
@@ -1171,7 +1192,7 @@ private struct WordCaptureSheet: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Listen to the example")
-                Button { Haptics.tap(); NaturalVoice.shared.speak(g.example, rate: 0.6) } label: {
+                Button { Haptics.tap(); NaturalVoice.shared.speak(g.example, rate: Tuning.slowVoiceRate) } label: {
                     Image(systemName: "tortoise.fill").font(.caption).foregroundStyle(accent.opacity(0.8))
                         .frame(minWidth: 44, minHeight: 44)
                 }

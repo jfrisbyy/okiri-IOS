@@ -37,8 +37,9 @@ nonisolated enum HeuristicTagger {
 
     // MARK: Entry point
 
-    /// Tag a gap against the learner's concepts. `lexicon` maps a normalised French
-    /// headword to the concept whose content items contain it (see `lexicon(from:)`).
+    /// Tag a gap against the learner's concepts. `lexicon` maps a French form and
+    /// one side of its meaning to the concept whose content items contain that
+    /// word (see `lexicon(from:)`, read-11-1).
     static func tag(gap: GapItem, concepts: [Concept], lexicon: [String: String] = [:]) -> ConceptTagResult {
         let ranked = rank(gap: gap, concepts: concepts, lexicon: lexicon)
         guard let best = ranked.first else { return .untagged(confidence: 0) }
@@ -171,7 +172,16 @@ nonisolated enum HeuristicTagger {
         }
         if pos.hasPrefix("adj") { return ["common-adjectives"] }
         if pos.hasPrefix("pronoun") {
-            return subjectPronouns.contains(word) ? ["subject-pronouns"] : ["object-pronouns"]
+            // Each pronoun goes to the skill that teaches THAT pronoun, and any other
+            // (ça, cela, celui, chacun, quelqu'un…) stays untagged. Every non-subject
+            // pronoun used to be filed as Object pronouns (le, la, lui, leur)
+            // evidence — "ça", one of the commonest words in French, among them
+            // (read-11-4).
+            if subjectPronouns.contains(word) { return ["subject-pronouns"] }
+            if objectPronouns.contains(word) { return ["object-pronouns"] }
+            if adverbialPronouns.contains(word) { return ["en-y-pronouns"] }
+            if stressedPronouns.contains(word) { return ["stressed-pronouns"] }
+            return []
         }
         if pos.hasPrefix("prep") { return ["basic-prepositions"] }
         if pos.hasPrefix("conj") { return ["everyday-connectors"] }
@@ -188,33 +198,48 @@ nonisolated enum HeuristicTagger {
 
     // MARK: Lexicon (content items → concept)
 
-    /// The concept whose content items contain the gap's headword (or base form).
+    /// The concept whose content items contain the gap's headword (or base form)
+    /// WITH THE SAME MEANING.
+    ///
+    /// Every hit needs the gap's meaning to share a side with the item's
+    /// (read-11-1). Read-10-1 only demanded it of an article-stripped match and let
+    /// the item's exact form name its skill unconditionally — but a form is not a
+    /// word: "si" ("if") is not Negation's "si" ("yes, after a negative question"),
+    /// "genre" ("kind") is not the filler "genre" ("like"), "son" ("sound") is not
+    /// the possessive. And the exact key was accent-folded, so "sûr" ("sure") met
+    /// "sur" (Basic prepositions), "ou" ("or") met "où" (Questions), "là" met "la"
+    /// and "regardé" met "Regarde !" (The imperative) — all at full confidence,
+    /// ahead of the AI matcher, so practising the word's meaning became evidence
+    /// for a grammar skill it never tests. Keys now keep their accents
+    /// (`lexiconKeys`), and a gap with no meaning yet is tagged only once its
+    /// translation resolves.
     ///
     /// Two kinds of entry, because a bare noun is not the article item it was
     /// stripped from (read-10-1):
-    ///   • the item's EXACT form ("un café", "le lundi") names its skill
-    ///     unconditionally, whatever the skill — a gap that IS that item is that
-    ///     item's evidence;
-    ///   • any other match — the gap or the item had an article stripped to meet
-    ///     ("café" against "le café") — counts only inside a VOCABULARY skill, and
-    ///     only when the gap's meaning shares a side with the item's. Otherwise
-    ///     "café" was filed under Indefinite articles (from "un café"), "lundi"
-    ///     under Definite articles and "coup" ("blow") under Spoken fillers (from
-    ///     "du coup"), all at full confidence — vocabulary recall booked as grammar
-    ///     evidence. The meaning check keeps a homograph ("été", "been") off the
-    ///     theme whose item means something else ("l'été", "summer"); it falls
-    ///     through to the heuristic instead.
+    ///   • the item's EXACT form ("un café", "le lundi"), in any skill;
+    ///   • its article-stripped form ("café" from "le café"), only inside a
+    ///     VOCABULARY skill. Otherwise "café" was filed under Indefinite articles
+    ///     (from "un café"), "lundi" under Definite articles and "coup" ("blow")
+    ///     under Spoken fillers (from "du coup"). The meaning check keeps a
+    ///     homograph ("été", "been") off the theme whose item means something else
+    ///     ("l'été", "summer"); it falls through to the heuristic instead.
     static func lexiconConcept(for gap: GapItem, lexicon: [String: String]) -> String? {
         guard !lexicon.isEmpty else { return nil }
-        let candidates = [gap.frenchWord, gap.baseForm ?? ""].filter { !$0.isEmpty }
-        for candidate in candidates {
-            if let exact = lexiconKeys(for: candidate).first, let id = lexicon[exact] { return id }
-        }
-        let sides = lexiconSides(of: gap.englishTranslation)
+        let sides = lexiconSides(of: gap.englishTranslation).sorted()
         guard !sides.isEmpty else { return nil }
-        for candidate in candidates {
-            for key in lexiconKeys(for: candidate) {
-                for side in sides.sorted() {
+        let candidates = [gap.frenchWord, gap.baseForm ?? ""].filter { !$0.isEmpty }
+        // Exact forms first, so "un café" names its own skill before the bare
+        // "café" is tried against a theme.
+        let keyLists = candidates.map { lexiconKeys(for: $0) }
+        for keys in keyLists {
+            guard let exact = keys.first else { continue }
+            for side in sides {
+                if let id = lexicon[meaningKey(exact, side: side)] { return id }
+            }
+        }
+        for keys in keyLists {
+            for key in keys.dropFirst() {
+                for side in sides {
                     if let id = lexicon[meaningKey(key, side: side)] { return id }
                 }
             }
@@ -222,47 +247,58 @@ nonisolated enum HeuristicTagger {
         return nil
     }
 
-    /// Build the headword → concept map from the bundled content. Every item's
-    /// exact `fr` names the skill it belongs to; a VOCABULARY skill's items are
-    /// also indexed by form (exact and article-stripped) paired with each side of
-    /// their meaning, for the meaning-checked lookup in `lexiconConcept` (read-10-1).
-    /// The first skill to claim a key keeps it.
+    /// Build the (form, meaning) → concept map from the bundled content. Every
+    /// item's exact `fr`, paired with each side of its meaning, names the skill it
+    /// belongs to; a VOCABULARY skill's items are also indexed by their
+    /// article-stripped form (read-10-1). Exact forms are indexed first, across
+    /// every skill, so a theme's stripped form never takes a key that is another
+    /// skill's exact item. The first skill to claim a key keeps it. No entry is
+    /// meaning-free (read-11-1).
     static func lexicon(from file: FoundationContentFile?) -> [String: String] {
         guard let file else { return [:] }
         var map: [String: String] = [:]
+        func claim(_ form: String, _ meaning: String, _ skillId: String) {
+            for side in lexiconSides(of: meaning) where map[meaningKey(form, side: side)] == nil {
+                map[meaningKey(form, side: side)] = skillId
+            }
+        }
         for skill in file.skills {
-            let isVocabulary = skill.category == GapCategory.vocabulary.rawValue
             for item in skill.items {
-                let keys = lexiconKeys(for: item.fr)
-                if let exact = keys.first, map[exact] == nil { map[exact] = skill.id }
-                guard isVocabulary else { continue }
-                for key in keys {
-                    for side in lexiconSides(of: item.en) where map[meaningKey(key, side: side)] == nil {
-                        map[meaningKey(key, side: side)] = skill.id
-                    }
-                }
+                if let exact = lexiconKeys(for: item.fr).first { claim(exact, item.en, skill.id) }
+            }
+        }
+        for skill in file.skills where skill.category == GapCategory.vocabulary.rawValue {
+            for item in skill.items {
+                for key in lexiconKeys(for: item.fr).dropFirst() { claim(key, item.en, skill.id) }
             }
         }
         return map
     }
 
-    /// The lexicon key for a form that only counts alongside one meaning (read-10-1).
-    /// The unit separator never occurs in a folded headword, so it cannot collide
-    /// with an exact key.
+    /// The lexicon key for a form alongside one of its meanings (read-10-1,
+    /// read-11-1). The unit separator never occurs in a headword.
     static func meaningKey(_ form: String, side: String) -> String {
         form + "\u{1F}" + side
     }
 
     /// The sides of a meaning ("coffee / café" → coffee, café), each also without
-    /// a leading English article ("the morning" → morning), so the gloss a
-    /// translator returns for a bare noun meets the content's. Read-10-1.
+    /// a leading English article ("the morning" → morning), a parenthetical tag
+    /// or trailing punctuation ("Look!" → look), so the gloss a translator returns for a bare
+    /// word meets the content's. Read-10-1, read-11-1.
     static func lexiconSides(of meaning: String) -> Set<String> {
         var out = Set<String>()
-        for side in LessonScheduler.distractorSides(of: meaning) {
-            out.insert(side)
-            for article in englishArticles where side.hasPrefix(article) {
-                let bare = String(side.dropFirst(article.count))
-                if !bare.isEmpty { out.insert(bare) }
+        for raw in LessonScheduler.distractorSides(of: meaning) {
+            // "hot (masculine)" also meets a plain "hot".
+            var forms = [raw]
+            if let open = raw.firstIndex(of: "(") { forms.append(String(raw[..<open])) }
+            for form in forms {
+                let side = form.trimmingCharacters(in: sidePunctuation)
+                guard !side.isEmpty else { continue }
+                out.insert(side)
+                for article in englishArticles where side.hasPrefix(article) {
+                    let bare = String(side.dropFirst(article.count))
+                    if !bare.isEmpty { out.insert(bare) }
+                }
             }
         }
         return out
@@ -271,16 +307,25 @@ nonisolated enum HeuristicTagger {
     /// English determiners dropped when two meanings are compared (read-10-1).
     private static let englishArticles = ["the ", "a ", "an ", "some "]
 
+    /// Punctuation that does not change a meaning ("Look!" is "look"). Read-11-1.
+    private static let sidePunctuation = CharacterSet(charactersIn: " .!?…")
+
     /// Normalised forms a headword is looked up under: as written, and with a
-    /// leading article removed ("le pain" → "pain"). Parenthetical tags are dropped.
+    /// leading article removed ("le pain" → "pain"). Parenthetical tags are
+    /// dropped. Lowercased with apostrophes normalised, like `AppStore.captureKey`,
+    /// but NEVER accent-folded: "sûr" is not "sur", "où" is not "ou" (read-11-1).
     static func lexiconKeys(for headword: String) -> [String] {
         var base = headword
         if let open = base.firstIndex(of: "(") { base = String(base[..<open]) }
-        base = base.replacingOccurrences(of: "’", with: "'")
-        let folded = SentenceExtractor.tokens(in: base).joined(separator: " ")
-        guard !folded.isEmpty else { return [] }
-        var keys = [folded]
-        let parts = folded.split(separator: " ").map(String.init)
+        let parts = base
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{02BC}", with: "'")
+            .split(whereSeparator: { $0.isWhitespace || $0 == "'" })
+            .map { String($0).trimmingCharacters(in: SentenceExtractor.edgePunctuation).lowercased() }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return [] }
+        var keys = [parts.joined(separator: " ")]
         if parts.count >= 2, leadingArticles.contains(parts[0]) {
             keys.append(parts.dropFirst().joined(separator: " "))
         }
@@ -435,6 +480,13 @@ nonisolated enum HeuristicTagger {
     private static let taxonomyIds: Set<String> = ConceptTaxonomy.ids
 
     private static let subjectPronouns: Set<String> = ["je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles"]
+    /// The forms the Object pronouns skill teaches (nous and vous are matched as
+    /// subject pronouns first). Read-11-4.
+    private static let objectPronouns: Set<String> = ["me", "te", "le", "la", "les", "lui", "leur", "m'", "t'", "l'"]
+    /// The pronouns en and y, which have their own skill (read-11-4).
+    private static let adverbialPronouns: Set<String> = ["en", "y"]
+    /// Stressed pronouns not already claimed above: moi, toi, soi, eux (read-11-4).
+    private static let stressedPronouns: Set<String> = ["moi", "toi", "soi", "eux"]
     private static let definiteArticles: Set<String> = ["le", "la", "les", "l'"]
     private static let indefiniteArticles: Set<String> = ["un", "une", "des"]
     private static let partitiveArticles: Set<String> = ["du", "de la", "de l'"]

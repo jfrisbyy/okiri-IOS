@@ -193,8 +193,25 @@ struct ConceptSelector {
     /// gap of any kind, else a fresh content probe when the concept has probe content.
     /// A gap still waiting for its meaning (E4) can carry nothing — its answer is the
     /// empty string — so it is never a vehicle either.
+    ///
+    /// A PROVISIONAL seed is verified on a different item each pass (engine-11-2):
+    /// never-answered items first, then the least recently reviewed. Its other
+    /// Foundation items are kept out of review (`isReviewEligible`) and a mastered
+    /// concept is never a target, so after the first check-in the item it rode on was
+    /// the seed's only reviewed gap and carried every later pass — the
+    /// `Tuning.seedVerificationPasses` meant to prove the skill were one word asked
+    /// three times, with feedback after the first.
     func checkInVehicle(for concept: Concept, now: Date, excluding chosen: Set<String> = []) -> (gapId: String, isProbe: Bool)? {
         let gaps = store.gaps(forConcept: concept.id).filter { !chosen.contains($0.id) && !$0.needsTranslation }
+        if concept.isProvisional {
+            let cards = gaps.filter { !$0.isProbe }
+            if let fresh = cards.filter({ $0.isNew }).sorted(by: Self.weakestFirst(now: now)).first {
+                return (fresh.id, false)
+            }
+            if let stalest = cards.sorted(by: Self.leastRecentlyReviewedFirst).first {
+                return (stalest.id, false)
+            }
+        }
         let reviewed = gaps.filter { !$0.isProbe && !$0.isNew }.sorted(by: Self.weakestFirst(now: now))
         if let gap = reviewed.first { return (gap.id, false) }
         let any = gaps.filter { !$0.isProbe }.sorted(by: Self.weakestFirst(now: now))
@@ -391,13 +408,14 @@ struct ConceptSelector {
         store.concepts.filter { $0.isStalled }.map { $0.id }
     }
 
-    /// Max overdue-ness across this concept's gaps (0 if none due), normalized.
+    /// Max overdue-ness across this concept's gaps (0 if none due), normalized: it
+    /// saturates at `Tuning.urgencySaturationDays` overdue.
     private func urgencyScore(_ gaps: [GapItem], now: Date) -> Double {
         let maxOverdueDays = gaps
             .map { now.timeIntervalSince($0.nextReviewAt) / 86_400 }
             .filter { $0 > 0 }
             .max() ?? 0
-        return min(1, maxOverdueDays / 7)
+        return min(1, maxOverdueDays / Tuning.urgencySaturationDays)   // engine-11-6
     }
 
     /// How many other concepts list this as a prerequisite, normalized by the
@@ -438,8 +456,8 @@ struct ConceptSelector {
     private func recentlyTaughtPenalty(_ concept: Concept) -> Double {
         guard let taught = concept.lastTaughtSession else { return 0 }
         let delta = store.sessionIndex - taught
-        if delta <= 0 { return 1.0 }
-        if delta == 1 { return 0.5 }
+        if delta <= 0 { return Tuning.repeatDampSameSessionPenalty }        // engine-11-6
+        if delta == 1 { return Tuning.repeatDampPreviousSessionPenalty }
         return 0
     }
 
@@ -684,18 +702,53 @@ struct ConceptSelector {
     /// reading — contrary to FoundationSeeder's "nothing above A1 before reading
     /// opens". A2 skills arrive with the bridge slice at unlock; higher ones by probe
     /// after it.
+    ///
+    /// "No gap yet" also covers a concept whose cards are short of its CURRICULUM
+    /// (`AppStore.holdsCurriculum`), not only one with no card at all:
+    /// a word captured while reading, or the one item a placement miss seeds, used to
+    /// shut this door too, and with the seeding door shut on the same card the
+    /// skill's other authored items were never reached (engine-11-1). Within a band a
+    /// concept with no card at all is still probed first: one with a card is already
+    /// reachable through that card's own first answer.
     func probeConcept() -> Concept? {
         guard config.probeEveryNSessions > 0,
               store.sessionIndex % config.probeEveryNSessions == 0 else { return nil }
         let maxOrder = store.isInFoundation ? Tuning.foundationProbeMaxLevel.order : Int.max
         return store.concepts
             .filter { $0.cefrLevel.order <= maxOrder }
-            .filter { isFrontier($0) && store.gaps(forConcept: $0.id).isEmpty && store.hasProbeContent(for: $0.id) }
-            .sorted { a, b in
-                if a.cefrLevel.order != b.cefrLevel.order { return a.cefrLevel.order < b.cefrLevel.order }
-                return a.id < b.id
+            .map { (concept: $0, hasCard: store.gaps(forConcept: $0.id).contains { !$0.isProbe },
+                    hasAnyGap: !store.gaps(forConcept: $0.id).isEmpty) }
+            .filter { c in
+                isFrontier(c.concept) && store.hasProbeContent(for: c.concept.id)
+                    && (!c.hasAnyGap || !store.holdsCurriculum(c.concept.id))
             }
-            .first
+            .sorted { a, b in
+                if a.concept.cefrLevel.order != b.concept.cefrLevel.order {
+                    return a.concept.cefrLevel.order < b.concept.cefrLevel.order
+                }
+                if a.hasCard != b.hasCard { return !a.hasCard }
+                return a.concept.id < b.concept.id
+            }
+            .first?.concept
+    }
+
+    /// Whether a lesson can put this concept in front of the learner NOW, not merely
+    /// some day (engine-11-3, follow-up to engine-10-5): it has a card of its own, or
+    /// a blind-spot probe may open it. While reading is locked a probe opens nothing
+    /// above `Tuning.foundationProbeMaxLevel`, and A2 skills arrive only with the
+    /// bridge slice at unlock — so a declared beginner whose latched band reached A2
+    /// inside Foundation was told eight A2 skills were "unlocked" on day four, two
+    /// weeks before any lesson could hold one. "New skills unlocked" and "This
+    /// unlocks X" both read this, so neither promises a skill the selector cannot offer.
+    func canOfferNow(_ concept: Concept) -> Bool {
+        Self.canOfferNow(level: concept.cefrLevel,
+                         hasOwnCard: store.gaps(forConcept: concept.id).contains { !$0.isProbe },
+                         isInFoundation: store.isInFoundation)
+    }
+
+    /// `canOfferNow` on plain values, for the store's frontier pass (engine-11-3).
+    nonisolated static func canOfferNow(level: CEFRLevel, hasOwnCard: Bool, isInFoundation: Bool) -> Bool {
+        hasOwnCard || !isInFoundation || level.order <= Tuning.foundationProbeMaxLevel.order
     }
 
     private func checkInReason(for concept: Concept) -> String {
@@ -843,6 +896,13 @@ struct ConceptSelector {
         }
     }
 
+    /// Least recently reviewed first (never reviewed first of all); ties by id.
+    nonisolated static func leastRecentlyReviewedFirst(_ a: GapItem, _ b: GapItem) -> Bool {
+        let la = a.lastReviewedAt ?? .distantPast, lb = b.lastReviewedAt ?? .distantPast
+        if la != lb { return la < lb }
+        return a.id < b.id
+    }
+
     /// Most recently reviewed first; ties by id.
     nonisolated static func mostRecentlyReviewedFirst(_ a: GapItem, _ b: GapItem) -> Bool {
         let la = a.lastReviewedAt ?? .distantPast, lb = b.lastReviewedAt ?? .distantPast
@@ -885,9 +945,12 @@ struct ConceptSelector {
         // ...and only a dependent the app can actually teach. The map reaches C1
         // while content stops at B1, so most dependents of a frontier concept have
         // no items behind them, and promising one is a reward that never arrives
-        // (engine-6-1).
+        // (engine-6-1). ...and only one a lesson could offer now: inside Foundation an
+        // A2 dependent has nothing behind it until reading opens (engine-11-3).
         if let cid = gap.conceptId,
-           let dep = store.dependents(of: cid).first(where: { !$0.isMastered && store.isTeachable($0.id) }) {
+           let dep = store.dependents(of: cid).first(where: {
+               !$0.isMastered && store.isTeachable($0.id) && canOfferNow($0)
+           }) {
             return "This unlocks \(dep.name)."
         }
         if let target, role == .target {

@@ -27,7 +27,7 @@ nonisolated enum YouTubeService {
     /// empty — not an error to retry (EM-6).
     static func trending(categoryId: String) async -> VideoFeedResult {
         guard hasKey else { return .curated(WatchCatalog.curated(for: categoryId), reason: .noKey) }
-        let urlStr = "\(base)/videos?part=snippet,contentDetails,statistics&chart=mostPopular&regionCode=FR&maxResults=15&videoCategoryId=\(categoryId)&key=\(apiKey)"
+        let urlStr = "\(base)/videos?part=snippet,contentDetails,statistics&chart=mostPopular&regionCode=FR&maxResults=\(Tuning.trendingFeedPageSize)&videoCategoryId=\(categoryId)&key=\(apiKey)"
         guard let url = URL(string: urlStr) else {
             return .curated(WatchCatalog.curated(for: categoryId), reason: .serviceError)
         }
@@ -43,7 +43,7 @@ nonisolated enum YouTubeService {
     static func search(_ query: String) async -> VideoSearchResult {
         guard hasKey else { return .unavailable(.noKey) }
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "\(base)/search?part=snippet&q=\(encoded)&type=video&maxResults=20&relevanceLanguage=fr&regionCode=FR&key=\(apiKey)")
+              let url = URL(string: "\(base)/search?part=snippet&q=\(encoded)&type=video&maxResults=\(Tuning.videoSearchPageSize)&relevanceLanguage=fr&regionCode=FR&key=\(apiKey)")
         else { return .unavailable(.serviceError) }
         let request = makeRequest(url)
         do {

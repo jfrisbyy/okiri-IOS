@@ -93,6 +93,14 @@ nonisolated enum SpeakGapPlan {
         /// True when there WAS a correction but nothing in it was card-sized:
         /// the feedback is still on screen to read, but the deck gets nothing.
         var tooLongToSave = false
+        /// True when the corrected line actually changes what the learner said.
+        /// Punctuation, casing and apostrophe style are not a change (PhraseKey,
+        /// talkmedia-10-3), so with this false there is no slip to book: a mistake
+        /// concept the feedback names anyway is the model contradicting its own
+        /// correction, and booking it gave a full-weight miss beside "your line was
+        /// already good" — while Converse books nothing for the same line
+        /// (talkmedia-11-2).
+        var hasCorrection = false
     }
 
     /// The corrected line is a gap when it differs from what the learner said;
@@ -118,6 +126,7 @@ nonisolated enum SpeakGapPlan {
         let concept = named.count == 1 ? feedback.mistakeConceptIds.first : nil
         var plan = Plan()
         if !corrected.isEmpty, !PhraseKey.same(corrected, learner) {
+            plan.hasCorrection = true
             let card = CorrectionCard.from(original: learner, corrected: corrected)
             plan.shortened = card.shortened
             plan.tooLongToSave = card.isEmpty

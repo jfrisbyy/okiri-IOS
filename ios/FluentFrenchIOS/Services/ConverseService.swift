@@ -133,7 +133,7 @@ nonisolated enum ConverseService {
             messages.append(["role": turn.role == .tutor ? "assistant" : "user", "content": turn.french])
         }
 
-        let result = await TalkModelClient.complete(messages: messages, temperature: 0.7, timeout: Tuning.converseReplyTimeout)
+        let result = await TalkModelClient.complete(messages: messages, temperature: Tuning.converseReplyTemperature, timeout: Tuning.converseReplyTimeout)
         switch result {
         case .failure(let failure):
             return .failure(failure)
@@ -153,7 +153,7 @@ nonisolated enum ConverseService {
         Reply ONLY with minified JSON: {"french":"the suggested reply","english":"its translation","correction":""}
         """
         let result = await TalkModelClient.complete(messages: [["role": "system", "content": system]],
-                                                    temperature: 0.6, timeout: Tuning.converseHintTimeout)
+                                                    temperature: Tuning.converseHintTemperature, timeout: Tuning.converseHintTimeout)
         switch result {
         case .failure(let failure):
             return .failure(failure)

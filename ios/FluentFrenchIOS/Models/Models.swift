@@ -251,8 +251,9 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// `SelectionRequest.now` through so selections are reproducible headlessly.
     func retrievability(at now: Date) -> Double {
         guard let fsrs else {
-            // fall back to a coarse estimate from consecutive correct
-            return min(0.95, 0.4 + Double(consecutiveCorrect) * 0.12)
+            // fall back to a coarse estimate from consecutive correct (engine-11-6)
+            return min(Tuning.legacyRecallCeiling,
+                       Tuning.legacyRecallBase + Double(consecutiveCorrect) * Tuning.legacyRecallPerCorrect)
         }
         return FSRS.retrievability(state: fsrs, now: now)
     }

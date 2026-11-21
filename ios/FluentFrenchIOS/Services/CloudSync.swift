@@ -62,6 +62,40 @@ nonisolated struct ProgressSnapshot: Codable, Sendable {
     /// Opaque here on purpose: the snapshot does not depend on the scenario models
     /// (store-1-4).
     var savedScenarios: Data? = nil
+    /// The CEFR band the writing device last REPORTED for `abilityTheta`, latched
+    /// with hysteresis (engine-10-2). Without it a restored device, a second device
+    /// or a re-sign-in re-latched θ against its own default band, and a learner
+    /// near an edge read B1 on one phone and A2 on the other for the same record
+    /// (store-11-3). Optional: rows from earlier builds take the bare mapping.
+    var latchedLevel: String? = nil
+}
+
+nonisolated extension ProgressSnapshot {
+    /// True when the row holds nothing the learner did: never placed, no cards, no
+    /// answer booked anywhere, no XP, no practice time. Every first sign-in uploads
+    /// the device's empty record (sign-in comes before placement), so an account
+    /// whose learner signed in and left before placing holds exactly this. A
+    /// recovery pass (a deferred restore, "Continue offline") treats such a row as
+    /// no row: applying it replaced the learner's offline placement and lessons
+    /// with nothing, although the screen had promised the account copy wins only
+    /// "if your account already has progress" (store-11-1). Deliberately strict:
+    /// any trace of activity makes the row a real record.
+    var holdsNoLearnerActivity: Bool {
+        !hasCompletedAssessment
+            && gaps.isEmpty
+            && errors.isEmpty
+            && sessionIndex == 0
+            && (xp ?? 0) == 0
+            && masteryDays.isEmpty
+            && concepts.allSatisfy { $0.observationCount == 0 && $0.lastTestedAt == nil }
+            && activityProgress.values.allSatisfy { $0 == 0 }
+            && (lifetimeMinutes ?? [:]).values.allSatisfy { $0 == 0 }
+            && (totalLessonMinutes ?? 0) == 0
+            && (lessonsCompletedByDay ?? [:]).values.allSatisfy { $0 == 0 }
+            && (personalBests ?? [:]).isEmpty
+            && (checkInHistory ?? []).isEmpty
+            && savedScenarios == nil
+    }
 }
 
 /// Observable backup status, rendered on the profile "Backed up" card.
@@ -242,6 +276,10 @@ final class CloudSync {
     /// loses the exemptions only a blocked pass may have (lesson in progress,
     /// a raced upload).
     @ObservationIgnored private var launchPassInBackgroundFor: String?
+    /// Set by an `initial` pass whose read failed for want of a network on a
+    /// device with nothing to show; `reconcileAtLaunch` turns it into the
+    /// "Continue offline" offer on the unreachable screen (store-11-5).
+    @ObservationIgnored private var failedReadOffersOffline = false
 
     // Sync markers: what this device last agreed with the cloud row on. They
     // are what makes the server-timestamp rule in SnapshotReconciler possible.
@@ -342,8 +380,16 @@ final class CloudSync {
                 }
             }
         }
+        failedReadOffersOffline = false
         await reconcile(store: store, userId: uid, initial: true)
-        if launchWaitUserId == uid { endLaunchWait() }
+        if launchWaitUserId == uid {
+            endLaunchWait()
+            // store-11-5: a read that failed for want of a network, on a device with
+            // nothing to show, keeps "Continue offline" on the unreachable screen.
+            offersOfflineContinue = failedReadOffersOffline && needsAccountBeforeContinuing
+                && reconciledUserId == uid
+        }
+        failedReadOffersOffline = false
     }
 
     /// "Continue offline" on the still-syncing screen. The device holds nothing of
@@ -355,11 +401,28 @@ final class CloudSync {
     /// succeeds, applies the account copy when there is one and uploads the device
     /// copy only into an account that has none (a brand-new learner). A failed read
     /// no longer blocks them either, as for any deferred restore.
+    ///
+    /// The same choice is offered after the launch read FAILED offline with
+    /// nothing on the device (store-11-5): the gate is then the unreachable screen,
+    /// and continuing opens the app with uploads still off and the marker set, as
+    /// after a failed read behind "Continue offline".
     func continueOfflineAtLaunch(store: AppStore, userId uid: String) {
-        guard offersOfflineContinue, launchWaitUserId == uid, store.loadError == nil,
-              isReconciling || reconciledUserId != uid else { return }
+        guard offersOfflineContinue, store.loadError == nil else { return }
+        if launchWaitUserId == uid, isReconciling || reconciledUserId != uid {
+            deferredRestore.set(userId: uid)
+            enterBeforeReconcileFinishes(userId: uid)
+            return
+        }
+        // store-11-5: the read already failed and the gate shows the unreachable
+        // screen. Nothing is in flight; the marker makes the next pass that reads
+        // the row a recovery pass, and lets the learner in now.
+        guard launchWaitUserId == nil, !isReconciling, reconciledUserId == uid,
+              needsAccountBeforeContinuing else { return }
         deferredRestore.set(userId: uid)
-        enterBeforeReconcileFinishes(userId: uid)
+        offersOfflineContinue = false
+        needsAccountBeforeContinuing = false
+        // Once they start, the device does hold their work until they reconnect.
+        syncState = .failed(Self.offlineMessage)
     }
 
     /// One timer checkpoint of the launch wait, `elapsed` seconds in. Acts only
@@ -569,7 +632,7 @@ final class CloudSync {
         syncState = .syncing
         let uploadsBeforeRead = pushCompletions
 
-        let fetch = await fetchRemoteWithRetry(userId: uid)
+        var fetch = await fetchRemoteWithRetry(userId: uid)
         guard stillCurrent() else { return }
         // UX-09: the exemptions below are for a pass that runs behind the
         // blocking launch screen. Once the launch budget let the learner in, the
@@ -616,6 +679,15 @@ final class CloudSync {
         if restoreOwedNow, case .compare = mode {
             mode = .takeRemote(discardUnreadableCopy: false, requireRemoteRow: false)
         }
+        // store-11-1: a recovery pass applies the account copy unconditionally, so a
+        // row that holds no learner activity — the empty record every first sign-in
+        // uploads — must not count as one. It is handled exactly like an account
+        // with no row: a deferred restore pushes the device copy and settles the
+        // debt; a restore the learner asked for fails without discarding anything
+        // (store-2-1), since there is nothing in the account to restore.
+        if case .takeRemote = mode, case .snapshot(let remote, _) = fetch, remote.holdsNoLearnerActivity {
+            fetch = .none
+        }
 
         switch fetch {
         case .failed(let error):
@@ -631,6 +703,18 @@ final class CloudSync {
                 // successful pass still applies the account copy.
                 needsAccountBeforeContinuing = !restoreOwedNow && (store.localUpdatedAt == nil)
                 reconciledUserId = uid
+                // store-11-5: offline, every attempt fails at once, so the read gives
+                // up long before `launchOfflineOfferDelay` and the "Continue offline"
+                // offer never appeared: a signed-in learner opening an empty device
+                // with no network (a reinstall keeps the session) had only "Try
+                // again", under a message claiming progress was on the device. The
+                // same choice is offered here, made safe by the same deferred-restore
+                // marker (`continueOfflineAtLaunch`), with honest wording.
+                failedReadOffersOffline = needsAccountBeforeContinuing && store.loadError == nil
+                    && Self.isConnectivityFailure(error)
+                if failedReadOffersOffline {
+                    syncState = .failed(Self.offlineWithNothingOnDeviceMessage)
+                }
             }
             lastReconcileAt = Date()
             return
@@ -700,6 +784,7 @@ final class CloudSync {
     /// A reconcile pass read the account successfully: uploads are now safe.
     private func markReconciled(userId uid: String, pushSucceeded: Bool = true) {
         needsAccountBeforeContinuing = false
+        offersOfflineContinue = false
         reconciledUserId = uid
         userId = uid
         if !pushSucceeded { hasPendingChange = true }
@@ -780,6 +865,25 @@ final class CloudSync {
     /// account could not be written (or uploads were never enabled), so the
     /// caller can refuse to wipe local state.
     func pushForSignOut(store: AppStore) async -> Bool {
+        // store-11-2 (store-3-2 was incomplete): uploads are enabled only once a
+        // pass has read the row, so after a launch whose read failed `userId` was
+        // nil and a fully backed-up learner was refused here, and one back online
+        // with new answers could retry forever without an upload being tried.
+        // The backed-up test needs only the markers, as in
+        // `switchingAccountWouldDiscardUnsyncedProgress`; anything else first
+        // re-establishes contact, as `flushPending` does.
+        if userId == nil, let uid = reconciledUserId {
+            if store.loadError == nil, !deferredRestore.isPending(for: uid),
+               SnapshotReconciler.isFullyBackedUp(
+                   hasPendingChange: hasPendingChange,
+                   local: localState(store: store, userId: uid)
+               ) {
+                return true
+            }
+            // Never reconcile under an open lesson (store-1-3).
+            guard !store.isLessonInProgress else { return false }
+            await reconcile(store: store, userId: uid, initial: false)
+        }
         guard let uid = userId else { return false }
         debounceTask?.cancel()
         debounceTask = nil
@@ -1069,12 +1173,26 @@ final class CloudSync {
         if error is SupabaseManager.ConfigurationError {
             return SupabaseManager.configurationMessage
         }
-        let ns = error as NSError
-        if ns.domain == NSURLErrorDomain {
-            return "You're offline. Progress stays on this device until you reconnect."
+        if isConnectivityFailure(error) {
+            return offlineMessage
         }
         return "Couldn't reach your account."
     }
+
+    /// A failure to reach the server at all (no network, DNS, timeout), as
+    /// opposed to an account that answered with something unusable.
+    static func isConnectivityFailure(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        return (error as NSError).domain == NSURLErrorDomain
+    }
+
+    /// The offline failure once the device holds the learner's work.
+    static let offlineMessage = "You're offline. Progress stays on this device until you reconnect."
+
+    /// The offline failure on a device that holds nothing yet: "progress stays on
+    /// this device" would be false there (store-11-5).
+    static let offlineWithNothingOnDeviceMessage =
+        "You're offline, so your account can't load yet. You can start on this device now; if your account already has progress, it replaces what you do here once you reconnect."
 }
 
 // MARK: - Row DTOs

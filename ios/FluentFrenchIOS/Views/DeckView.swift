@@ -171,21 +171,32 @@ struct DeckView: View {
         .softLift(radius: 18, y: 8)
     }
 
+    /// The health chip's dot, text and background for a tone.
+    private func healthChipColors(_ tone: GapHealthTone) -> (dot: Color, text: Color, fill: Color) {
+        switch tone {
+        case .neutral: return (Theme.primary, Theme.primaryText, Theme.primaryLight)
+        case .healthy: return (Theme.success, Color(hex: "065F46"), Color(hex: "D1FAE5"))
+        case .attention: return (Theme.warning, Color(hex: "92400E"), Color(hex: "FEF3C7"))
+        case .atRisk: return (Theme.error, Color(hex: "991B1B"), Color(hex: "FEE2E2"))
+        }
+    }
+
     private var practiceSection: some View {
         let due = dueNowCount
-        let healthy = Tuning.gapHealthHealthyFloor
-        let attention = Tuning.gapHealthAttentionFloor
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 let h = store.gapHealth
+                // No recall evidence → no health colour (firstrun-11-7, D19).
+                let tone = GapHealthTone.tone(score: h.score, hasRetentionEvidence: store.hasRetentionEvidence)
+                let colors = healthChipColors(tone)
                 HStack(spacing: 6) {
-                    Circle().fill(h.score >= healthy ? Theme.success : h.score >= attention ? Theme.warning : Theme.error).frame(width: 6, height: 6)
+                    Circle().fill(colors.dot).frame(width: 6, height: 6)
                         .accessibilityHidden(true)
                     Text(h.label).font(.caption.weight(.semibold))
-                        .foregroundStyle(h.score >= healthy ? Color(hex: "065F46") : h.score >= attention ? Color(hex: "92400E") : Color(hex: "991B1B"))
+                        .foregroundStyle(colors.text)
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(h.score >= healthy ? Color(hex: "D1FAE5") : h.score >= attention ? Color(hex: "FEF3C7") : Color(hex: "FEE2E2"))
+                .background(colors.fill)
                 .clipShape(.rect(cornerRadius: 8))
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Health: \(h.label)")

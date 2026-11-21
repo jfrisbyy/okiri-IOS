@@ -95,10 +95,10 @@ final class YouTubePlayerController {
             try {
               send({ type: 'time', current: p.getCurrentTime(), duration: p.getDuration(), state: p.getPlayerState() });
             } catch(e) {}
-          }, 250);
+          }, \(Tuning.youTubeTimePollMilliseconds));
         }
       }
-      var finder = setInterval(function() { setup(); if (ready) clearInterval(finder); }, 300);
+      var finder = setInterval(function() { setup(); if (ready) clearInterval(finder); }, \(Tuning.youTubePlayerFinderMilliseconds));
     })();
     true;
     """

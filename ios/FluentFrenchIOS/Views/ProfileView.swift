@@ -576,13 +576,15 @@ struct RetentionCard: View {
             }
 
             Divider()
-            // The only two "due" numbers the app shows (D13).
+            // The only two "due" numbers the app shows (D13). Before any review the
+            // queue is the seeded batch, and no surface calls it "due" (UX-15,
+            // `showsDueCount`): Profile labels it as My words does (firstrun-11-6).
             HStack {
                 retentionStat("\(store.masteredThisWeek)", "Mastered this week")
                 Spacer()
-                retentionStat("\(store.dueNowCount())", "Due now")
+                retentionStat("\(store.dueNowCount())", HomeCopy.deckQueueLabel(showsDueCount: store.showsDueCount))
                 Spacer()
-                retentionStat("\(store.upcoming.count)", "Coming up")
+                retentionStat("\(store.upcoming.count)", HomeCopy.upcomingLabel)
             }
             NavigationLink { RetentionView() } label: {
                 HStack {

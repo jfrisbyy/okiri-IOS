@@ -65,6 +65,16 @@ struct TranslatorView: View {
         }
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
+        // A translation belongs to the text it was asked for. Once that text is
+        // edited it is not this box's translation: shown on, it was read, copied
+        // or swapped back as if it were (read-11-8). A swap rewrites the input
+        // after setting `.idle`, so it never trips this.
+        .onChange(of: inputText) { old, new in
+            guard case .translated = phase,
+                  old.trimmingCharacters(in: .whitespacesAndNewlines)
+                    != new.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            phase = .idle
+        }
     }
 
     private var header: some View {

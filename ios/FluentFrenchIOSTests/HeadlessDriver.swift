@@ -268,11 +268,16 @@ struct SimulatedRun {
         let inferredConceptIds: [String]
     }
 
-    /// The placement bank the design assumes: the banked items PLUS three content
-    /// probes per grammar / vocabulary concept, so every concept can reach the
-    /// `Tuning.placementProbesPerConcept` read (synthetic probes: no bundle here).
+    /// The placement bank the APP builds (`AssessmentService.placementBank`, as
+    /// `AssessmentView` runs it): three content probes per grammar / vocabulary
+    /// concept, so every concept can reach the `Tuning.placementProbesPerConcept`
+    /// read, with the hand items only where content does not cover their concept and
+    /// band (synthetic probes: no bundle here). The simulation used to place on the
+    /// hand bank PLUS the content bank — 221 items against the app's 200 — so the
+    /// false beginner was placed at A1 with a seed the app would never give them,
+    /// and every seed-verification assertion measured that placement (engine-11-5).
     static func placementBank(for store: AppStore) -> [AssessmentQuestion] {
-        AssessmentService.bank + AssessmentService.contentBank(concepts: store.concepts, probes: EngineFixtures.syntheticProbes)
+        AssessmentService.placementBank(concepts: store.concepts, probes: EngineFixtures.syntheticProbes)
     }
 
     /// The learner's true mastery at or above which a concept counts as truly mastered.

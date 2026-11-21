@@ -100,7 +100,14 @@ struct ContentView: View {
                     cloud.continueOfflineAtLaunch(store: store, userId: user.id)
                 })
             case .accountUnreachable:
-                AccountUnreachableView(message: syncFailureMessage) {
+                // An offline read on an empty device offers the same "Continue
+                // offline" as a slow one (store-11-5).
+                AccountUnreachableView(
+                    message: syncFailureMessage,
+                    continueOffline: cloud.offersOfflineContinue
+                        ? { cloud.continueOfflineAtLaunch(store: store, userId: user.id) }
+                        : nil
+                ) {
                     await cloud.reconcileAtLaunch(store: store, userId: user.id)
                 }
             case .ready:
@@ -540,11 +547,14 @@ struct LoadNoticeBanner: View {
 }
 
 /// Shown when the sign-in reconcile could not read the account and the device
-/// has no progress of its own: there is nothing safe to show, so the only
-/// ways forward are to retry or sign out.
+/// has no progress of its own: there is nothing safe to show, so the ways
+/// forward are to retry or sign out — and, when the read failed only because
+/// the device is offline, to continue offline (store-11-5).
 struct AccountUnreachableView: View {
     @Environment(AuthManager.self) private var auth
     let message: String
+    /// Non-nil when `CloudSync` offers "Continue offline" (`offersOfflineContinue`).
+    var continueOffline: (() -> Void)? = nil
     let retry: () async -> Void
     @State private var isRetrying = false
 
@@ -575,6 +585,21 @@ struct AccountUnreachableView: View {
             .tint(Theme.primary)
             .disabled(isRetrying)
             .accessibilityHint("Tries to load your progress from your account again")
+
+            if let continueOffline {
+                Button {
+                    continueOffline()
+                } label: {
+                    Text("Continue offline")
+                        .scaledFont(15, weight: .medium)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: Theme.minimumHitTarget)
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.primary)
+                .disabled(isRetrying)
+                .accessibilityHint("Opens the app without waiting for your account")
+            }
 
             Button("Sign out") {
                 Task { try? await auth.signOut(force: true) }

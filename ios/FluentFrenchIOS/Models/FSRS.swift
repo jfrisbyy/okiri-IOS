@@ -24,11 +24,11 @@ nonisolated enum AnswerFormat: String, Codable, CaseIterable {
 }
 
 nonisolated enum FSRS {
-    /// Target recall probability when scheduling the next review.
-    static let requestRetention: Double = 0.9
-    /// Decay constant for the power forgetting curve.
+    /// Target recall probability when scheduling the next review (lives in Tuning, engine-11-6).
+    static var requestRetention: Double { Tuning.fsrsRequestRetention }
+    /// Decay constant for the power forgetting curve (FSRS algorithm constant).
     static let decay: Double = -0.5
-    static let factor: Double = 19.0 / 81.0
+    static let factor: Double = 19.0 / 81.0   // FSRS algorithm constant: 0.9^(1/decay) − 1, so R = 0.9 at t = S
 
     static func makeInitialState(grade: ReviewGrade, now: Date = Date()) -> FsrsState {
         let difficulty = initialDifficulty(grade: grade)
@@ -62,7 +62,7 @@ nonisolated enum FSRS {
     static func retrievability(state: FsrsState, now: Date = Date()) -> Double {
         guard let last = state.lastReviewAt else { return 1.0 }
         let elapsedDays = max(0, now.timeIntervalSince(last) / 86_400)
-        let base = 1 + factor * (elapsedDays / max(0.1, state.stability))
+        let base = 1 + factor * (elapsedDays / max(Tuning.fsrsRetrievabilityStabilityFloor, state.stability))
         return pow(base, decay)
     }
 
@@ -72,7 +72,7 @@ nonisolated enum FSRS {
 
         let r = retrievability(state: state, now: now)
         var difficulty = nextDifficulty(current: state.difficulty, grade: grade)
-        difficulty = min(10, max(1, difficulty))
+        difficulty = min(Tuning.fsrsDifficultyRange.upperBound, max(Tuning.fsrsDifficultyRange.lowerBound, difficulty))
 
         let newStability: Double
         if state.reps == 0 {
@@ -162,6 +162,6 @@ nonisolated enum FSRS {
 
     private static func nextInterval(stability: Double) -> Double {
         let interval = (stability / factor) * (pow(requestRetention, 1 / decay) - 1)
-        return max(0.4, interval)
+        return max(Tuning.fsrsMinIntervalDays, interval)   // engine-11-6
     }
 }

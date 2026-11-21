@@ -1360,4 +1360,123 @@ struct Pass3EngineTests {
         let file = contentFile([item("w0")], concept: "subjunctive-intro")
         #expect(FoundationContentLoader.gaps(from: file, now: now).first?.irtDifficulty == b(.B1))
     }
+
+    // MARK: Round 11 — curriculum door, provisional check-in vehicles
+
+    /// engine-11-1: the one item a placement miss seeds (`Tuning.placementMissSeedItems`)
+    /// shut the seeding door — the guard closed on ANY Foundation card — so a missed
+    /// imparfait probe left the learner one of its twelve items for good, and four
+    /// answers on that card certified the skill mastered.
+    @Test func aPlacementMissCardDoesNotCloseItsSkillsCurriculum() throws {
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["imparfait"], itemsEach: 12)
+        let content = store.foundationContent(now).filter { $0.conceptId == "imparfait" }
+        #expect(content.count == 12)
+        // Exactly what a first-run placement leaves: one real content item, due now.
+        store.gaps = [try #require(content.first)]
+        #expect(!store.holdsCurriculum("imparfait", now: now), "one card of twelve is not the curriculum")
+
+        // Its first answer opens the rest of the skill.
+        store.recordConceptAnswer(conceptId: "imparfait", correct: true, now: now)
+        let cards = store.gaps.filter { $0.conceptId == "imparfait" && !$0.isProbe }
+        #expect(cards.count == 12, "the other eleven items arrive: \(cards.count)")
+        #expect(Set(cards.map { FoundationSeeder.headwordKey($0.frenchWord) }).count == 12, "the miss card is not duplicated")
+        #expect(store.holdsCurriculum("imparfait", now: now))
+        // Later answers seed nothing more.
+        for i in 1...8 {
+            store.recordConceptAnswer(conceptId: "imparfait", correct: true, now: now.addingTimeInterval(Double(i) * 60))
+        }
+        #expect(store.gaps.filter { $0.conceptId == "imparfait" && !$0.isProbe }.count == 12)
+        #expect(store.seedConceptContentIfNeeded("imparfait", now: now) == 0)
+    }
+
+    /// engine-11-1: the line is the launch top-up's share. At or above
+    /// `Tuning.foundationTopUpSeededShare` the skill is the learner's and the top-up
+    /// (`FoundationContentLoader.refreshSeeded`) delivers what is missing; below it this
+    /// seeding path does — so no skill is left to neither.
+    @Test func theCurriculumLineIsTheTopUpShare() throws {
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["imparfait"], itemsEach: 12)
+        let content = store.foundationContent(now).filter { $0.conceptId == "imparfait" }
+        let line = Int((Double(content.count) * Tuning.foundationTopUpSeededShare).rounded(.up))
+
+        store.gaps = Array(content.prefix(line))
+        #expect(store.holdsCurriculum("imparfait", now: now))
+        #expect(store.seedConceptContentIfNeeded("imparfait", now: now) == 0)
+        let topped = FoundationContentLoader.refreshSeeded(store.gaps, content: store.foundationContent(now), now: now)
+        #expect(topped.filter { $0.conceptId == "imparfait" }.count == 12, "the top-up owns a skill at the line")
+
+        store.gaps = Array(content.prefix(line - 1))
+        #expect(!store.holdsCurriculum("imparfait", now: now))
+        #expect(store.seedConceptContentIfNeeded("imparfait", now: now) == 12 - (line - 1), "this path owns one below it")
+        // A concept with no content holds all there is.
+        #expect(store.holdsCurriculum("subjunctive-intro", now: now))
+    }
+
+    /// engine-11-1: the blind-spot probe skipped a concept with ANY card, so a word
+    /// filed on a skill (or a placement-miss item) shut that door too.
+    @Test func aSingleCardDoesNotStopTheBlindSpotProbe() throws {
+        let g = EngineFixtures.smallGraph()
+        let store = g.store
+        store.foundationContent = { when in
+            (0..<4).map { EngineFixtures.gap("\(g.probeMe)-item-\($0)", concept: g.probeMe, due: when) }
+        }
+        store.gaps.append(EngineFixtures.gap("\(g.probeMe)-item-0", concept: g.probeMe, sourceType: .reading))
+        #expect(store.sessionIndex % Tuning.probeEveryNSessions == 0)
+        #expect(ConceptSelector(store: store).probeConcept()?.id == g.probeMe,
+                "one card of four is not the curriculum: the probe still opens the skill")
+        // Once it holds its curriculum it is left alone.
+        store.gaps.append(contentsOf: (1..<4).map { EngineFixtures.gap("\(g.probeMe)-item-\($0)", concept: g.probeMe) })
+        #expect(ConceptSelector(store: store).probeConcept() == nil)
+    }
+
+    /// engine-11-2: a provisional seed's other Foundation items are kept out of review
+    /// and a mastered concept is never a target, so the item the first check-in rode
+    /// on became the only reviewed gap and carried every later verification pass.
+    @Test func provisionalSeedChecksInOnADifferentItemEachPass() throws {
+        var seed = EngineFixtures.mastered("seed")
+        seed.isProvisional = true
+        seed.nextCheckInAt = now
+        let gaps = (0..<4).map { i in
+            EngineFixtures.gap("seed-\(i)", concept: "seed", due: now.addingTimeInterval(Double(i) * day),
+                               fsrs: EngineFixtures.freshFsrs(at: now))
+        }
+        let store = EngineFixtures.store(concepts: [seed], gaps: gaps)
+        var carried: [String] = []
+        for pass in 0..<Tuning.seedVerificationPasses {
+            let at = now.addingTimeInterval(Double(pass) * Tuning.seedVerificationDays * day)
+            let concept = try #require(store.concept("seed"))
+            let vehicle = try #require(ConceptSelector(store: store).checkInVehicle(for: concept, now: at))
+            #expect(!vehicle.isProbe)
+            carried.append(vehicle.gapId)
+            // The check-in is answered: the item is now reviewed.
+            let idx = try #require(store.gaps.firstIndex { $0.id == vehicle.gapId })
+            store.gaps[idx].reviewCount += 1
+            store.gaps[idx].consecutiveCorrect += 1
+            store.gaps[idx].lastReviewedAt = at
+            store.gaps[idx].fsrs = FSRS.review(state: store.gaps[idx].fsrs, grade: .good, now: at)
+        }
+        #expect(Set(carried).count == Tuning.seedVerificationPasses,
+                "each verification pass rides on a different item: \(carried)")
+
+        // With every item answered, the least recently reviewed carries the next one.
+        for i in store.gaps.indices where store.gaps[i].isNew {
+            store.gaps[i].reviewCount = 1
+            store.gaps[i].lastReviewedAt = now.addingTimeInterval(20 * day)
+        }
+        let concept = try #require(store.concept("seed"))
+        let next = try #require(ConceptSelector(store: store).checkInVehicle(for: concept, now: now.addingTimeInterval(30 * day)))
+        #expect(next.gapId == carried[0], "the stalest item comes back first")
+
+        // Verified mastery keeps the weakest-reviewed rule (no FSRS state: recall
+        // follows the correct streak, so seed-0 is the weakest).
+        store.concepts[0].isProvisional = false
+        for i in store.gaps.indices {
+            store.gaps[i].fsrs = nil
+            store.gaps[i].consecutiveCorrect = store.gaps[i].id == "seed-0" ? 0 : 3
+            store.gaps[i].lastReviewedAt = store.gaps[i].id == "seed-0" ? now.addingTimeInterval(25 * day) : now
+        }
+        let verified = try #require(store.concept("seed"))
+        #expect(ConceptSelector(store: store).checkInVehicle(for: verified, now: now.addingTimeInterval(30 * day))?.gapId == "seed-0")
+    }
 }

@@ -32,33 +32,19 @@ final class WatchModel {
 
     /// Loads every category at once, so the wait is bounded by ONE
     /// `Tuning.videoFeedTimeout` rather than one per category (EM-7). Sections
-    /// come back in `YouTubeService.categories` order.
+    /// come back in `YouTubeService.categories` order. A load cancelled by the
+    /// view going away (a video opened from search) stores nothing, so the feed
+    /// loads again when Watch reappears (talkmedia-11-9).
     func load() async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
         let categories = YouTubeService.categories
-        let feeds: [String: VideoFeedResult] = await withTaskGroup(of: (String, VideoFeedResult).self) { group in
-            for category in categories {
-                let id = category.id
-                group.addTask {
-                    let feed = await YouTubeService.trending(categoryId: id)
-                    return (id, feed)
-                }
-            }
-            var byId: [String: VideoFeedResult] = [:]
-            for await (id, feed) in group { byId[id] = feed }
-            return byId
-        }
-        var result: [Section] = []
-        var failure: MediaServiceFailure? = nil
-        for category in categories {
-            let feed = feeds[category.id] ?? .curated(WatchCatalog.curated(for: category.id), reason: .serviceError)
-            if let f = feed.failure, failure == nil || f == .noKey { failure = f }
-            result.append(Section(category: category, result: feed))
-        }
-        sections = result
-        feedFailure = failure
+        guard let loaded = await TrendingFeed.load(categories: categories,
+                                                   fetch: { await YouTubeService.trending(categoryId: $0) })
+        else { return }
+        sections = zip(categories, loaded.feeds).map { Section(category: $0, result: $1) }
+        feedFailure = loaded.failure
     }
 }
 

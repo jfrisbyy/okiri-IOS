@@ -248,20 +248,14 @@ private struct ListenPlayerView: View {
     @ScaledMetric(relativeTo: .subheadline) private var captureBarHeight: CGFloat = 48
     @State private var player = DialoguePlayer()
     @State private var showSubtitles = true
-    @State private var speedIndex = 2
+    @State private var speedIndex = Tuning.listenDefaultSpeedIndex
     @State private var capturing = false
     @State private var captureStart = 0
     @State private var captured: CapturedSelection? = nil
     /// The dialogue was playing when the capture sheet opened: resume it on dismiss (EM-5).
     @State private var resumeAfterCapture = false
 
-    private let speeds: [(label: String, rate: Float)] = [
-        ("0.7x", 0.7),
-        ("0.85x", 0.85),
-        ("1x", 1.0),
-        ("1.15x", 1.15),
-        ("1.3x", 1.3),
-    ]
+    private let speeds: [(label: String, rate: Float)] = Tuning.listenPlaybackSpeeds
 
     /// The lines a hold-to-capture gesture selected, one per turn (E8).
     private struct CapturedSelection: Identifiable {

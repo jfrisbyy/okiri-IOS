@@ -252,6 +252,23 @@ nonisolated struct PronunciationCategory: Identifiable, Hashable {
     let words: [PronunciationWord]
 
     var color: Color { Color(hex: colorHex) }
+
+    /// The taxonomy concept a word saved from this page is evidence of (nil when
+    /// none fits). The U vs OU and vowel pages practise the u/ou and é/è
+    /// contrasts, and Silent Letters the silent final consonants — skills that
+    /// were authored after this map was written, so their words were credited to
+    /// nothing or, through the tagger, to whatever grammar or theme skill shared
+    /// the spelling ("tu" on Subject pronouns, "sur" on Basic prepositions)
+    /// (read-11-7).
+    var conceptId: String? {
+        switch id {
+        case "nasal-vowels": return "nasal-vowels"
+        case "french-r": return "guttural-r"
+        case "u-ou", "vowel-sounds": return "vowel-contrasts"
+        case "silent-letters": return "silent-final-consonants"
+        default: return nil
+        }
+    }
 }
 
 nonisolated enum PronunciationData {

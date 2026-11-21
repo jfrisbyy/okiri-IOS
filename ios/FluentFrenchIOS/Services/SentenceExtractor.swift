@@ -17,7 +17,8 @@ nonisolated enum SentenceExtractor {
     /// Abbreviations whose trailing period does not end a sentence.
     private static let abbreviations: Set<String> = ["m", "mme", "mlle", "dr", "st", "ste", "etc", "ex", "p", "pp", "cf", "vs", "no"]
     /// Characters stripped from both ends of a token before comparing it to the term.
-    private static let edgePunctuation = CharacterSet(charactersIn: " .,!?;:«»\"'’()[]—–…-\n\t")
+    /// Shared with `HeuristicTagger.lexiconKeys`, which trims the same edges (read-11-1).
+    static let edgePunctuation = CharacterSet(charactersIn: " .,!?;:«»\"'’()[]—–…-\n\t")
 
     /// Split a body into sentences. Newlines always break; ".", "!", "?" and "…"
     /// break when followed by whitespace/end (so "3.5" and "M. Dupont" survive).

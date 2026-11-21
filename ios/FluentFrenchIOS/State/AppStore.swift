@@ -188,8 +188,12 @@ final class AppStore {
     /// Where the Foundation curriculum comes from (D3): the bundled content by
     /// default; tests inject a file loaded from an explicit URL. Not observable state.
     @ObservationIgnored var foundationContent: (Date) -> [GapItem] = { FoundationContentLoader.gaps(now: $0) } {
-        didSet { teachableConceptIdCache = nil }
+        didSet { teachableConceptIdCache = nil; contentKeyCache = nil }
     }
+    /// Memoised `FoundationSeeder.contentKeys` of the content (engine-11-1): whether a
+    /// concept already holds its curriculum is asked on every answer, and like
+    /// `teachableConceptIds` the answer does not depend on `now`.
+    @ObservationIgnored private var contentKeyCache: [String: [FoundationSeeder.ContentKey]]?
     /// Memoised `teachableConceptIds` (store-7-3). Every call to `foundationContent`
     /// rebuilds the whole curriculum — 598 `GapItem`s over the 181-concept taxonomy —
     /// and one `select(.smart)` asks whether a concept is teachable once per
@@ -274,6 +278,10 @@ final class AppStore {
     /// written to UserDefaults. The headless driver and tests use that so the
     /// REAL engine runs on synthetic gaps/concepts without touching a device.
     private let persistence: UserDefaults?
+    /// The content seeded gaps are refreshed against (engine-10-6): on launch, and
+    /// whenever a cloud row is applied (store-11-4). The bundled file in the app;
+    /// nil (the inline fallback) refreshes nothing. Tests inject a file.
+    @ObservationIgnored var seededContentFile: FoundationContentFile? = FoundationContentLoader.file
 
     // Coalesced persistence (A9): `save()` only marks the store dirty and schedules a
     // write; `flush()` performs it. The cloud push rides on the flush.
@@ -293,6 +301,11 @@ final class AppStore {
     /// The memoised answer to "what would a Smart lesson teach next", with the
     /// generation and the clock reading it was computed at.
     @ObservationIgnored private var smartTargetMemo: (generation: Int, at: Date, concept: Concept?)? = nil
+    /// Foreground seconds an activity session earned short of a whole minute, per
+    /// modality raw value, carried into that modality's next session so floored
+    /// credit never overstates or loses real time (firstrun-11-4). In memory only:
+    /// a relaunch drops under a minute per modality, an undercount, never an overcount.
+    @ObservationIgnored var activityCreditCarrySeconds: [String: TimeInterval] = [:]
 
     init(persistence: UserDefaults? = .standard) {
         self.persistence = persistence
@@ -782,8 +795,11 @@ final class AppStore {
     /// Pass 3 F6: a miss on a check-in (`isCheckIn`) weighs `Tuning.checkInMissWeight`×.
     /// A concept that crosses into `.mastered` here gets its first check-in scheduled
     /// `Tuning.checkInInitialDays` out.
+    /// `untested` evidence (a model's opinion, not an answer the app graded) moves
+    /// the estimate but is booked as `Concept.inferredObservations`, so it can never
+    /// pay for the `Tuning.minObservations` floor (talkmedia-11-3, the engine-9-3 rule).
     func recordConceptAnswer(conceptId: String?, correct: Bool, weight: Double = 1,
-                             isCheckIn: Bool = false, now: Date = Date()) {
+                             isCheckIn: Bool = false, untested: Bool = false, now: Date = Date()) {
         guard let conceptId, weight > 0,
               let idx = concepts.firstIndex(where: { $0.id == conceptId }) else { return }
         var concept = concepts[idx]
@@ -794,6 +810,7 @@ final class AppStore {
         let applied = (isCheckIn && !correct) ? weight * Tuning.checkInMissWeight : weight
         if correct { concept.alpha += applied } else { concept.beta += applied }
         concept.observationCount += weight
+        if untested { concept.inferredObservations += weight }
         concept.lastTestedAt = now
         if !wasMastered && concept.state == .mastered {
             // Newly mastered through practice: verify it in a week.
@@ -907,6 +924,8 @@ final class AppStore {
         // celebrated up to twenty things the app can never teach (store-6-2 /
         // engine-6-2). A concept becomes announceable when its content lands.
         let teachable = teachableConceptIds()
+        let inFoundation = isInFoundation
+        let carded = Set(gaps.compactMap { $0.isProbe ? nil : $0.conceptId })
         for i in concepts.indices {
             let concept = concepts[i]
             guard concept.state == .neverObserved, !concept.prerequisites.isEmpty,
@@ -921,8 +940,15 @@ final class AppStore {
             // prerequisites are A1 basics was announced to a beginner as unlocked on
             // day two, while the ranker gives it no level fit at all. It stays
             // unflagged until the learner's band reaches it, and is announced then.
+            // ...and only once a lesson can actually offer it (engine-11-3): inside
+            // Foundation an A2 skill has no card until the bridge seeds it at unlock,
+            // and a probe opens nothing above A1, so the latched band reaching A2
+            // announced up to eight skills no lesson could hold for two weeks.
             if arePrerequisitesMet(concept) && !concept.newlyUnlocked
-                && concept.cefrLevel.order <= learnerLevel.order {
+                && concept.cefrLevel.order <= learnerLevel.order
+                && ConceptSelector.canOfferNow(level: concept.cefrLevel,
+                                               hasOwnCard: carded.contains(concept.id),
+                                               isInFoundation: inFoundation) {
                 concepts[i].newlyUnlocked = true
                 unlocked.append(concept.name)
                 changed = true
@@ -1439,10 +1465,20 @@ final class AppStore {
 
     /// Speaking feedback named a concept: count it as concept evidence at the
     /// speaking format's weight. No gap is involved, so no schedule moves.
+    ///
+    /// A strength is the model's opinion of free speech (or of a transcription of
+    /// it), not an answer the app graded: four "Solid" rounds made a concept
+    /// VERIFIED mastered — out of the selector, counted in coverage and Foundation
+    /// progress — with none of its items ever answered, while a Speak slip is not
+    /// even trusted to fail a check-in (`Tuning.isCheckInFormat`). It still moves
+    /// the estimate, but as untested evidence that cannot pay for
+    /// `Tuning.minObservations`, so certifying it takes graded answers
+    /// (talkmedia-11-3, the engine-9-3 rule). A slip stays tested evidence: a miss
+    /// can only pull mastery down.
     func recordSpeakingEvidence(conceptId: String?, correct: Bool, now: Date = Date()) {
         guard let conceptId, concept(conceptId) != nil else { return }
         recordConceptAnswer(conceptId: conceptId, correct: correct,
-                            weight: Tuning.formatEvidenceWeight(.speaking), now: now)
+                            weight: Tuning.formatEvidenceWeight(.speaking), untested: correct, now: now)
         save()
     }
 
@@ -1495,7 +1531,7 @@ final class AppStore {
 
         let gapId: String
         let wasAlreadyInTheDeck: Bool
-        if let existing = existingGap(forWord: headword) {
+        if let existing = existingTalkGap(forPhrase: headword) {   // talkmedia-11-5
             gapId = existing.id
             wasAlreadyInTheDeck = true
         } else {
@@ -1685,6 +1721,20 @@ final class AppStore {
         existingGap(forWord: word) != nil
     }
 
+    /// The card a phrase from a talk surface (Speak, Converse) already has. The
+    /// talk surfaces treat punctuation as no change (`PhraseKey`, talkmedia-10-3),
+    /// but `captureKey` keeps it, so "Je suis allé au cinéma." from Speak and "je
+    /// suis allé au cinéma" from Converse became two cards with two schedules, and
+    /// the second slip's lapse landed on a fresh card instead of the one holding
+    /// the learner's history (talkmedia-11-5). The exact headword wins; otherwise
+    /// the first card whose headword is the same phrase.
+    func existingTalkGap(forPhrase phrase: String) -> GapItem? {
+        if let exact = existingGap(forWord: phrase) { return exact }
+        let key = PhraseKey.normalized(phrase)
+        guard !key.isEmpty else { return nil }
+        return gaps.first { !$0.isProbe && PhraseKey.normalized($0.frenchWord) == key }
+    }
+
     /// Every (non-probe) headword the deck holds, under the same key `capture`
     /// de-duplicates on. A surface that asks "is this already saved?" about many
     /// words at once — the reader marks every word it draws — reads this once and
@@ -1841,12 +1891,7 @@ final class AppStore {
             // Content corrections reach gaps already seeded from the bundled
             // curriculum (engine-10-6). Only against the real content file: the
             // inline fallback must never overwrite what the learner was seeded with.
-            if let file = FoundationContentLoader.file {
-                gaps = FoundationContentLoader.refreshSeeded(items, content: FoundationContentLoader.gaps(from: file),
-                                                             now: Date())
-            } else {
-                gaps = items
-            }
+            gaps = refreshedSeededGaps(items)
         case .corrupt: gaps = []; fail(.corruptGaps)
         }
 
@@ -2007,8 +2052,19 @@ final class AppStore {
             checkInHistory: checkInHistory,
             unlockedModalities: Array(unlockedModalities).sorted(),
             journeyStartedAt: journeyStartedAt,
-            savedScenarios: savedScenariosData
+            savedScenarios: savedScenariosData,
+            latchedLevel: latchedLevel.rawValue
         )
+    }
+
+    /// `items` with the engine-10-6 content refresh applied: corrections by
+    /// content id, unstamped gaps stamped, added items topped up. Only against the
+    /// real content file (`seededContentFile`); the inline fallback must never
+    /// overwrite what the learner was seeded with.
+    private func refreshedSeededGaps(_ items: [GapItem], now: Date = Date()) -> [GapItem] {
+        guard let file = seededContentFile else { return items }
+        return FoundationContentLoader.refreshSeeded(items, content: FoundationContentLoader.gaps(from: file, now: now),
+                                                     now: now)
     }
 
     /// Learner-saved scenario guides, written by `ScenarioStore` under the shared
@@ -2042,13 +2098,24 @@ final class AppStore {
     /// A known-good cloud snapshot supersedes an unreadable local blob, so any
     /// launch-time load error is acknowledged here (the corrupt copy is kept).
     func apply(snapshot: ProgressSnapshot) {
-        gaps = snapshot.gaps
+        // store-11-4: the same content refresh as `load()`. A row written by an
+        // older build, or by a device that had not saved since its content update,
+        // otherwise put the pre-correction headword, example and blank back on
+        // this device until the next cold launch (engine-10-6).
+        gaps = refreshedSeededGaps(snapshot.gaps)
         concepts = snapshot.concepts
         errors = snapshot.errors
         if errors.count > Tuning.errorHistoryCap {
             errors.removeLast(errors.count - Tuning.errorHistoryCap)
         }
         abilityTheta = snapshot.abilityTheta
+        // store-11-3: the band travels with θ. Re-latching against THIS device's
+        // band reported A2 on a restored phone for a θ the writing phone reported
+        // as B1 (engine-10-2). A row from an earlier build takes the bare mapping.
+        latchedLevel = ConceptSelector.level(
+            forTheta: snapshot.abilityTheta,
+            previous: snapshot.latchedLevel.flatMap { CEFRLevel(rawValue: $0) }
+        )
         masteryDays = Set(snapshot.masteryDays)
         hasCompletedAssessment = snapshot.hasCompletedAssessment
         if let level = CEFRLevel(rawValue: snapshot.assessedLevel) { assessedLevel = level }
@@ -2101,6 +2168,9 @@ final class AppStore {
         concepts = ConceptTaxonomy.seed()
         errors = []
         abilityTheta = Tuning.defaultAbilityTheta
+        // A fresh record has no band history: the bare mapping, never one latched
+        // from the previous learner's θ (store-11-3, engine-10-2).
+        latchedLevel = ConceptSelector.level(forTheta: abilityTheta)
         masteryDays = []
         hasCompletedAssessment = false
         assessedLevel = .A1
@@ -2108,6 +2178,7 @@ final class AppStore {
         preferences = nil
         activityProgress = [:]
         lifetimeMinutes = [:]
+        activityCreditCarrySeconds = [:]
         lessonMinutes = [:]
         totalLessonMinutes = 0
         lessonsCompletedByDay = [:]
@@ -2321,6 +2392,7 @@ final class AppStore {
             masteryDays = []
             activityProgress = [:]
             lifetimeMinutes = [:]
+            activityCreditCarrySeconds = [:]
             lessonMinutes = [:]
             totalLessonMinutes = 0
             lessonsCompletedByDay = [:]
@@ -2733,7 +2805,13 @@ extension AppStore {
     @discardableResult
     func creditActivity(_ modality: LearningModality, activeSeconds: TimeInterval, now: Date = Date()) -> Int {
         let cap = ActivityCredit.capMinutes(planTargetMinutes: planTargetMinutes(for: modality, now: now))
-        let minutes = ActivityCredit.minutes(activeSeconds: activeSeconds, capMinutes: cap)
+        // Floored, with the sub-minute remainder carried, so the lifetime minutes the
+        // unlock gate reads never exceed the time really spent (firstrun-11-4).
+        let earned = ActivityCredit.credit(activeSeconds: activeSeconds,
+                                           carriedSeconds: activityCreditCarrySeconds[modality.rawValue] ?? 0,
+                                           capMinutes: cap)
+        activityCreditCarrySeconds[modality.rawValue] = earned.carrySeconds
+        let minutes = earned.minutes
         guard minutes > 0 else { return 0 }
         recordActivityMinutes(modality, minutes: minutes, now: now)
         // Crossing the demonstrated-minutes bar keeps its promise the moment it is
@@ -2925,11 +3003,23 @@ extension AppStore {
     /// this the probe answer moves the concept to `.learning` with an empty spine, so
     /// it can never become a lesson target — the app diagnoses a skill it can never
     /// teach. Seeding turns the probe into the door to that skill instead. A no-op when
-    /// the concept already has non-probe gaps of its own, or has no content to seed.
-    /// Returns how many gaps were added.
+    /// the concept already has curriculum (Foundation) gaps of its own, or has no
+    /// content to seed. Returns how many gaps were added.
+    ///
+    /// Only CURRICULUM gaps close the door, as in `hasBridgeContent`: one card the
+    /// learner saved (an idiom from Idioms, an imparfait form from Tenses, a word
+    /// the tagger filed on the skill) used to count, so the skill's twelve authored
+    /// items were never seeded and its whole spine and mastery estimate were that
+    /// one card (read-11-2). The slice skips headwords and ids already in the deck,
+    /// so the saved card is never duplicated.
+    ///
+    /// Nor does the ONE curriculum item a placement miss seeds
+    /// (`Tuning.placementMissSeedItems`): the door now closes only once the concept
+    /// holds its curriculum (`holdsCurriculum`), or a missed imparfait probe left the
+    /// learner one of twelve items for good, certified mastered on it (engine-11-1).
     @discardableResult
     func seedConceptContentIfNeeded(_ conceptId: String, now: Date = Date()) -> Int {
-        guard !gaps.contains(where: { $0.conceptId == conceptId && !$0.isProbe }) else { return 0 }
+        guard !holdsCurriculum(conceptId, now: now) else { return 0 }
         let existingHeadwords = Set(gaps.map { FoundationSeeder.headwordKey($0.frenchWord) })
         let slice = foundationSlice(conceptIds: [conceptId], excludedHeadwords: existingHeadwords,
                                     existingIds: Set(gaps.map { $0.id }), now: now)
@@ -2937,6 +3027,21 @@ extension AppStore {
         gaps.append(contentsOf: slice)
         save()
         return slice.count
+    }
+
+    /// True when the learner's cards already hold this concept's curriculum (at least
+    /// `Tuning.foundationTopUpSeededShare` of its content items), or it has none to
+    /// seed. A single card — a placement-miss item, a captured word — does not
+    /// (engine-11-1). The seeding door and the blind-spot probe both read this.
+    func holdsCurriculum(_ conceptId: String, now: Date = Date()) -> Bool {
+        let keys: [String: [FoundationSeeder.ContentKey]]
+        if let contentKeyCache {
+            keys = contentKeyCache
+        } else {
+            keys = FoundationSeeder.contentKeys(foundationContent(now))
+            contentKeyCache = keys
+        }
+        return FoundationSeeder.holdsCurriculum(keys[conceptId] ?? [], conceptGaps: gaps(forConcept: conceptId))
     }
 
     /// Base concepts the Foundation track has actually seeded content for — the
@@ -3328,6 +3433,12 @@ extension AppStore {
         var known = feedback
         known.mistakeConceptIds = feedback.mistakeConceptIds.filter { concept($0) != nil }
         let plan = SpeakGapPlan.plan(original: original, feedback: known)
+        // No correction, no slip: a mistake concept named beside the learner's own
+        // line returned unchanged (punctuation and casing aside) books no miss and
+        // is not announced — Converse's rule for the same line (talkmedia-11-2,
+        // talkmedia-10-3). It is not counted as a strength either.
+        let namedMistakes = known.mistakeConceptIds
+        if !plan.hasCorrection { known.mistakeConceptIds = [] }
         let specs = plan.specs
         outcome.shortened = plan.shortened
         outcome.tooLongToSave = plan.tooLongToSave
@@ -3343,7 +3454,7 @@ extension AppStore {
                          conceptWeight: firstForConcept ? 1 : 0, now: now)
         }
         for spec in specs {
-            if let existing = existingGap(forWord: spec.french) {
+            if let existing = existingTalkGap(forPhrase: spec.french) {   // talkmedia-11-5
                 outcome.duplicateCount += 1
                 if spec.kind == .corrected {
                     bookMiss(onGap: existing.id)
@@ -3383,7 +3494,7 @@ extension AppStore {
             // (store-6-3).
             if hasTeachableMaterial(id, now: now) { outcome.surfacedMissedConceptIds.append(id) }
         }
-        for id in feedback.strongConceptIds where concept(id) != nil && !outcome.missedConceptIds.contains(id) {
+        for id in feedback.strongConceptIds where concept(id) != nil && !namedMistakes.contains(id) {
             recordSpeakingEvidence(conceptId: id, correct: true, now: now)
             outcome.strongConceptIds.append(id)
             // A strength is announced on the same terms as a miss: only when the
@@ -3432,6 +3543,8 @@ extension AppStore {
         // meant to say back, and a tutor turn made of several sentences is several
         // expressions rather than one card (talkmedia-4-1 / talkmedia-6-1).
         guard !phrase.isEmpty, CaptureBuilder.isShortPhrase(phrase) else { return false }
+        // Already held, punctuation aside (talkmedia-11-5).
+        guard existingTalkGap(forPhrase: phrase) == nil else { return false }
         var gap = makeCapturedGap(
             frenchWord: phrase,
             englishTranslation: translation,

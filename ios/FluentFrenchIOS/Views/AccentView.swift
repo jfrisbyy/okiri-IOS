@@ -122,14 +122,9 @@ private struct AccentPracticeView: View {
     private var word: PronunciationWord { category.words[index] }
     private var progress: Double { Double(index + 1) / Double(category.words.count) }
 
-    /// The taxonomy concept this sound category is evidence of (nil when none fits).
-    private var conceptId: String? {
-        switch category.id {
-        case "nasal-vowels": return "nasal-vowels"
-        case "french-r": return "guttural-r"
-        default: return nil
-        }
-    }
+    /// The taxonomy concept this sound category is evidence of (nil when none
+    /// fits). The map lives on the model, view-free (read-11-7).
+    private var conceptId: String? { category.conceptId }
 
     /// What saving a practice word stores: the word, its meaning, the plain-English
     /// sound hint as the pronunciation and the IPA (labelled) in the explanation —

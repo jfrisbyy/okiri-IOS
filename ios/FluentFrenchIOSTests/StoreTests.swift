@@ -1289,6 +1289,10 @@ struct StoreTests {
     @Test func converseCorrectionCreatesADedupedGapAndRecordsALapse() throws {
         let s = EngineFixtures.store()
         let concept = s.concepts[0]
+        // The correction's evidence opens the concept's curriculum (engine-5-1),
+        // which a captured card no longer blocks (read-11-2), so the dedupe is
+        // counted on the learner's own cards, not on every gap.
+        func cards() -> Int { s.gaps.filter { $0.sourceType != .foundation }.count }
         let gap = try #require(s.recordConverseCorrection(originalFrench: "orig-x", correctedFrench: " Corr-x ", explanation: "why-x",
                                                           conceptId: concept.id, now: now))
         #expect(gap.frenchWord == "Corr-x")
@@ -1312,7 +1316,7 @@ struct StoreTests {
         #expect(gap.fsrs != nil && gap.fsrs?.lapses == seededLapses + 1)
         #expect(gap.reviewCount == 1 && gap.consecutiveCorrect == 0)
         #expect(gap.lastReviewedAt == now)
-        #expect(s.gaps.count == 1)
+        #expect(cards() == 1)
         // The correction was shortened, so the card carries no English yet. A lesson
         // cannot ask about it until a lookup fills it in, so it is not counted as
         // material waiting for the next lesson either (read-9-5).
@@ -1324,12 +1328,12 @@ struct StoreTests {
                                                             conceptId: concept.id, now: now.addingTimeInterval(60)))
         #expect(again.id == gap.id)
         #expect(again.reviewCount == 2 && again.fsrs?.lapses == seededLapses + 2)
-        #expect(s.gaps.count == 1)
+        #expect(cards() == 1)
 
         // Nothing to correct → nil and no gap.
         #expect(s.recordConverseCorrection(originalFrench: "same-z", correctedFrench: "same-z", explanation: "", conceptId: nil, now: now) == nil)
         #expect(s.recordConverseCorrection(originalFrench: "x", correctedFrench: "   ", explanation: "", conceptId: nil, now: now) == nil)
-        #expect(s.gaps.count == 1)
+        #expect(cards() == 1)
 
         // With a gloss and an unknown concept: no translation flag, untagged, phrasing.
         let glossed = try #require(s.recordConverseCorrection(originalFrench: "a-1", correctedFrench: "b-1", explanation: "e",
@@ -1339,7 +1343,7 @@ struct StoreTests {
         #expect(glossed.conceptId == nil)
         #expect(glossed.category == .phrasing)
         #expect(glossed.cefrLevel == s.learnerLevel)
-        #expect(s.gaps.count == 2)
+        #expect(cards() == 2)
 
         // A lapse on a mastered word through this path clears the badge too.
         var mastered = EngineFixtures.gap("m", concept: nil, consecutiveCorrect: Tuning.gapMasteryStreak,
@@ -1844,5 +1848,286 @@ struct CloudSyncCoordinationTests {
         let thetas = levels.map { Tuning.placementTheta(for: $0) }
         #expect(thetas == thetas.sorted() && Set(thetas).count == thetas.count)
         #expect(thetas.allSatisfy { $0 > Tuning.abilityThetaFloor && $0 < Tuning.abilityThetaCeiling })
+    }
+}
+
+// MARK: - Cloud sync (audit round 11)
+
+/// A row read that returns whatever the test last scripted.
+@MainActor
+final class ScriptedFetch {
+    var next: RemoteFetch
+    private(set) var reads = 0
+
+    init(_ first: RemoteFetch) { next = first }
+
+    func install(on cloud: CloudSync) {
+        cloud.fetchOverride = { [self] _ in
+            reads += 1
+            return next
+        }
+    }
+}
+
+@MainActor
+struct CloudSyncRound11Tests {
+    /// The row every first sign-in uploads: a device signed in, never placed.
+    private func emptyFirstSignInRow(at date: Date) -> ProgressSnapshot {
+        let scratch = ScratchDefaults()
+        let fresh = AppStore(persistence: scratch.defaults)
+        fresh.beginSession(userId: "user-1")
+        #expect(fresh.localUpdatedAt == nil)
+        var row = fresh.makeSnapshot()
+        row.clientUpdatedAt = date
+        return row
+    }
+
+    private func accountRow(gapId: String, at date: Date) -> ProgressSnapshot {
+        let other = AppStore(persistence: nil)
+        other.gaps = [EngineFixtures.gap(gapId, concept: nil)]
+        other.hasCompletedAssessment = true
+        other.localUpdatedAt = date
+        return other.makeSnapshot()
+    }
+
+    // MARK: store-11-1 — an empty account row is no backup
+
+    @Test func theFirstSignInRowHoldsNoActivityAndARealRowDoes() {
+        #expect(emptyFirstSignInRow(at: Date()).holdsNoLearnerActivity)
+        #expect(accountRow(gapId: "a", at: Date()).holdsNoLearnerActivity == false)
+        var answered = emptyFirstSignInRow(at: Date())
+        answered.concepts[0].observationCount = 1
+        #expect(answered.holdsNoLearnerActivity == false, "a single booked answer is a record")
+        var earned = emptyFirstSignInRow(at: Date())
+        earned.xp = 10
+        #expect(earned.holdsNoLearnerActivity == false)
+    }
+
+    @Test func anEmptyAccountRowNeverReplacesWhatWasDoneOffline() async {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        let cloud = CloudSync(defaults: scratch.defaults)
+        cloud.runsLaunchTimer = false
+        cloud.launchReconcileBudget = 1
+        cloud.launchOfflineOfferDelay = 2
+        let fetch = HeldFetch()
+        fetch.install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+
+        let launch = Task { await cloud.reconcileAtLaunch(store: store, userId: "user-1") }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(600))
+        while !fetch.isHolding, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        cloud.launchCheckpoint(store: store, userId: "user-1", elapsed: 2)
+        #expect(cloud.launchGate(for: "user-1") == .stillSyncing)
+        cloud.continueOfflineAtLaunch(store: store, userId: "user-1")
+
+        // The learner places and studies offline.
+        store.hasCompletedAssessment = true
+        store.gaps = [EngineFixtures.gap("offline", concept: nil)]
+        store.xp = 120
+        store.save()
+        // The account holds only the empty record of an earlier, abandoned sign-in.
+        fetch.release(.snapshot(emptyFirstSignInRow(at: Date().addingTimeInterval(-86_400)), serverUpdatedAt: nil))
+        await launch.value
+
+        #expect(store.gaps.map(\.id) == ["offline"], "an account with no progress replaces nothing")
+        #expect(store.hasCompletedAssessment && store.xp == 120)
+        #expect(uploads.count == 1, "the device copy goes up, as into an account with no row")
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).isPending(for: "user-1") == false)
+        #expect(cloud.userId == "user-1")
+    }
+
+    @Test func aRequestedRestoreFromAnEmptyRowFailsAndKeepsTheUnreadableCopy() async {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.beginSession(userId: "user-1")
+        scratch.defaults.set(Data("this is not json".utf8), forKey: "ff.gaps.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        let cloud = CloudSync(defaults: scratch.defaults)
+        ScriptedFetch(.snapshot(emptyFirstSignInRow(at: Date()), serverUpdatedAt: nil)).install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+
+        let restored = await cloud.restoreFromAccount(store: store, userId: "user-1", discardUnreadableCopy: true)
+        #expect(restored == false, "there is nothing in the account to restore (store-2-1)")
+        #expect(store.loadError == .corruptGaps)
+        #expect(store.corruptBlob(for: .corruptGaps) != nil, "the only trace of the record is kept")
+        #expect(uploads.count == 0)
+        #expect(cloud.syncState == .failed(CloudSync.noAccountBackupMessage))
+    }
+
+    // MARK: store-11-2 — sign-out after a launch whose read failed
+
+    /// A device whose record reached `user-1`'s row, relaunched with the read failing.
+    private func backedUpThenRelaunchedOffline() async -> (ScratchDefaults, AppStore, CloudSync, ScriptedFetch, UploadRecorder, ProgressSnapshot) {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        store.gaps = [EngineFixtures.gap("answered", concept: nil)]
+        store.save()
+        let firstLaunch = CloudSync(defaults: scratch.defaults)
+        ScriptedFetch(.none).install(on: firstLaunch)
+        let firstUploads = UploadRecorder()
+        firstUploads.install(on: firstLaunch)
+        await firstLaunch.reconcile(store: store, userId: "user-1", initial: true)
+        #expect(firstUploads.count == 1)
+        let row = store.makeSnapshot()
+
+        // Relaunch: a new coordinator, the same device record and markers.
+        let cloud = CloudSync(defaults: scratch.defaults)
+        let fetch = ScriptedFetch(.failed(SnapshotUndecodable(underlying: "offline stand-in")))
+        fetch.install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+        await cloud.reconcile(store: store, userId: "user-1", initial: true)
+        #expect(cloud.userId == nil, "uploads stay off: the row was not read")
+        #expect(cloud.launchGate(for: "user-1") == .ready)
+        return (scratch, store, cloud, fetch, uploads, row)
+    }
+
+    @Test func aBackedUpDeviceSignsOutAfterAFailedLaunchRead() async {
+        let (scratch, store, cloud, _, uploads, _) = await backedUpThenRelaunchedOffline()
+        defer { withExtendedLifetime(scratch) {} }   // the markers live in its defaults
+        #expect(await cloud.pushForSignOut(store: store),
+                "everything is already in the account, so the network is not needed (store-3-2)")
+        #expect(uploads.count == 0)
+    }
+
+    @Test func signOutUploadsAnAnswerGivenAfterAFailedLaunchReadOnceOnline() async {
+        let (scratch, store, cloud, fetch, uploads, row) = await backedUpThenRelaunchedOffline()
+        defer { withExtendedLifetime(scratch) {} }   // the markers live in its defaults
+        store.gaps.append(EngineFixtures.gap("offline-answer", concept: nil))
+        store.save()
+        store.flush()
+        cloud.progressDidChange(store)
+        #expect(await cloud.pushForSignOut(store: store) == false, "still offline: the answer is not backed up")
+        #expect(uploads.count == 0)
+
+        // Back online: the row is the one this device last wrote.
+        fetch.next = .snapshot(row, serverUpdatedAt: nil)
+        #expect(await cloud.pushForSignOut(store: store), "the sign-out itself re-establishes contact and uploads")
+        #expect(uploads.count == 1)
+        #expect(cloud.userId == "user-1")
+    }
+
+    // MARK: store-11-3 — the latched band travels with θ
+
+    @Test func theLatchedBandTravelsInTheSnapshot() {
+        let edge = Tuning.levelThetaFloor(for: .B1)
+        let h = Tuning.levelHysteresis
+        let phone = AppStore(persistence: nil)
+        phone.abilityTheta = edge + 2 * h
+        phone.abilityTheta = edge - h / 2
+        #expect(phone.latchedLevel == .B1, "reached from above, the band holds (engine-10-2)")
+
+        let restored = AppStore(persistence: nil)
+        restored.apply(snapshot: phone.makeSnapshot())
+        #expect(restored.latchedLevel == phone.latchedLevel, "the same record reports the same band on every device")
+
+        let lowEdge = Tuning.levelThetaFloor(for: .A2)
+        let low = AppStore(persistence: nil)
+        low.abilityTheta = lowEdge - 2 * h
+        low.abilityTheta = lowEdge + h / 2
+        #expect(low.latchedLevel == .A1)
+        let second = AppStore(persistence: nil)
+        second.apply(snapshot: low.makeSnapshot())
+        #expect(second.latchedLevel == .A1)
+
+        // A row from an earlier build carries no band: the bare mapping, not this
+        // device's own history.
+        var old = phone.makeSnapshot()
+        old.latchedLevel = nil
+        let fromOldRow = AppStore(persistence: nil)
+        fromOldRow.abilityTheta = lowEdge - 2 * h
+        fromOldRow.apply(snapshot: old)
+        #expect(fromOldRow.latchedLevel == ConceptSelector.level(forTheta: old.abilityTheta))
+    }
+
+    // MARK: store-11-4 — an applied row gets the content refresh
+
+    private func contentFile(_ items: [FoundationItemContent]) -> FoundationContentFile {
+        FoundationContentFile(version: 2, skills: [FoundationSkillContent(id: "present-irregular",
+                                                                          category: GapCategory.grammar.rawValue,
+                                                                          items: items)])
+    }
+
+    private func item(_ fr: String, note: String = "n") -> FoundationItemContent {
+        FoundationItemContent(fr: fr, en: "e \(fr)", note: note, ex: "x \(fr) y", exEn: "t", blank: fr,
+                              alts: nil, testable: nil)
+    }
+
+    @Test func anAppliedRowCarriesTheContentCorrections() throws {
+        let now = EngineFixtures.now
+        let v1 = contentFile([item("w0"), item("w1"), item("w2")])
+        let writer = AppStore(persistence: nil)
+        writer.gaps = FoundationContentLoader.gaps(from: v1, now: now)
+        writer.localUpdatedAt = now
+        let row = writer.makeSnapshot()
+
+        let store = AppStore(persistence: nil)
+        store.seededContentFile = contentFile([item("w0", note: "fixed"), item("w1"), item("w2"), item("added")])
+        store.apply(snapshot: row)
+        let w0 = try #require(store.gaps.first { $0.frenchWord == "w0" })
+        #expect(w0.explanation == "fixed", "the correction reaches a restored device without a relaunch (engine-10-6)")
+        #expect(store.gaps.contains { $0.frenchWord == "added" }, "items added since are topped up")
+    }
+
+    // MARK: store-11-5 — "Continue offline" when the device is actually offline
+
+    @Test func anOfflineLaunchOnAnEmptyDeviceOffersToContinueOffline() async {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        let cloud = CloudSync(defaults: scratch.defaults)
+        cloud.runsLaunchTimer = false
+        let fetch = ScriptedFetch(.failed(URLError(.notConnectedToInternet)))
+        fetch.install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+
+        await cloud.reconcileAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.launchGate(for: "user-1") == .accountUnreachable)
+        #expect(cloud.offersOfflineContinue, "the read failed fast, before the slow-network offer could appear")
+        #expect(cloud.syncState == .failed(CloudSync.offlineWithNothingOnDeviceMessage),
+                "the device holds nothing, so 'progress stays on this device' would be false")
+
+        cloud.continueOfflineAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.launchGate(for: "user-1") == .ready)
+        #expect(cloud.offersOfflineContinue == false)
+        #expect(cloud.userId == nil, "uploads stay off until the row is read")
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).isPending(for: "user-1"))
+
+        // Placed offline; back online the account's real record still wins.
+        store.gaps = [EngineFixtures.gap("offline", concept: nil)]
+        store.save()
+        fetch.next = .snapshot(accountRow(gapId: "account", at: Date().addingTimeInterval(-3600)), serverUpdatedAt: nil)
+        await cloud.reconcile(store: store, userId: "user-1", initial: false)
+        #expect(store.gaps.map(\.id) == ["account"])
+        #expect(uploads.count == 0)
+        #expect(cloud.userId == "user-1")
+    }
+
+    @Test func tryingAgainEndsTheOfflineOffer() async {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        let cloud = CloudSync(defaults: scratch.defaults)
+        cloud.runsLaunchTimer = false
+        let fetch = ScriptedFetch(.failed(URLError(.notConnectedToInternet)))
+        fetch.install(on: cloud)
+        UploadRecorder().install(on: cloud)
+        await cloud.reconcileAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.offersOfflineContinue)
+        // Online again: "Try again" reads an empty account and lets the learner in.
+        fetch.next = .none
+        await cloud.reconcileAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.offersOfflineContinue == false)
+        #expect(cloud.launchGate(for: "user-1") == .ready)
+        // A stale tap does nothing.
+        cloud.continueOfflineAtLaunch(store: store, userId: "user-1")
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).isPending(for: "user-1") == false)
     }
 }

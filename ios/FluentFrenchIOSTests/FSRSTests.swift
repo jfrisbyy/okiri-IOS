@@ -249,4 +249,25 @@ struct FSRSTests {
         #expect(p.nextReviewAt.timeIntervalSince(now) >= 3 * r.nextReviewAt.timeIntervalSince(now))
         #expect(r.nextReviewAt.timeIntervalSince(now) / day >= Tuning.fsrsInitialStability(for: .hard) - 1e-6)
     }
+
+    /// engine-11-6: the scheduler's knobs live in Tuning, and the scheduler reads them.
+    @Test func schedulerKnobsComeFromTuning() {
+        #expect(FSRS.requestRetention == Tuning.fsrsRequestRetention)
+        // No interval is ever shorter than the floor, however fragile the card.
+        let tiny = FsrsState(stability: 0.01, difficulty: 5, reps: 3, lapses: 0, lastReviewAt: now, dueAt: now)
+        let next = FSRS.review(state: tiny, grade: .again, now: now)
+        #expect(next.dueAt.timeIntervalSince(now) / day >= Tuning.fsrsMinIntervalDays - 1e-9)
+        // A stability below the curve's floor reads as the floor.
+        let elapsed = now.addingTimeInterval(day)
+        let floored = FsrsState(stability: Tuning.fsrsRetrievabilityStabilityFloor, difficulty: 5, reps: 3, lapses: 0,
+                                lastReviewAt: now, dueAt: now)
+        #expect(abs(FSRS.retrievability(state: tiny, now: elapsed) - FSRS.retrievability(state: floored, now: elapsed)) < 1e-12)
+        // A gap with no FSRS state falls back to the legacy streak estimate.
+        var legacy = EngineFixtures.gap("l", concept: "c")
+        legacy.fsrs = nil
+        legacy.consecutiveCorrect = 2
+        #expect(abs(legacy.retrievability(at: now) - (Tuning.legacyRecallBase + 2 * Tuning.legacyRecallPerCorrect)) < 1e-12)
+        legacy.consecutiveCorrect = 50
+        #expect(legacy.retrievability(at: now) == Tuning.legacyRecallCeiling)
+    }
 }

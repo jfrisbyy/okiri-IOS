@@ -42,7 +42,7 @@ nonisolated enum ScenariosService {
 
         let result = await TalkModelClient.complete(
             messages: [["role": "system", "content": system], ["role": "user", "content": user]],
-            temperature: 0.4,
+            temperature: Tuning.scenarioGuideTemperature,
             timeout: Tuning.scenarioGuideTimeout
         )
         switch result {

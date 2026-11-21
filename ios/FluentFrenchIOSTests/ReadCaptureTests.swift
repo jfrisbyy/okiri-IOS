@@ -100,7 +100,9 @@ struct ReadCaptureTests {
         // The article-stripped form is indexed alongside the item's meaning, not on
         // its own: a bare "pain" is this skill's only when it means bread (read-10-1).
         #expect(lexicon[HeuristicTagger.meaningKey("pain", side: "bread")] == "food-drink-vocab")
-        #expect(lexicon["le pain"] == "food-drink-vocab", "the exact item names its skill")
+        // The exact item names its skill too — alongside its meaning (read-11-1).
+        #expect(lexicon[HeuristicTagger.meaningKey("le pain", side: "bread")] == "food-drink-vocab", "the exact item names its skill")
+        #expect(lexicon["le pain"] == nil, "no form names a skill without a meaning (read-11-1)")
         let result = HeuristicTagger.tag(gap: captured("pain", english: "bread"), concepts: taxonomy, lexicon: lexicon)
         guard case .existing(let id, let confidence) = result else { Issue.record("expected a tag, got \(result)"); return }
         #expect(id == "food-drink-vocab")
@@ -1428,14 +1430,49 @@ struct ReadCaptureTests {
         s.capture(CaptureDraft(frenchWord: "pain", englishTranslation: "bread",
                                sourceType: .reading, sourceTab: "read"), now: now)
         let keys = s.savedHeadwordKeys()
+        let meanings = s.savedHeadwordMeanings()
         #expect(!keys.contains(AppStore.captureKey("matin")), "the deck really keys it with its article")
-        #expect(KeyVocabulary.isSaved("matin", in: keys))
-        #expect(KeyVocabulary.isSaved("Matin", in: keys))
-        #expect(KeyVocabulary.isSaved("école", in: keys))
-        #expect(KeyVocabulary.isSaved("le pain", in: keys), "a swept article phrase is the bare card")
-        #expect(!KeyVocabulary.isSaved("matins", in: keys))
-        #expect(!KeyVocabulary.isSaved("soir", in: keys))
+        // Once the gloss is known, an article form with the same meaning is the card (read-10-5).
+        #expect(KeyVocabulary.isSaved("matin", meaning: "morning", in: meanings))
+        #expect(KeyVocabulary.isSaved("Matin", meaning: "the morning", in: meanings))
+        #expect(KeyVocabulary.isSaved("école", meaning: "school", in: meanings))
+        #expect(KeyVocabulary.isSaved("le pain", meaning: "the bread", in: meanings), "a swept article phrase is the bare card")
+        #expect(KeyVocabulary.isSaved("pain", meaning: "anything", in: meanings), "its own key needs no meaning")
+        #expect(!KeyVocabulary.isSaved("matins", meaning: "mornings", in: meanings))
+        #expect(!KeyVocabulary.isSaved("soir", meaning: "evening", in: meanings))
+        #expect(!KeyVocabulary.isSaved("", meaning: "", in: meanings))
+        // Before the meaning is known only the word's own key counts (read-11-5).
+        #expect(KeyVocabulary.isSaved("pain", in: keys))
+        #expect(KeyVocabulary.isSaved("Pain", in: keys))
+        #expect(!KeyVocabulary.isSaved("matin", in: keys))
         #expect(!KeyVocabulary.isSaved("", in: keys))
+    }
+
+    // MARK: - read-11-5 A homograph of a deck word with an article is not saved
+
+    @Test func aHomographOfADeckWordWithItsArticleIsNotSaved() {
+        let s = quietStore()
+        for (fr, en) in [("l'été", "summer"), ("le lit", "the bed"), ("la porte", "the door")] {
+            s.capture(CaptureDraft(frenchWord: fr, englishTranslation: en, sourceType: .reading, sourceTab: "read"), now: now)
+        }
+        let keys = s.savedHeadwordKeys()
+        let meanings = s.savedHeadwordMeanings()
+        // "a été", "il lit", "elle porte": the reader must not mark them saved.
+        #expect(!KeyVocabulary.isSaved("été", in: keys))
+        #expect(!KeyVocabulary.isSaved("lit", in: keys))
+        #expect(!KeyVocabulary.isSaved("porte", in: keys))
+        #expect(!KeyVocabulary.isSaved("été", meaning: "been", in: meanings))
+        #expect(!KeyVocabulary.isSaved("lit", meaning: "reads", in: meanings))
+        #expect(!KeyVocabulary.isSaved("porte", meaning: "carries / wears", in: meanings))
+        // The season, the bed and the door themselves are the deck's cards.
+        #expect(KeyVocabulary.isSaved("été", meaning: "summer", in: meanings))
+        #expect(KeyVocabulary.isSaved("lit", meaning: "bed", in: meanings))
+        #expect(KeyVocabulary.isSaved("porte", meaning: "door", in: meanings))
+        // And the store agrees: "été" (been) is a new card.
+        guard case .saved = s.capture(CaptureDraft(frenchWord: "été", englishTranslation: "been",
+                                                   sourceType: .reading, sourceTab: "read"), now: now) else {
+            Issue.record("the participle is its own card"); return
+        }
     }
 
     // MARK: - read-10-7 The context is the sentence the word was tapped in
@@ -1484,5 +1521,169 @@ struct ReadCaptureTests {
         #expect(r8.region == .tunisia)
         #expect(r8.region.group == .africa)
         #expect(r8.region.label != "France")
+    }
+
+    // MARK: - read-11-1 An exact lexicon hit needs the accents and the meaning
+
+    @Test func anExactLexiconHitNeedsItsAccentsAndItsMeaning() {
+        let lexicon = HeuristicTagger.lexicon(from: FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: "basic-prepositions", category: "grammar", items: [item("sur", "on")]),
+            FoundationSkillContent(id: "questions", category: "grammar", items: [item("où", "where")]),
+            FoundationSkillContent(id: "negation", category: "grammar", items: [item("si", "yes (after a negative question)")]),
+            FoundationSkillContent(id: "imperative", category: "grammar", items: [item("Regarde !", "look! (informal)")]),
+            FoundationSkillContent(id: "everyday-connectors", category: "phrasing", items: [item("ou", "or")]),
+            FoundationSkillContent(id: "vowel-contrasts", category: "pronunciation", items: [item("sûr", "sure")]),
+        ]))
+        func hit(_ fr: String, _ en: String) -> String? {
+            HeuristicTagger.lexiconConcept(for: captured(fr, english: en), lexicon: lexicon)
+        }
+        // A folded spelling is a different word.
+        #expect(hit("sûr", "sure") == "vowel-contrasts")
+        #expect(hit("ou", "or") == "everyday-connectors")
+        #expect(hit("regardé", "watched") == nil)
+        // The same spelling with another meaning is a different word too.
+        #expect(hit("si", "if") == nil)
+        #expect(hit("regarde", "watches") == nil)
+        // The item itself still names its skill.
+        #expect(hit("sur", "on") == "basic-prepositions")
+        #expect(hit("où", "where") == "questions")
+        #expect(hit("si", "yes") == "negation", "a parenthetical tag is not a different meaning")
+        #expect(hit("regarde", "look") == "imperative", "nor is the '!'")
+        #expect(hit("Regarde !", "look! (informal)") == "imperative")
+        // A gap with no meaning yet is not tagged from its spelling alone.
+        #expect(hit("sur", "") == nil)
+    }
+
+    @Test func shippedContentFilesCommonNewsWordsOffTheGrammarSkillsTheyOnlySpellLike() throws {
+        let lexicon = HeuristicTagger.lexicon(from: try shippedContent())
+        func hit(_ fr: String, _ en: String) -> String? {
+            HeuristicTagger.lexiconConcept(for: captured(fr, english: en), lexicon: lexicon)
+        }
+        for (fr, en, wrong) in [("sûr", "sure", "basic-prepositions"), ("ou", "or", "questions"),
+                                ("a", "has", "basic-prepositions"), ("là", "there", "definite-articles"),
+                                ("dû", "owed", "definite-articles"), ("si", "if", "negation"),
+                                ("genre", "kind / type", "spoken-fillers"), ("son", "sound", "possessive-adjectives"),
+                                ("bien", "goods", "adverb-formation"), ("mal", "pain", "adverb-formation"),
+                                ("regardé", "watched", "imperative"), ("écouté", "listened", "imperative"),
+                                ("regarde", "watches", "imperative"), ("ferme", "farm", "vowel-contrasts"),
+                                ("entre", "enters", "basic-prepositions")] {
+            #expect(hit(fr, en) != wrong, "\(fr) (\(en)) must not be filed on \(wrong)")
+        }
+        #expect(hit("sûr", "sure") == "vowel-contrasts")
+        #expect(hit("ou", "or") == "everyday-connectors")
+        #expect(hit("sur", "on") == "basic-prepositions")
+        #expect(hit("un café", "a coffee") == "indefinite-articles")
+        #expect(hit("café", "coffee") == "food-drink-vocab")
+    }
+
+    // MARK: - read-11-4 A pronoun goes to the skill that teaches it
+
+    @Test func aPronounIsFiledOnlyOnTheSkillThatTeachesIt() {
+        func tag(_ word: String) -> ConceptTagResult {
+            HeuristicTagger.tag(gap: captured(word, english: "x", pos: "pronoun", category: .grammar, level: .A2),
+                                concepts: taxonomy)
+        }
+        for word in ["ça", "cela", "celui", "chacun", "eux", "toi", "soi"] {
+            if case .existing(let id, _) = tag(word) {
+                #expect(id != "object-pronouns", "\(word) is not an object pronoun")
+            }
+        }
+        if case .existing(let id, _) = tag("ça") { Issue.record("'ça' has no skill to be filed on, got \(id)") }
+        guard case .existing(let me, _) = tag("me") else { Issue.record("'me' is an object pronoun"); return }
+        #expect(me == "object-pronouns")
+        guard case .existing(let toi, _) = tag("toi") else { Issue.record("'toi' is a stressed pronoun"); return }
+        #expect(toi == "stressed-pronouns")
+        guard case .existing(let y, _) = tag("y") else { Issue.record("'y' has its own skill"); return }
+        #expect(y == "en-y-pronouns")
+        guard case .existing(let je, _) = tag("je") else { Issue.record("'je' is a subject pronoun"); return }
+        #expect(je == "subject-pronouns")
+    }
+
+    // MARK: - read-11-3 French no-break spaces split the reader's words
+
+    @Test func noBreakSpacesSplitTheReadersWords() {
+        let line = "Il a dit\u{00A0}: «\u{00A0}Nous partons\u{202F}». Pourquoi\u{00A0}? Parce que."
+        let tokens = KeyVocabulary.readerTokens(inLine: line)
+        #expect(tokens.map(\.text) == ["Il", "a", "dit", ":", "«", "Nous", "partons", "».", "Pourquoi", "?", "Parce", "que."])
+        #expect(!tokens.contains { $0.text.contains(where: { $0.isWhitespace }) })
+        // The word after "?" opens a sentence, so its capital is not a name.
+        let parce = tokens.first { $0.text == "Parce" }
+        #expect(parce?.opensSentence == true)
+        #expect(tokens.first?.opensSentence == true)
+        #expect(tokens.first { $0.text == "partons" }?.opensSentence == false)
+        // A tapped "Nous" is the deck's "nous", not a new "« nous" card.
+        #expect(AppStore.captureKey(KeyVocabulary.headword(for: "Nous")) == AppStore.captureKey("nous"))
+        // Plain spaces still split exactly as before.
+        #expect(KeyVocabulary.readerTokens(inLine: "Le chat dort. Il rêve").map(\.text) == ["Le", "chat", "dort.", "Il", "rêve"])
+        #expect(KeyVocabulary.readerTokens(inLine: "Le chat dort. Il rêve").map(\.opensSentence) == [true, false, false, true, false])
+    }
+
+    // MARK: - read-11-2 A saved card does not close its skill's curriculum
+
+    @Test func aSavedCardDoesNotBlockItsSkillsCurriculum() {
+        let s = quietStore()
+        let file = FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: "idioms", category: GapCategory.phrasing.rawValue,
+                                   items: (0..<4).map { i in
+                                       FoundationItemContent(fr: "idiome \(i)", en: "idiom \(i)", note: "n",
+                                                             ex: "x idiome \(i) y", exEn: "t", blank: "idiome")
+                                   } + [FoundationItemContent(fr: "poser un lapin", en: "to stand someone up", note: "n",
+                                                              ex: "Il m'a fait poser un lapin.", exEn: "t", blank: "lapin")]),
+        ])
+        s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
+        guard case .saved = s.capture(CaptureDraft(frenchWord: "Poser un lapin", englishTranslation: "To stand someone up",
+                                                   sourceType: .reading, sourceTab: "idioms", conceptId: "idioms"), now: now) else {
+            Issue.record("the idiom is saved"); return
+        }
+        #expect(s.gaps.filter { $0.conceptId == "idioms" }.count == 1)
+        #expect(s.seedConceptContentIfNeeded("idioms", now: now) == 4, "the four other items open; the saved one is not duplicated")
+        #expect(s.gaps.filter { $0.conceptId == "idioms" && !$0.isProbe }.count == 5)
+        #expect(s.gaps.filter { FoundationSeeder.headwordKey($0.frenchWord) == "poser un lapin" }.count == 1)
+        #expect(s.seedConceptContentIfNeeded("idioms", now: now) == 0, "seeded once")
+    }
+
+    // MARK: - read-11-6 Tense-table forms reach the skills that teach them
+
+    @Test func tenseTableFormsAreFiledOnTheirSkillAtItsLevel() {
+        #expect(ConjugationCard.conceptId(tense: "Futur Simple", verbGroup: "er", passeComposeJe: "ai parlé") == "futur-simple")
+        #expect(ConjugationCard.conceptId(tense: "Present", verbGroup: "ir", passeComposeJe: "ai fini") == "present-ir-re-verbs")
+        #expect(ConjugationCard.conceptId(tense: "Present", verbGroup: "re", passeComposeJe: "ai pris") == "present-ir-re-verbs")
+        #expect(ConjugationCard.conceptId(tense: "Present", verbGroup: "er", passeComposeJe: "ai parlé") == "present-er-verbs")
+        #expect(ConjugationCard.conceptId(tense: "Present", verbGroup: "irregular", passeComposeJe: "ai été") == "present-irregular")
+        #expect(ConjugationCard.conceptId(tense: "Passé Composé", verbGroup: "irregular", passeComposeJe: "suis allé(e)") == "passe-compose-etre")
+        #expect(ConjugationCard.conceptId(tense: "Passé Composé", verbGroup: "er", passeComposeJe: "ai parlé") == "passe-compose-avoir")
+        #expect(ConjugationCard.conceptId(tense: "Conditionnel", verbGroup: "er", passeComposeJe: "ai parlé") == nil)
+        #expect(ConjugationCard.level(tense: "Futur Simple", verbGroup: "er", passeComposeJe: nil) == .A2,
+                "Simple future is an A2 skill, not B1")
+        #expect(ConjugationCard.level(tense: "Present", verbGroup: "ir", passeComposeJe: nil) == .A2)
+        #expect(ConjugationCard.level(tense: "Present", verbGroup: "er", passeComposeJe: nil) == .A1)
+        #expect(ConjugationCard.level(tense: "Passé Composé", verbGroup: "er", passeComposeJe: "ai parlé") == .A2)
+        #expect(ConjugationCard.level(tense: "Imparfait", verbGroup: "er", passeComposeJe: nil) == .B1)
+        #expect(ConjugationCard.level(tense: "Conditionnel", verbGroup: "er", passeComposeJe: nil) == .B1)
+        // Every verb in the tables lands on a real concept for these tenses.
+        let ids = ConceptTaxonomy.ids
+        for verb in TensesData.verbs {
+            for tense in ["Present", "Passé Composé", "Imparfait", "Futur Simple", "Subjonctif"] {
+                let id = ConjugationCard.conceptId(tense: tense, verbGroup: verb.group,
+                                                   passeComposeJe: verb.tenses["Passé Composé"]?.je)
+                #expect(id.map(ids.contains) == true, "\(verb.infinitive) \(tense) → \(id ?? "nil")")
+            }
+        }
+    }
+
+    // MARK: - read-11-7 Accent pages credit their own sound skill
+
+    @Test func accentPagesCreditTheirSoundSkill() throws {
+        func concept(_ id: String) throws -> String? {
+            try #require(PronunciationData.categories.first { $0.id == id }).conceptId
+        }
+        #expect(try concept("u-ou") == "vowel-contrasts")
+        #expect(try concept("vowel-sounds") == "vowel-contrasts")
+        #expect(try concept("silent-letters") == "silent-final-consonants")
+        #expect(try concept("nasal-vowels") == "nasal-vowels")
+        #expect(try concept("french-r") == "guttural-r")
+        for category in PronunciationData.categories {
+            if let id = category.conceptId { #expect(ConceptTaxonomy.ids.contains(id), "\(id) is a taxonomy concept") }
+        }
     }
 }

@@ -36,7 +36,7 @@ nonisolated enum SpeakFeedbackService {
 
         let result = await TalkModelClient.complete(
             messages: [["role": "system", "content": system], ["role": "user", "content": user]],
-            temperature: 0.4,
+            temperature: Tuning.speakFeedbackTemperature,
             timeout: Tuning.speakFeedbackTimeout
         )
         switch result {

@@ -177,7 +177,9 @@ struct WordReader: View {
                 context: t.context,
                 sourceTab: sourceTab,
                 sourceLevel: level,
-                // With or without its article: "matin" is the deck's "le matin" (read-10-5).
+                // Under its own key here; the sheet adds the deck's article forms
+                // ("le matin" for "matin") once the gloss shows the meanings agree
+                // (read-10-5, read-11-5).
                 alreadySaved: savedTerms.contains(t.term.lowercased())
                     || KeyVocabulary.isSaved(t.term, in: store.savedHeadwordKeys())
             ) {
@@ -451,7 +453,9 @@ struct WordReader: View {
         let highlighted = isHighlighted(token.id)
         // Saved in THIS reading, or already in the deck from an earlier one — a word
         // the learner owns is marked wherever it is met (read-6-3).
-        // "matin" is saved when the deck holds "le matin" (read-10-5).
+        // Only the word's own key: before the tap there is no meaning to tell the
+        // deck's "l'été" (summer) from "été" (been), so an article form is left to
+        // the word sheet (read-11-5).
         let saved = lookupable && (savedTerms.contains(headword.lowercased())
                                    || KeyVocabulary.isSaved(headword, in: savedKeys))
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
@@ -751,16 +755,15 @@ struct WordReader: View {
                 kind = .heading
             }
 
-            let words = content.split(separator: " ").map(String.init)
+            // Split on every whitespace, the no-break spaces of French typography
+            // included (read-11-3). The first word of a line opens a sentence;
+            // after that, whichever word follows a full stop does.
+            let words = KeyVocabulary.readerTokens(inLine: content)
             guard !words.isEmpty else { continue }
-            // The first word of a line opens a sentence; after that, whichever
-            // word follows a full stop does.
-            var opensSentence = true
             var tokens: [Token] = []
             for word in words {
-                tokens.append(Token(id: tokenId, text: word, opensSentence: opensSentence))
+                tokens.append(Token(id: tokenId, text: word.text, opensSentence: word.opensSentence))
                 tokenId += 1
-                opensSentence = CaptureBuilder.endsSentence(word)
             }
             blocks.append(ContentBlock(id: blockId, kind: kind, number: number, tokens: tokens))
             blockId += 1
@@ -1001,7 +1004,7 @@ struct GlossSheet: View {
     }
 
     private var saveBar: some View {
-        SaveToDeckButton(draft: draft, accent: Theme.primary, alreadySaved: alreadySaved, isBusy: lookup == .loading) { outcome in
+        SaveToDeckButton(draft: draft, accent: Theme.primary, alreadySaved: isAlreadySaved, isBusy: lookup == .loading) { outcome in
             if case .saved = outcome {
                 onSave()
                 DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.glossSavedDismissDelaySeconds) { dismiss() }
@@ -1010,6 +1013,17 @@ struct GlossSheet: View {
         .padding(.horizontal, Space.xl)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
+    }
+
+    /// Saved under the word's own key, or under an article form the deck holds
+    /// WITH THE SAME MEANING: "matin" (morning) is the deck's "le matin"
+    /// (read-10-5), "été" (been) is not its "l'été" (summer) (read-11-5).
+    private var isAlreadySaved: Bool {
+        if alreadySaved { return true }
+        guard let gloss = lookup.gloss else { return false }
+        let saved = store.savedHeadwordMeanings()
+        // The card would be saved under the gloss's own term, so ask about both.
+        return [term, gloss.term].contains { KeyVocabulary.isSaved($0, meaning: gloss.translation, in: saved) }
     }
 
     private func loadGloss() async {

@@ -1015,6 +1015,82 @@ struct PlacementFlowTests {
         #expect(handGaps.count == 1 && handGaps[0].frenchWord == "everyday-vocab-fr0")
     }
 
+    // MARK: firstrun-11-5 / firstrun-11-8 — a missed hand item seeds its concept's content item
+
+    /// A missed hand item whose concept's content holds the same headword is seeded
+    /// as THAT content item: the taxonomy category and level, the blank, the stable
+    /// content id and the content difficulty. The hand-built card used to stand in
+    /// for it under "Vocabulary", with no blank or content id.
+    @Test func aMissedHandItemSeedsItsConceptsContentItem() throws {
+        let hand = try #require(AssessmentService.bank.first { $0.french == "bonjour" })
+        #expect(!hand.isProbe && hand.category == .vocabulary && hand.conceptId == "greetings-politeness")
+        let concept = try #require(ConceptTaxonomy.seed().first { $0.id == "greetings-politeness" })
+        let other = FoundationItemContent(id: "greetings-politeness.2", fr: "bonsoir", en: "good evening",
+                                          note: "", ex: "Bonsoir !", exEn: "Good evening!", blank: "Bonsoir")
+        let item = FoundationItemContent(id: "greetings-politeness.1", fr: "bonjour", en: "hello",
+                                         note: "The default daytime greeting.", ex: "Bonjour !", exEn: "Hello!", blank: "Bonjour")
+        let seeded = AssessmentService.gaps(forMissed: [hand], now: now,
+                                            items: { $0 == concept.id ? [other, item] : [] })
+        #expect(seeded.count == 1)
+        let gap = try #require(seeded.first)
+        #expect(gap.frenchWord == "bonjour" && gap.conceptId == concept.id)
+        #expect(gap.category == concept.category && gap.category != .vocabulary, "files under its concept's category")
+        #expect(gap.cefrLevel == concept.cefrLevel)
+        #expect(gap.contentItemId == "greetings-politeness.1" && gap.id == "foundation-\(concept.id)-1",
+                "the content item and the id the Foundation slice would give it")
+        #expect(gap.blankForm == "Bonjour", "a fill-blank like any content card")
+        #expect(gap.difficulty == .hard && gap.nextReviewAt == now)
+        #expect(gap.irtDifficulty == FoundationContentLoader.irtDifficulty(level: concept.cefrLevel, difficulty: .hard))
+    }
+
+    /// With no content item for the headword the hand-built card is the fallback, but
+    /// it still files under its concept's category and level and takes the content
+    /// difficulty formula (firstrun-11-8: `band * 0.6 - 0.8` set an A1 card 0.5
+    /// above the identical content card).
+    @Test func aHandFallbackCardUsesTheConceptAndTheContentDifficulty() throws {
+        let cafard = try #require(AssessmentService.bank.first { $0.french == "avoir le cafard" })
+        let idioms = try #require(ConceptTaxonomy.seed().first { $0.id == cafard.conceptId })
+        let gap = try #require(AssessmentService.gaps(forMissed: [cafard], now: now, items: { _ in [] }).first)
+        #expect(gap.category == idioms.category && gap.cefrLevel == idioms.cefrLevel)
+        #expect(gap.irtDifficulty == FoundationContentLoader.irtDifficulty(level: idioms.cefrLevel, difficulty: .hard))
+        #expect(gap.contentItemId == nil)
+
+        let hand = question(1, .vocabulary, "everyday-vocab", 0)
+        let a1 = try #require(AssessmentService.gaps(forMissed: [hand], now: now, items: { _ in [] }).first)
+        #expect(a1.irtDifficulty == Tuning.foundationIrtDifficulty(for: .A1) + Tuning.irtHardBump,
+                "an A1 hand card is exactly as hard as an A1 content card marked hard")
+    }
+
+    /// Every hand item that survives in the shipped bank and whose headword its
+    /// concept's content holds (bonjour, du coup, avoir le cafard among them) is
+    /// seeded as that content item; the rest fall back to a hand card that still
+    /// files under its concept.
+    @Test func theShippedHandItemsSeedTheirContentItems() throws {
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the shipped hand-item check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let store = EngineFixtures.store()
+        let hand = AssessmentService.placementBank(concepts: store.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+            .filter { !$0.isProbe }
+        for word in ["bonjour", "du coup", "avoir le cafard"] {
+            #expect(hand.contains { $0.french == word }, "\(word) is still a hand item in the shipped bank")
+        }
+        var fromContent = Set<String>()
+        for q in hand {
+            let concept = try #require(ConceptTaxonomy.seed().first { $0.id == q.conceptId })
+            let key = FoundationSeeder.headwordKey(q.french)
+            let hasItem = FoundationContentLoader.items(for: concept.id, in: file).contains { FoundationSeeder.headwordKey($0.fr) == key }
+            let gap = try #require(AssessmentService.gaps(forMissed: [q], now: now,
+                                                          items: { FoundationContentLoader.items(for: $0, in: file) }).first)
+            #expect((gap.contentItemId != nil) == hasItem, "\(q.french): seeded from content exactly when content holds it")
+            #expect(gap.category == concept.category && gap.cefrLevel == concept.cefrLevel, "\(q.french)")
+            if hasItem { fromContent.insert(q.french) }
+        }
+        #expect(fromContent.isSuperset(of: ["bonjour", "du coup", "avoir le cafard"]), "\(fromContent)")
+    }
+
     @Test func firstRunFromTheShippedBankSeedsOnlyRealHeadwords() throws {
         guard let url = shippedContentURL() else {
             print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the shipped-seed check")
@@ -1100,5 +1176,27 @@ struct PlacementFlowTests {
         s.concepts[idx].isProvisional = true
         #expect(s.foundationSeededMastered == 0, "a provisional seed is not progress")
         #expect(s.foundationSeededMastered <= s.foundationMastered || s.foundationMastered == 0)
+    }
+
+    // MARK: firstrun-11-2 — the placement copy promises only what the routing does
+
+    /// Inferred base concepts rank first as targets and a missed concept above them
+    /// waits behind its prerequisites, so neither the intro nor the balanced result
+    /// may promise to teach "only what you don't already know" or to target "exactly
+    /// the spots you slipped on".
+    @Test func placementCopyDoesNotPromiseTargetingTheRoutingDoesNotRun() {
+        let intro = HomeCopy.placementIntro(isFirstRun: true)
+        #expect(!intro.contains("only teach"), "\(intro)")
+        #expect(intro == "A few quick questions that adapt to you. We'll set your starting point and focus your lessons from there.")
+        let balanced = HomeCopy.placementBlurb(isFirstRun: true, isTrueBeginner: false, leadingCategory: nil)
+        #expect(!balanced.contains("exactly"), "\(balanced)")
+        #expect(balanced == "A balanced foundation. We'll build the basics first and come back to what you missed.")
+        // The other branches keep their wording.
+        #expect(HomeCopy.placementIntro(isFirstRun: false) == "A short retake — it can only raise your level.")
+        #expect(HomeCopy.placementBlurb(isFirstRun: true, isTrueBeginner: true, leadingCategory: nil).hasPrefix("No worries"))
+        #expect(HomeCopy.placementBlurb(isFirstRun: false, isTrueBeginner: false, leadingCategory: .grammar)
+                == "Your level was not lowered, and anything you missed has been added to your lessons.")
+        #expect(HomeCopy.placementBlurb(isFirstRun: true, isTrueBeginner: false, leadingCategory: .vocabulary).hasPrefix("Your vocabulary is ahead"))
+        #expect(HomeCopy.placementBlurb(isFirstRun: true, isTrueBeginner: false, leadingCategory: .grammar).hasPrefix("Your grammar is ahead"))
     }
 }

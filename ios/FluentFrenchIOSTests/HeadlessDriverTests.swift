@@ -570,7 +570,8 @@ struct HeadlessDriverTests {
     /// invariants and the pacing switch still hold; the ghost count is printed,
     /// not asserted — the fix is throughput (more lessons), not the estimator.
     @Test func falseBeginnerOneLessonADayAfterUnlockKeepsTheInvariants() {
-        let run = sixtyDays(.falseBeginner, seed: 3, declaredBeginner: false, label: "false beginner", lessonsAfterUnlock: 1)
+        // Seed 14, as in `falseBeginnerSixtyDays`: seeded on the app's own bank (engine-11-5).
+        let run = sixtyDays(.falseBeginner, seed: 14, declaredBeginner: false, label: "false beginner", lessonsAfterUnlock: 1)
         expectLoopInvariants(run, label: "false beginner ×1", lessonsAfterUnlock: 1,
                              settledCeiling: Self.stressSettledCalibrationCeiling)
         #expect(run.reports.contains { $0.readingUnlockedAtStart && $0.lessons == 1 })
@@ -669,8 +670,14 @@ struct HeadlessDriverTests {
         return (rounds * Tuning.seedVerificationPasses + 1) * Int(Tuning.seedVerificationDays)
     }
 
+    /// Seed 14: on the APP's placement bank (engine-11-5) this false beginner is
+    /// placed at A1 with two provisional seeds, one vocabulary and one grammar
+    /// (family-vocab, present-er-verbs), so the seed-verification, deadline and ghost
+    /// checks below have seeds to check. Seed 3, used before, was seeded only on the
+    /// simulation's old hand-plus-content bank; the app's bank places that learner at
+    /// A2 with no seeds at all.
     @Test func falseBeginnerSixtyDays() {
-        let run = sixtyDays(.falseBeginner, seed: 3, declaredBeginner: false, label: "false beginner")
+        let run = sixtyDays(.falseBeginner, seed: 14, declaredBeginner: false, label: "false beginner")
         expectLoopInvariants(run, label: "false beginner")
         let placement = run.placement!
         #expect(!placement.result.isTrueBeginner, "the staircase sees the vocabulary")
@@ -741,6 +748,22 @@ struct HeadlessDriverTests {
         expectAnA1LockedPhase(run, label: "forgetful")
         #expect(run.governorDays >= 1, "the retention governor engages at least once for a forgetter")
         #expect(run.reports.contains { $0.checkInMisses > 0 }, "check-ins catch the forgetting")
+    }
+
+    /// engine-11-5: the simulations place learners on the bank the APP builds
+    /// (`AssessmentService.placementBank`: content probes, hand items only where content
+    /// does not cover their concept and band). They used to place on the hand bank
+    /// plus the content bank, which the app never runs.
+    @Test func simulationsPlaceOnTheAppsOwnBank() {
+        let store = EngineFixtures.store()
+        let app = AssessmentService.placementBank(concepts: store.concepts, probes: EngineFixtures.syntheticProbes)
+        let sim = SimulatedRun.placementBank(for: store)
+        func key(_ q: AssessmentQuestion) -> String { "\(q.band)|\(q.category.rawValue)|\(q.conceptId ?? "-")|\(q.french)" }
+        #expect(sim.count == app.count, "simulation bank \(sim.count) items, the app's \(app.count)")
+        #expect(sim.map(key) == app.map(key))
+        #expect(sim.count < AssessmentService.bank.count
+                    + AssessmentService.contentBank(concepts: store.concepts, probes: EngineFixtures.syntheticProbes).count,
+                "hand items the content covers are dropped, as in the app")
     }
 
     @Test func falseBeginnerStartsWithDissociatedTruth() {

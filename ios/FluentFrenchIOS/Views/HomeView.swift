@@ -290,6 +290,10 @@ struct HomeView: View {
             }
             .onChange(of: store.preferences) { _, _ in _ = store.recomputePlan() }
             .onChange(of: store.unlockedModalities) { _, _ in _ = store.recomputePlan() }
+            // A check-in can switch the retention governor on or off mid-day. The plan's
+            // cached rationale and the live "Next unlock" line must read the same
+            // governor state, so re-plan when it flips (firstrun-11-3).
+            .onChange(of: store.isGovernorActive) { _, _ in _ = store.recomputePlan() }
             .overlay(alignment: .bottom) { toastView }
             .fullScreenCover(item: $activeResource) { resource in
                 resourceView(resource)

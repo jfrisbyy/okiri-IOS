@@ -323,7 +323,13 @@ nonisolated enum LessonQuestionParser {
             guard LessonScheduler.isProducible(gap) else { return nil }
             let expected = answer.isEmpty ? gap.frenchWord : answer
             guard isContentForm(expected, of: gap, kind: .translation) else { return nil }
-            let english = statement.isEmpty ? gap.englishTranslation : statement
+            // The English to translate is the content's, unless the model's is the
+            // gloss itself (or one side of it). Only the gap's own forms are accepted,
+            // so a model sentence ("I am at home" over "je suis") or a broader word
+            // ("hello" over salut) graded correct French wrong — a production miss,
+            // a heart and an FSRS lapse — and the feedback printed the false pair
+            // "je suis — I am at home" (lesson-11-4, the AI twin of lesson-10-2).
+            let english = matchesGloss(statement, of: gap) ? statement : gap.englishTranslation
             var explanation = "\(expected) — \(english)"
             if let note { explanation += "\n\(note)" }
             return LessonQuestion(gap: gap, kind: .translation, prompt: "Translate to French:",

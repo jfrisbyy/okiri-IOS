@@ -31,15 +31,31 @@ nonisolated enum Tuning {
     static let capstoneRecencyDays: Double = 14
     /// A learning concept at or above this mastery is "trending toward mastered".
     static let capstoneTrendingMasteryFloor: Double = 0.6
+    /// Highest score `ConceptSelector.score` can give a concept, computed from its
+    /// component maxima so a bonus added later can never silently outgrow the capstone
+    /// tiers (engine-11-4): the larger of urgency + frontier fit and the governor's
+    /// multiplied urgency (it zeroes frontier), plus leverage, confusion, the stall
+    /// bonus and the larger of the lapsed / unfinished bonuses (a concept earns one).
+    /// 6.3 today. The tiers were once hand-sized against 4.8, and the lapsed bonus
+    /// (engine-8-3) quietly took a lapsed prerequisite of a stalled skill past them.
+    static let rankerScoreCeiling: Double = {
+        let w = ConceptSelectionWeights.tuning
+        let fit = max(w.urgency + w.frontier, w.urgency * governorUrgencyMultiplier)
+        return fit + w.leverage + w.confusion + stallPrerequisiteBonus
+            + max(lapsedConceptBonus, unfinishedConceptBonus)
+    }()
+    /// Lowest score `ConceptSelector.score` can give: the repeat damp at its full
+    /// penalty, every other term zero (-0.5 today, engine-11-4).
+    static let rankerScoreFloor: Double = -ConceptSelectionWeights.tuning.repeatDamp * repeatDampSameSessionPenalty
+    /// How far each capstone tier clears the ranker's full spread (engine-11-4).
+    static let capstoneTierMargin: Double = 0.2
     /// Capstone tier bonus for any learning concept — sized above the ranker's full
-    /// score SPREAD so learning concepts always outrank mastered ones. The shared
-    /// score runs from -0.5 (repeatDamp 0.5 at full penalty) to 4.8 (governor
-    /// urgency 1.0x2 + leverage 0.6 + frontier 0 + confusion 0.7 + stall 1.5),
-    /// a spread of 5.3; 5.5 clears it.
-    static let capstoneLearningWeight: Double = 5.5
+    /// score SPREAD (`rankerScoreCeiling` − `rankerScoreFloor`, 6.8 today) so learning
+    /// concepts always outrank mastered ones (engine-11-4).
+    static let capstoneLearningWeight: Double = rankerScoreCeiling - rankerScoreFloor + capstoneTierMargin
     /// Extra capstone tier bonus for learning concepts at/above the trending floor
     /// (same sizing rule, so trending concepts always come first).
-    static let capstoneTrendingWeight: Double = 5.5
+    static let capstoneTrendingWeight: Double = rankerScoreCeiling - rankerScoreFloor + capstoneTierMargin
 
     // MARK: Concept ranking (Pass 2 — frontier fit)
     /// CEFR bands BELOW the learner's own level at which frontier fit falls to zero.
@@ -84,7 +100,34 @@ nonisolated enum Tuning {
     /// Share of a skill's content items a learner must already hold before items
     /// added to that skill later are delivered to them at launch; below it (one
     /// placement-miss item, say) the skill waits for its own seeding path (engine-10-6).
+    /// The same share is the line below which a concept does NOT yet hold its
+    /// curriculum, so its first evidence or a probe seeds the rest (engine-11-1).
     static let foundationTopUpSeededShare: Double = 0.5
+
+    // MARK: Engine — ranker and scheduler literals (round 11, engine-11-6)
+    /// Days overdue at which a concept's urgency saturates at 1.0 (`ConceptSelector.urgencyScore`).
+    static let urgencySaturationDays: Double = 7
+    /// Repeat-damp penalty for a concept taught this very session (multiplies the repeatDamp weight).
+    static let repeatDampSameSessionPenalty: Double = 1.0
+    /// Repeat-damp penalty for a concept taught in the previous session (none after that).
+    static let repeatDampPreviousSessionPenalty: Double = 0.5
+    /// Recall probability the FSRS scheduler aims for when it sets the next review.
+    static let fsrsRequestRetention: Double = 0.9
+    /// Floor on stability (days) inside the retrievability curve, so a tiny stability never divides by ~0.
+    static let fsrsRetrievabilityStabilityFloor: Double = 0.1
+    /// Shortest interval (days) the FSRS scheduler ever sets (about ten hours).
+    static let fsrsMinIntervalDays: Double = 0.4
+    /// Lowest and highest card difficulty on the FSRS 1…10 scale.
+    static let fsrsDifficultyRange: ClosedRange<Double> = 1...10
+    /// Recall estimate of a gap with no FSRS state and no correct streak (legacy records).
+    static let legacyRecallBase: Double = 0.4
+    /// Recall estimate added per consecutive correct answer on a gap with no FSRS state.
+    static let legacyRecallPerCorrect: Double = 0.12
+    /// Ceiling on the recall estimate of a gap with no FSRS state.
+    static let legacyRecallCeiling: Double = 0.95
+    /// IRT difficulty of the inline fallback curriculum's items (A1, `diff: okay`),
+    /// used only when the content file is missing.
+    static let fallbackCurriculumIrtDifficulty: Double = -0.9
 
     // MARK: Lesson shape (Pass 2 — request-level sizes)
     /// Items in a smart (Home "Learn") lesson.
@@ -427,7 +470,8 @@ nonisolated enum Tuning {
 
     // MARK: In-session concept release (Pass 3 F7 — Package B11)
     /// Consecutive first-try correct answers on one concept after which the lesson
-    /// drops that concept's remaining items and backfills from review.
+    /// drops that concept's remaining items and backfills from review. Answers on
+    /// words the lesson just taught do not count (lesson-11-3).
     static let conceptReleaseStreak: Int = 3
 
     // MARK: Stalls (Package B14/B15)
@@ -623,6 +667,14 @@ nonisolated extension Tuning {
     /// however strong, could ever place a learner above the highest band the content
     /// covers. Two clean answers on the only items that exist is the bar.
     static let placementThinBandMinItems: Int = 2
+    /// The band (A2) the placement staircase starts at (firstrun-11-8).
+    static let placementStartBand: Int = 2
+    /// The lowest staircase band, A1 in `AssessmentService.level(forBand:)` (firstrun-11-8).
+    static let placementMinBand: Int = 1
+    /// The highest staircase band, B2 in `AssessmentService.level(forBand:)` (firstrun-11-8).
+    static let placementMaxBand: Int = 4
+    /// Share of a fully probed band's items answered correctly that clears the band (firstrun-11-8).
+    static let placementBandClearRatio: Double = 0.5
     /// Minutes a day the "light" time budget lets the plan prescribe (firstrun-10-8).
     static let timeBudgetLightMinutes: Int = 10
     /// Minutes a day the "standard" time budget lets the plan prescribe (firstrun-10-8).
@@ -757,6 +809,14 @@ nonisolated extension Tuning {
     /// Seconds of audio a recording cut short by an interruption needs before it
     /// is worth transcribing at all (talkmedia-4-3).
     static let minimumUsableRecordingSeconds: Int = 3
+    /// Sampling temperature for the Converse tutor's turns — loose enough to vary a scene (talkmedia-11-8).
+    static let converseReplyTemperature: Double = 0.7
+    /// Sampling temperature for a Converse "what could I say?" hint (talkmedia-11-8).
+    static let converseHintTemperature: Double = 0.6
+    /// Sampling temperature for Speak's correction and feedback — kept low so a correction is stable (talkmedia-11-8).
+    static let speakFeedbackTemperature: Double = 0.4
+    /// Sampling temperature for a Scenarios survival guide (talkmedia-11-8).
+    static let scenarioGuideTemperature: Double = 0.4
 }
 
 nonisolated extension Tuning {
@@ -785,6 +845,46 @@ nonisolated extension Tuning {
     static let transcriptTranslationMaxConsecutiveFailures: Int = 2
     /// Seconds the Watch skip-back / skip-forward buttons move by (must be a value SF Symbols draws: 5, 10, 15, 30, 45, 60, 75 or 90).
     static let watchSeekStepSeconds: Double = 5
+    /// Sampling temperature for translating English caption lines into French — low, so a line reads the same each time (talkmedia-11-8).
+    static let transcriptTranslationTemperature: Double = 0.3
+    /// Seconds after the learner stops scrolling a Watch transcript before it follows the video again (talkmedia-11-8).
+    static let watchFollowAlongResumeSeconds: TimeInterval = 5
+    /// Seconds the fullscreen Watch controls stay up before they hide themselves (talkmedia-11-8).
+    static let watchControlsAutoHideSeconds: TimeInterval = 3.5
+    /// Natural-voice playback speeds a clip may be set to — the range the audio player can render (talkmedia-11-8).
+    static let voicePlaybackRateRange: ClosedRange<Float> = 0.5...2.0
+    /// Seconds of silence the system voice leaves after each Listen dialogue line (talkmedia-11-8).
+    static let dialoguePostUtteranceDelay: TimeInterval = 0.35
+    /// Natural-voice stability (0–1): steadier delivery for a learner's ear (talkmedia-11-8).
+    static let naturalVoiceStability: Double = 0.5
+    /// Natural-voice similarity boost (0–1): how closely a clip keeps the chosen voice (talkmedia-11-8).
+    static let naturalVoiceSimilarityBoost: Double = 0.8
+    /// Natural-voice style exaggeration (0–1): a little expression, never theatrical (talkmedia-11-8).
+    static let naturalVoiceStyle: Double = 0.2
+    /// Playback speed of a "Listen slowly" replay of a word or example (talkmedia-11-8).
+    static let slowVoiceRate: Float = 0.6
+    /// Fraction of the system voice's default rate used when a slow replay falls back to it (talkmedia-11-8).
+    static let slowSystemVoiceRateFactor: Float = 0.6
+    /// Videos fetched per trending-feed category (talkmedia-11-8).
+    static let trendingFeedPageSize: Int = 15
+    /// Videos fetched per Watch search (talkmedia-11-8).
+    static let videoSearchPageSize: Int = 20
+    /// Listen's playback speeds, in the order the speed button cycles through them (talkmedia-11-8).
+    static let listenPlaybackSpeeds: [(label: String, rate: Float)] = [
+        ("0.7x", 0.7), ("0.85x", 0.85), ("1x", 1.0), ("1.15x", 1.15), ("1.3x", 1.3),
+    ]
+    /// Index into `listenPlaybackSpeeds` a dialogue starts at: normal speed (talkmedia-11-8).
+    static let listenDefaultSpeedIndex: Int = 2
+    /// Watch's playback speeds, in the order the speed button cycles through them (talkmedia-11-8).
+    static let watchPlaybackSpeeds: [Double] = [0.75, 1.0, 1.25]
+    /// Index into `watchPlaybackSpeeds` a video starts at: normal speed (talkmedia-11-8).
+    static let watchDefaultSpeedIndex: Int = 1
+    /// Milliseconds between the embedded YouTube player's time/state reports to the app (talkmedia-11-8).
+    static let youTubeTimePollMilliseconds: Int = 250
+    /// Milliseconds between attempts to find the embedded YouTube player once the page loads (talkmedia-11-8).
+    static let youTubePlayerFinderMilliseconds: Int = 300
+    /// Shortest deadline `Deadline.run` will wait, so a zero or negative budget still lets a ready answer through.
+    static let deadlineMinimumSeconds: TimeInterval = 0.05
 }
 
 nonisolated extension Tuning {

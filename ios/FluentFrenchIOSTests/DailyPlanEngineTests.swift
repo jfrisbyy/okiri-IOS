@@ -203,6 +203,33 @@ struct DailyPlanEngineTests {
         #expect(plan.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
     }
 
+    /// firstrun-11-3: the plan of record caches its rationale for the day, while
+    /// Home's "Next unlock" line reads the governor live and stays silent when the
+    /// rationale is meant to name it. A mid-day governor flip leaves the two
+    /// disagreeing until Home re-plans (HomeView re-plans on `isGovernorActive`);
+    /// this holds the store side of that contract: a re-plan reconciles them.
+    @Test func replanningOnAGovernorFlipKeepsTheRationaleAndNextUnlockInStep() {
+        let s = readingOpenStore(chosen: [.reading, .listening])
+        let now = EngineFixtures.now
+        let calm = s.todaysPlan(now: now)
+        #expect(!s.isGovernorActive)
+        #expect(calm.rationale != ReadinessCopy.governorHeadline(for: [.listening]))
+        #expect(s.homeSurfaces.nextUnlock != nil, "governor off: the live line names the minutes bar")
+
+        // A window of check-in misses: the governor engages mid-day.
+        s.checkInHistory = Array(repeating: false, count: Tuning.governorWindow)
+        #expect(s.isGovernorActive)
+        #expect(s.homeSurfaces.nextUnlock == nil, "the live line defers to the plan's governor rationale")
+        #expect(s.todaysPlan(now: now) == calm, "the cached plan alone would never name the hold")
+        let held = s.recomputePlan(now: now)
+        #expect(held.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
+
+        // Recovery: the governor releases, and the re-planned day drops the review headline.
+        s.checkInHistory = []
+        #expect(!s.isGovernorActive && s.homeSurfaces.nextUnlock != nil)
+        #expect(s.recomputePlan(now: now).rationale != ReadinessCopy.governorHeadline(for: [.listening]))
+    }
+
     @Test func governorBelowTheBarKeepsTheUnlockItemWithGovernorCopy() {
         let s = readingOpenStore(chosen: [.listening])
         s.checkInHistory = [false, false, false, false, true, true]
@@ -312,6 +339,21 @@ struct DailyPlanEngineTests {
         let held = EngineFixtures.mastered("held", category: .pronunciation)
         let checkIn = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: held, score: 1, isFrontier: false)])
         #expect(checkIn == "Today leans reading.")
+
+        // firstrun-11-1: a band-inferred placement seed reads `.learning` with no answered
+        // evidence. The learner never practised it, so it is not a weak spot either.
+        var inferred = EngineFixtures.concept("seeded-gram", category: .grammar)
+        inferred.alpha += Tuning.placementInferredAlpha
+        inferred.observationCount += Tuning.placementInferredAlpha
+        inferred.inferredObservations += Tuning.placementInferredAlpha
+        #expect(inferred.state == .learning && inferred.testedObservations == 0)
+        let seededFirst = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: inferred, score: 1, isFrontier: false),
+                                                                 ScoredConcept(concept: fresh, score: 0.8, isFrontier: true)])
+        #expect(seededFirst == "Today's new skills are vocabulary-heavy, so today leans reading.")
+        let seededThenWeak = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: inferred, score: 1, isFrontier: false),
+                                                                    ScoredConcept(concept: EngineFixtures.learning("weak-voc", mastery: 0.5, category: .vocabulary),
+                                                                                  score: 0.5, isFrontier: false)])
+        #expect(seededThenWeak == "Your weak spots lately are vocabulary-heavy, so today leans reading.")
     }
 
     @Test func rationaleSaysLeansOnlyWhenTheRowsAreUneven() {

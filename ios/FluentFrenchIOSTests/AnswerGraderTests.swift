@@ -66,7 +66,9 @@ struct AnswerGraderTests {
             // typographic vs straight apostrophe in j'ai, alts
             Case(typed: "j'ai", expected: "j'ai", gap: jai, kind: .translation, verdict: .correct, note: "straight apostrophe"),
             Case(typed: "j’ai", expected: "j'ai", gap: jai, kind: .translation, verdict: .correct, note: "typographic apostrophe"),
-            Case(typed: "ai", expected: "j'ai", gap: jai, kind: .translation, verdict: .correct, note: "content alt"),
+            // This row used to expect `.correct`: "ai" is the verb without its subject,
+            // a fragment of the headword, not a translation of "I have" (lesson-11-2).
+            Case(typed: "ai", expected: "j'ai", gap: jai, kind: .translation, verdict: .incorrect, note: "content alt that drops the subject"),
             Case(typed: "j'ai.", expected: "j'ai", gap: jai, kind: .translation, verdict: .correct, note: "punctuation"),
             Case(typed: "je ai", expected: "j'ai", gap: jai, kind: .translation, verdict: .incorrect, note: "no elision is wrong"),
             Case(typed: "j'ai", expected: "ai", gap: jai, kind: .fillBlank, verdict: .incorrect, note: "grammar is not article-lenient"),
@@ -200,6 +202,81 @@ struct AnswerGraderTests {
         #expect(AnswerGrader.grade(typed: "svp", against: please, expected: "s'il vous plaît", kind: .translation) == .correct)
     }
 
+    /// lesson-11-6: the accent guard also holds for an ARTICLED headword. "mere" under
+    /// "la mère" folds to the bare noun, not to the whole answer, so it slipped past
+    /// the guard: graded fully correct with no accent warning, and printed as
+    /// "Also accepted: mère, mere". The ligature spelled out is the same slip.
+    @Test func accentStrippedAlternativesOfAnArticledHeadwordAreAccentSlips() {
+        let mother = gap("la mère", en: "mother", ex: "Ma mère est gentille.", blank: "mère", alts: ["mère", "mere"])
+        #expect(AnswerGrader.grade(typed: "mere", against: mother, expected: "la mère", kind: .translation)
+                == .closeAccents(expected: "la mère"))
+        #expect(AnswerGrader.grade(typed: "la mere", against: mother, expected: "la mère", kind: .translation)
+                == .closeAccents(expected: "la mère"))
+        #expect(AnswerGrader.displayAlternatives(for: mother, expected: "la mère", kind: .translation) == ["mère"],
+                "the unaccented spelling is never advertised")
+        #expect(AnswerGrader.grade(typed: "mère", against: mother, expected: "la mère", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "la mère", against: mother, expected: "la mère", kind: .translation) == .correct)
+
+        let sister = gap("la sœur", en: "sister", alts: ["sœur", "soeur"])
+        #expect(AnswerGrader.grade(typed: "soeur", against: sister, expected: "la sœur", kind: .translation)
+                == .closeAccents(expected: "la sœur"))
+        #expect(AnswerGrader.displayAlternatives(for: sister, expected: "la sœur", kind: .translation) == ["sœur"])
+    }
+
+    /// lesson-11-2: an `alts` entry that is the headword with its subject, auxiliary or
+    /// conjunction dropped is a fragment, not a translation. "fini" for "he finished"
+    /// was graded correct and printed as "Also accepted: fini" — the bare participle
+    /// the passé composé skill exists to correct. The bare noun of an articled
+    /// headword is not a fragment: that is article leniency.
+    @Test func headwordFragmentsAreNeverTranslations() {
+        let finished = gap("il a fini", en: "he finished", ex: "Il a fini ses devoirs.", blank: "a fini",
+                           alts: ["a fini", "fini"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "fini", against: finished, expected: "il a fini", kind: .translation) == .incorrect)
+        #expect(AnswerGrader.displayAlternatives(for: finished, expected: "il a fini", kind: .translation).isEmpty,
+                "“Also accepted: fini” under “he finished” advertised the error")
+        #expect(AnswerGrader.isHeadwordFragment("fini", gap: finished, expected: "il a fini"))
+        #expect(!LessonQuestionParser.isContentForm("fini", of: finished, kind: .translation),
+                "an AI translation may not state the fragment either")
+        #expect(AnswerGrader.grade(typed: "il a fini", against: finished, expected: "il a fini", kind: .translation) == .correct)
+        #expect(AnswerGrader.grade(typed: "a fini", against: finished, expected: "a fini", kind: .fillBlank) == .correct,
+                "the blank form still fills its own hole")
+
+        let go = gap("que j'aille", en: "that I go", ex: "Il faut que j'aille au travail.", blank: "j'aille",
+                     alts: ["aille"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "aille", against: go, expected: "que j'aille", kind: .translation) == .incorrect)
+
+        let faint = gap("tomber dans les pommes", en: "to faint", alts: ["dans les pommes"], category: .phrasing)
+        #expect(AnswerGrader.grade(typed: "dans les pommes", against: faint, expected: "tomber dans les pommes",
+                                   kind: .translation) == .incorrect)
+
+        // Not fragments: the bare noun of an articled headword, a whole side of an
+        // "a / b" headword, and an alternative with the same number of words.
+        let bread = gap("le pain", en: "bread", alts: ["pain"])
+        #expect(!AnswerGrader.isHeadwordFragment("pain", gap: bread, expected: "le pain"))
+        #expect(AnswerGrader.grade(typed: "pain", against: bread, expected: "le pain", kind: .translation) == .correct)
+        let went = gap("je suis allé", en: "I went", alts: ["je suis allée"], category: .grammar)
+        #expect(AnswerGrader.grade(typed: "je suis allée", against: went, expected: "je suis allé", kind: .translation) == .correct)
+        let pair = gap("salut / coucou", en: "hi", alts: ["coucou"], category: .phrasing)
+        #expect(!AnswerGrader.isHeadwordFragment("coucou", gap: pair, expected: "salut / coucou"))
+    }
+
+    /// lesson-11-7: an elided alternative fills a blank only before a word that can
+    /// take the elision. "Désolé, _____ wifi ici." accepted and printed
+    /// "il n'y a pas d'", crediting "d'wifi".
+    @Test func anElidedAlternativeFitsOnlyBeforeAVowelOrH() {
+        let none = gap("il n'y a pas de", en: "there isn't any", ex: "Désolé, il n'y a pas de wifi ici.",
+                       blank: "il n'y a pas de", alts: ["il n'y a pas d'", "il y a pas de"], category: .grammar)
+        #expect(!AnswerGrader.fitsBlank("il n'y a pas d'", gap: none, expected: "il n'y a pas de"))
+        #expect(AnswerGrader.grade(typed: "il n'y a pas d'", against: none, expected: "il n'y a pas de", kind: .fillBlank)
+                == .incorrect)
+        #expect(AnswerGrader.displayAlternatives(for: none, expected: "il n'y a pas de", kind: .fillBlank).isEmpty)
+        #expect(!AnswerGrader.elisionFits(beforeTextAfterBlankOf: none))
+
+        let went = gap("je suis allé", en: "I went", ex: "Hier, je suis allé au marché.", blank: "suis allé",
+                       category: .grammar)
+        #expect(AnswerGrader.elisionFits(beforeTextAfterBlankOf: went), "“au” starts with a vowel")
+    }
+
     /// lesson-7-3: an alternative that is the expected answer with a separator missing
     /// — an apostrophe, a hyphen, the space around them, a trailing comma — exists so a
     /// phone keyboard is forgiven. It is accepted when typed and never printed back
@@ -244,8 +321,11 @@ struct AnswerGraderTests {
                         blank: "je parle", alts: ["parle"], category: .grammar)
         #expect(AnswerGrader.grade(typed: "parle", against: speak, expected: "je parle", kind: .fillBlank) == .incorrect)
         #expect(AnswerGrader.acceptedForms(for: speak, expected: "je parle", kind: .fillBlank).map { $0.display } == ["je parle"])
-        #expect(AnswerGrader.grade(typed: "parle", against: speak, expected: "je parle", kind: .translation) == .correct,
-                "the same alternative is still right when the item asks for the headword")
+        // Nor is it the translation of "I speak": a verb without its subject is the
+        // error the conjugation skills exist to correct (lesson-11-2). This assertion
+        // used to expect `.correct`.
+        #expect(AnswerGrader.grade(typed: "parle", against: speak, expected: "je parle", kind: .translation) == .incorrect,
+                "a fragment of the headword is not its translation")
 
         // An elision counts as two words: "adore" is not "j'adore".
         let adore = gap("j'adore", en: "I love", ex: "J'adore le café.", blank: "j'adore",
@@ -480,6 +560,28 @@ struct AnswerGraderTests {
             #expect(AnswerGrader.grade(typed: blank, against: gap, expected: blank, kind: .fillBlank) == .correct, "\(gap.id)")
         }
         #expect(checked > 50, "the content carries items whose blank is a different form (\(checked))")
+    }
+
+    /// lesson-11-2 over the shipped content: no `alts` fragment of a headword — the
+    /// verb without its subject, the participle without its auxiliary — is graded
+    /// as, advertised as, or stated by the AI as the translation of that headword.
+    @Test func shippedHeadwordFragmentsAreNeverTranslations() throws {
+        let data = try #require(bundledContentData(), "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        let gaps = FoundationContentLoader.gaps(from: file, now: EngineFixtures.now)
+        var checked = 0
+        for gap in gaps where gap.isTestable {
+            for alt in gap.acceptedAnswers ?? [] where AnswerGrader.isHeadwordFragment(alt, gap: gap, expected: gap.frenchWord) {
+                checked += 1
+                #expect(AnswerGrader.grade(typed: alt, against: gap, expected: gap.frenchWord, kind: .translation) == .incorrect,
+                        "\(gap.id): “\(alt)” graded as the translation of “\(gap.frenchWord)”")
+                #expect(!AnswerGrader.displayAlternatives(for: gap, expected: gap.frenchWord, kind: .translation)
+                    .contains { AnswerGrader.normalize($0) == AnswerGrader.normalize(alt) },
+                        "\(gap.id): “Also accepted: \(alt)” under “\(gap.englishTranslation)”")
+                #expect(!LessonQuestionParser.isContentForm(alt, of: gap, kind: .translation), "\(gap.id)")
+            }
+        }
+        #expect(checked >= 60, "the content carries headword fragments in its alts (\(checked))")
     }
 
     // MARK: lesson-9-3 — article leniency is decided by the item, not the skill

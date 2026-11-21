@@ -268,6 +268,46 @@ struct HomeGateTests {
         #expect(ActivityCredit.capMinutes(planTargetMinutes: 1) >= 1)
     }
 
+    /// firstrun-11-4: activity time is floored with the remainder carried, so the
+    /// credited total never exceeds the foreground time spent.
+    @Test func activityCreditFloorsAndCarriesTheRemainder() {
+        let glance = ActivityCredit.credit(activeSeconds: Tuning.minActivitySeconds - 1, carriedSeconds: 30, capMinutes: 10)
+        #expect(glance.minutes == 0 && glance.carrySeconds == 30, "a glance credits nothing and adds nothing to the carry")
+        let short = ActivityCredit.credit(activeSeconds: Tuning.minActivitySeconds, carriedSeconds: 0, capMinutes: 10)
+        #expect(short.minutes == 0 && short.carrySeconds == Tuning.minActivitySeconds, "a 20-second visit is not a minute")
+        let joined = ActivityCredit.credit(activeSeconds: 45, carriedSeconds: short.carrySeconds, capMinutes: 10)
+        #expect(joined.minutes == 1 && joined.carrySeconds == 5, "the carry completes the minute")
+        let floored = ActivityCredit.credit(activeSeconds: 150, carriedSeconds: 0, capMinutes: 10)
+        #expect(floored.minutes == 2 && floored.carrySeconds == 30, "floored, never rounded up")
+        let capped = ActivityCredit.credit(activeSeconds: 3600, carriedSeconds: 50, capMinutes: 10)
+        #expect(capped.minutes == 10 && capped.carrySeconds == 0, "time past the cap is discarded with the carry")
+        let noTarget = ActivityCredit.credit(activeSeconds: 3600, carriedSeconds: 12, capMinutes: 0)
+        #expect(noTarget.minutes == 0 && noTarget.carrySeconds == 12, "no target → no credit")
+    }
+
+    /// firstrun-11-4: fifteen 20-second visits to Read (5 real minutes) used to be
+    /// credited 15 minutes and open Listening; they now credit the 5 minutes spent,
+    /// and only 15 real minutes open the higher modalities.
+    @Test func shortReadVisitsCreditOnlyTheTimeReallySpent() {
+        let s = store(coverage: config.readingUnlock)
+        s.preferences = UserPreferences(modalities: [.reading, .listening], timeBudget: .standard, daysPerWeekGoal: nil)
+        s.refreshUnlocks(now: now)
+        let bar = config.higherDemonstratedMinutes
+        let visit = Tuning.minActivitySeconds
+        let visits = Int((Double(bar * 60) / visit).rounded(.up)) - 1   // just short of the real bar
+        var credited = 0
+        for _ in 0..<bar { credited += s.creditActivity(.reading, activeSeconds: visit, now: now) }
+        #expect(credited == Int(Double(bar) * visit / 60), "\(bar) visits of \(Int(visit)) s are \(Int(Double(bar) * visit / 60)) real minutes")
+        #expect(s.totalMinutes(.reading) == credited)
+        #expect(!s.canOpen(.listening), "the higher bar is real reading time, not a count of visits")
+
+        for _ in bar..<visits { s.creditActivity(.reading, activeSeconds: visit, now: now) }
+        #expect(s.totalMinutes(.reading) == bar - 1 && !s.canOpen(.listening))
+        s.creditActivity(.reading, activeSeconds: visit, now: now)
+        #expect(s.totalMinutes(.reading) == bar, "\(bar) real minutes in short visits do meet the bar")
+        #expect(s.canOpen(.listening))
+    }
+
     @Test func storeCapsOneSessionAtThePlanTargetTimesTheMultiplier() {
         let s = store(coverage: config.readingUnlock)
         s.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
@@ -385,6 +425,21 @@ struct HomeGateTests {
         #expect(!s.hasRetentionEvidence, "probes never count")
         s.gaps.append(EngineFixtures.gap("reviewed", concept: "negation", due: now, reviewCount: 1, lastReviewed: now))
         #expect(s.hasRetentionEvidence)
+    }
+
+    /// firstrun-11-7: My words' health chip drew the neutral 100 ("No reviews yet")
+    /// in the "Healthy" green. Without recall evidence the chip is neutral.
+    @Test func deckHealthChipIsNeutralWithoutRecallEvidence() {
+        let s = EngineFixtures.store()
+        s.gaps = [EngineFixtures.gap("seed", concept: "negation", due: now)]
+        let before = s.gapHealth(at: now)
+        #expect(before.label == "No reviews yet" && before.score >= Tuning.gapHealthHealthyFloor)
+        #expect(GapHealthTone.tone(score: before.score, hasRetentionEvidence: s.hasRetentionEvidence) == .neutral)
+        #expect(GapHealthTone.tone(score: 100, hasRetentionEvidence: false) == .neutral, "an empty deck's All clear too")
+
+        #expect(GapHealthTone.tone(score: Tuning.gapHealthHealthyFloor, hasRetentionEvidence: true) == .healthy)
+        #expect(GapHealthTone.tone(score: Tuning.gapHealthAttentionFloor, hasRetentionEvidence: true) == .attention)
+        #expect(GapHealthTone.tone(score: Tuning.gapHealthAttentionFloor - 1, hasRetentionEvidence: true) == .atRisk)
     }
 
     // MARK: D12 / D19 — Home copy from real data

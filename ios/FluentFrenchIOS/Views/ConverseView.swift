@@ -249,6 +249,11 @@ private struct ConverseCallView: View {
     @State private var recapRecorded = false
     @State private var timer: Timer? = nil
     @State private var replyTask: Task<Void, Never>? = nil
+    /// The spoken reply being transcribed. Held so ending or leaving the call can
+    /// cancel it: a transcript that landed after End was sent as a turn, the tutor
+    /// answered and spoke over the recap (or over Home), and its correction showed
+    /// under "What to fix" without ever reaching the deck (talkmedia-11-4).
+    @State private var transcribeTask: Task<Void, Never>? = nil
     @State private var recorder = VoiceRecorder()
     @FocusState private var inputFocused: Bool
 
@@ -641,11 +646,18 @@ private struct ConverseCallView: View {
         timer = nil
         replyTask?.cancel()
         replyTask = nil
+        transcribeTask?.cancel()
+        transcribeTask = nil
         tutorThinking = false
         NaturalVoice.shared.stop()
         recorder.cancel()
         recordRecap()
     }
+
+    /// The call is still running: not ended, and its recap not yet recorded (a
+    /// call left with the chevron or swiped away is torn down without `ended`).
+    /// Nothing may be sent to, or answered by, the tutor after that (talkmedia-11-4).
+    private var callIsLive: Bool { !ended && !recapRecorded }
 
     private func toggleListening() {
         if recorder.isRecording {
@@ -693,8 +705,11 @@ private struct ConverseCallView: View {
     /// A reply the learner had already typed is never thrown away: speech is
     /// appended to it and left for them to send (talkmedia-3-3).
     private func finishListening() {
-        Task {
+        transcribeTask = Task {
             let outcome = await recorder.stopAndTranscribe(language: "fra")
+            // The call ended or was left while this was transcribing: the reply
+            // belongs to a call that is over (talkmedia-11-4).
+            guard !Task.isCancelled, callIsLive else { return }
             switch outcome {
             case .text(let text):
                 let merge = DictationMerge.apply(heard: text, toDraft: draft)
@@ -720,7 +735,7 @@ private struct ConverseCallView: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !tutorThinking else { return }
+        guard callIsLive, !text.isEmpty, !tutorThinking else { return }
         Haptics.tap()
         draft = ""
         hintNotice = nil
@@ -742,7 +757,7 @@ private struct ConverseCallView: View {
     /// Retry — never faked as a tutor line. The request itself is bounded by
     /// `Tuning.converseReplyTimeout`.
     private func respond() {
-        guard !tutorThinking else { return }
+        guard callIsLive, !tutorThinking else { return }
         tutorThinking = true
         turnFailure = nil
         let history = transcript
@@ -751,8 +766,9 @@ private struct ConverseCallView: View {
         replyTask?.cancel()
         replyTask = Task {
             let result = await ConverseService.reply(scenario: scenario, level: level, history: history, concepts: concepts)
-            // A cancelled request never leaves the mic disabled behind "Tutor is replying…" (E26).
-            guard !Task.isCancelled else { tutorThinking = false; return }
+            // A cancelled request never leaves the mic disabled behind "Tutor is replying…" (E26),
+            // and a reply to a call that is over is never shown or spoken (talkmedia-11-4).
+            guard !Task.isCancelled, callIsLive else { tutorThinking = false; return }
             tutorThinking = false
             switch result {
             case .success(let reply):

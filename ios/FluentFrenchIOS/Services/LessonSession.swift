@@ -24,7 +24,8 @@
 //      Re-tapping a pair already tried in the round does nothing.
 //    • In-session release (B11): once the target concept's streak of first-try
 //      correct answers reaches the selection's `conceptReleaseStreak`, its remaining
-//      questions are dropped and backfilled by the scheduler.
+//      questions are dropped and backfilled by the scheduler. Answers on words the
+//      lesson taught (`mayTeach`) do not build that streak (lesson-11-3).
 //    • Capstone (C16): one question per gap, no remedials, no reveals, no mastery
 //      flashes, first attempt is the tally (`held` / `slipped`), capstone weight.
 //
@@ -591,9 +592,17 @@ nonisolated struct LessonSession {
             }
             if end == nil { outcome.remedialQueued = queueRemedial(for: q) }
         }
+        // An answer on a word this lesson TAUGHT (its word card printed the meaning
+        // and the example moments ago) is not evidence the learner already has the
+        // concept: a smart lesson's spine is three new target words asked first, so
+        // three recognition taps on them released the concept in every lesson —
+        // dropping each word's reversed round and telling the learner "you've got
+        // it" (lesson-11-3). Such an answer neither builds the streak nor, when
+        // right, breaks it; a miss still resets it.
         if !isCapstone, end == nil, !q.isProbe,
            let released = releaseTracker.record(conceptId: q.conceptId, firstTryCorrect: correct && firstTry,
-                                                releaseStreak: releaseStreak),
+                                                releaseStreak: releaseStreak,
+                                                countsTowardStreak: !mayTeach(q.gap)),
            released == targetConceptId {
             let before = pendingTargetCount(released)
             schedule = config.scheduler.releaseTargetConcept(conceptId: released, from: schedule, after: position)

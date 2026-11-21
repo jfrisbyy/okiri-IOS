@@ -951,11 +951,54 @@ struct ConceptSelectorTests {
         let trend = store.concept("trend")!, shaky = store.concept("shaky")!, solid = store.concept("solid")!
         #expect(selector.capstoneScore(trend, now: EngineFixtures.now) > selector.capstoneScore(shaky, now: EngineFixtures.now))
         #expect(selector.capstoneScore(shaky, now: EngineFixtures.now) > selector.capstoneScore(solid, now: EngineFixtures.now))
-        // The tiers must clear the shared score's FULL spread, not just its maximum:
-        // the score runs from -0.5 (repeatDamp at full penalty) to 4.8 (governor
-        // urgency 1.0x2 + leverage 0.6 + frontier 0 + confusion 0.7 + stall bonus 1.5).
-        #expect(Tuning.capstoneLearningWeight > 5.3 && Tuning.capstoneTrendingWeight > 5.3,
-                "tier weights must exceed the ranker's spread, stallPrerequisiteBonus and the governor multiplier included")
+        // The tiers must clear the shared score's FULL spread, not just its maximum.
+        // Stated independently of Tuning's own derivation (engine-11-4): the score runs
+        // from -0.5 (repeatDamp at full penalty) to 6.3 (governor urgency 1.0x2 +
+        // leverage 0.6 + frontier 0 + confusion 0.7 + stall bonus 1.5 + lapsed bonus
+        // 1.5). The old line, 4.8, left out the engine-8-3 bonuses.
+        let w = ConceptSelectionWeights.tuning
+        let ceiling = max(w.urgency + w.frontier, w.urgency * Tuning.governorUrgencyMultiplier)
+            + w.leverage + w.confusion + Tuning.stallPrerequisiteBonus
+            + max(Tuning.lapsedConceptBonus, Tuning.unfinishedConceptBonus)
+        let spread = ceiling + w.repeatDamp * Tuning.repeatDampSameSessionPenalty
+        #expect(abs(spread - 6.8) < 1e-9, "the spread today; recompute this comment if it moves")
+        #expect(Tuning.capstoneLearningWeight > spread && Tuning.capstoneTrendingWeight > spread,
+                "tier weights must exceed the ranker's spread, every bonus and the governor multiplier included")
+    }
+
+    /// engine-11-4: the lapsed bonus (engine-8-3) took a lapsed, non-trending concept
+    /// that props up a stalled skill past the 5.5 trending tier, so the milestone quiz
+    /// led with it ahead of the concept nearly mastered (11.60 against 11.03).
+    @Test func capstoneTrendingTierSurvivesALapsedStallPrerequisite() {
+        let now = EngineFixtures.now
+        let concepts = [
+            EngineFixtures.learning("trend", mastery: 0.7),
+            EngineFixtures.learning("boost", mastery: 0.3, level: .A2),
+            EngineFixtures.concept("stalled", level: .A2, prerequisites: ["boost"]),
+        ]
+        let link = ConfusionLink(partnerGapId: "trend-0", wrongPicks: 4, lastConfusedAt: now, strength: 1)
+        var gaps: [GapItem] = []
+        for i in 0..<3 {
+            gaps.append(EngineFixtures.gap("trend-\(i)", concept: "trend", due: now.addingTimeInterval(30 * EngineFixtures.day),
+                                           lastReviewed: now.addingTimeInterval(-EngineFixtures.day)))
+            gaps.append(EngineFixtures.gap("boost-\(i)", concept: "boost", level: .A2,
+                                           due: now.addingTimeInterval(-10 * EngineFixtures.day),
+                                           lastReviewed: now.addingTimeInterval(-EngineFixtures.day),
+                                           confusion: [link]))
+        }
+        let store = EngineFixtures.store(concepts: concepts, gaps: gaps)
+        store.sessionIndex = 4
+        store.concepts[0].lastTaughtSession = 4
+        store.concepts[1].lapsedAt = now.addingTimeInterval(-EngineFixtures.day)   // the one change
+        store.concepts[2].stallAttempts = Tuning.stallAttempts
+
+        let selector = ConceptSelector(store: store)
+        let trend = store.concept("trend")!, boost = store.concept("boost")!
+        #expect(selector.unfinishedConceptBonus(boost, now: now) == Tuning.lapsedConceptBonus)
+        #expect(selector.stallPrerequisiteBonus(boost) == Tuning.stallPrerequisiteBonus)
+        #expect(selector.capstoneScore(trend, now: now) > selector.capstoneScore(boost, now: now),
+                "the trending tier still outranks it")
+        #expect(selector.select(.capstone(now: now)).items.first?.conceptId == "trend")
     }
 
     /// Regression: a non-trending learning concept can now reach the ranker's ceiling
@@ -1211,10 +1254,57 @@ struct ConceptSelectorTests {
         #expect(store.concept("subjunctive-intro")?.newlyUnlocked == false)
         #expect(store.concepts.filter { $0.newlyUnlocked }.allSatisfy { $0.cefrLevel.order <= CEFRLevel.A1.order })
 
-        // Announced once, when the learner's band reaches it.
+        // Announced once, when the learner's band reaches it AND a lesson can offer
+        // it. Inside Foundation nothing above A1 can be probed and nothing above A1 is
+        // seeded before reading opens, so the band alone no longer announces it
+        // (engine-11-3); the skill's first card — here, its curriculum seeded as a
+        // probe or the bridge would — does.
         store.abilityTheta = 1.0
         #expect(store.learnerLevel == .B1)
+        #expect(store.isInFoundation)
+        #expect(!store.expandFrontier().contains(subjunctive.name), "nothing can teach it yet")
+        #expect(store.seedConceptContentIfNeeded(subjunctive.id, now: EngineFixtures.now) > 0)
         #expect(store.expandFrontier().contains(subjunctive.name))
         #expect(!store.expandFrontier().contains(subjunctive.name), "and only once")
+    }
+
+    /// engine-11-3 (follow-up to engine-10-5): a declared beginner's latched band
+    /// reaches A2 inside Foundation within days, and the band check alone announced
+    /// eight A2 skills at once — none of which any lesson could hold until the bridge
+    /// seeded them at unlock two weeks later. Announce only what can be offered now.
+    @Test func a2SkillsAreNotAnnouncedInsideFoundationUntilALessonCanOfferThem() throws {
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.syntheticContent(for: Array(EngineFixtures.authoredConceptIds))
+        for id in ConceptTaxonomy.baseConceptIds {
+            let idx = try #require(store.concepts.firstIndex { $0.id == id })
+            let c = store.concepts[idx]
+            store.concepts[idx] = EngineFixtures.mastered(c.id, category: c.category, level: c.cefrLevel, prerequisites: c.prerequisites)
+            store.concepts[idx].isProvisional = true   // seeds: they open no reading
+        }
+        store.abilityTheta = 0.0
+        #expect(store.learnerLevel == .A2)
+        #expect(store.isInFoundation)
+        let nearFuture = try #require(store.concept("near-future"))
+        #expect(nearFuture.cefrLevel == .A2 && store.arePrerequisitesMet(nearFuture) && store.isTeachable(nearFuture.id))
+        let selector = ConceptSelector(store: store)
+        #expect(!selector.canOfferNow(nearFuture))
+        #expect(selector.probeConcept()?.id != nearFuture.id, "no probe can open it inside Foundation")
+
+        let announced = store.expandFrontier()
+        let byName = Dictionary(store.concepts.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        #expect(!announced.contains(nearFuture.name), "\(announced)")
+        #expect(announced.allSatisfy { (byName[$0]?.cefrLevel.order ?? 99) <= Tuning.foundationProbeMaxLevel.order },
+                "only skills a lesson can offer now: \(announced)")
+
+        // The moment it has a card (the bridge, a capture), it is announced, once.
+        #expect(store.seedConceptContentIfNeeded(nearFuture.id, now: EngineFixtures.now) > 0)
+        #expect(ConceptSelector(store: store).canOfferNow(nearFuture))
+        #expect(store.expandFrontier().contains(nearFuture.name))
+        #expect(!store.expandFrontier().contains(nearFuture.name))
+
+        // Outside Foundation the band check is the whole rule again.
+        #expect(ConceptSelector.canOfferNow(level: .A2, hasOwnCard: false, isInFoundation: false))
+        #expect(!ConceptSelector.canOfferNow(level: .A2, hasOwnCard: false, isInFoundation: true))
+        #expect(ConceptSelector.canOfferNow(level: .A1, hasOwnCard: false, isInFoundation: true))
     }
 }

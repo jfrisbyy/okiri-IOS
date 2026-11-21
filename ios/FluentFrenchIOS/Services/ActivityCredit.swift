@@ -52,13 +52,34 @@ nonisolated struct ActivitySession: Hashable {
 }
 
 nonisolated enum ActivityCredit {
-    /// Minutes to credit for `activeSeconds` of foreground time: nothing under
+    /// Minutes to credit for `activeSeconds` of LESSON time: nothing under
     /// `Tuning.minActivitySeconds`, otherwise the rounded minutes (at least 1),
-    /// never more than `capMinutes`. A cap of 0 credits nothing.
+    /// never more than `capMinutes`. A cap of 0 credits nothing. Activity surfaces,
+    /// whose lifetime minutes open the higher modalities, use `credit(...)` instead
+    /// (firstrun-11-4).
     static func minutes(activeSeconds: TimeInterval, capMinutes: Int) -> Int {
         guard activeSeconds >= Tuning.minActivitySeconds, capMinutes > 0 else { return 0 }
         let rounded = max(1, Int((activeSeconds / 60).rounded()))
         return min(rounded, capMinutes)
+    }
+
+    /// Whole minutes an activity session earns toward the plan AND the lifetime
+    /// totals the unlock gate reads, plus the unspent seconds to carry into the
+    /// modality's next session (firstrun-11-4). `minutes(activeSeconds:capMinutes:)`
+    /// rounds a 20-second visit up to a whole minute, so fifteen glances at Read met
+    /// the 15-minute bar that opens Listening and Speaking: activity time is floored
+    /// instead, and the remainder carries, so the total credited never exceeds the
+    /// foreground time actually spent. A glance under `Tuning.minActivitySeconds`
+    /// still credits nothing and adds nothing to the carry; time past the cap is
+    /// discarded with the carry.
+    static func credit(activeSeconds: TimeInterval, carriedSeconds: TimeInterval,
+                       capMinutes: Int) -> (minutes: Int, carrySeconds: TimeInterval) {
+        let carried = max(0, carriedSeconds)
+        guard activeSeconds >= Tuning.minActivitySeconds, capMinutes > 0 else { return (0, carried) }
+        let total = activeSeconds + carried
+        let whole = Int((total / 60).rounded(.down))
+        guard whole < capMinutes else { return (capMinutes, 0) }
+        return (whole, total - Double(whole) * 60)
     }
 
     /// The per-session ceiling for a plan target: target × `Tuning.activityCreditCapMultiplier`,

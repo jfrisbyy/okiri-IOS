@@ -397,12 +397,21 @@ struct LessonSchedulerTests {
         #expect(!remaining.contains { $0.role == .target && $0.conceptId == target && !$0.isInterstitial })
         #expect(remaining.contains { $0.isInterstitial }, "the interstitial stays")
         #expect(remaining.contains { $0.isProbe }, "the probe stays")
-        #expect(released.count == schedule.count, "every dropped question is backfilled from review")
         let dropped = schedule.dropFirst(position + 1).filter { $0.role == .target && $0.conceptId == target && !$0.isInterstitial }.count
         let originalIds = Set(schedule.map { $0.id })
         let backfill = remaining.filter { !originalIds.contains($0.id) }
-        #expect(backfill.count == dropped)
+        // Backfill only tops up review gaps still short of their full round
+        // (lesson-11-1): it never exceeds what was dropped, and never takes a gap
+        // past `masteryTarget` askings in one lesson.
+        #expect(backfill.count <= dropped)
+        #expect(released.count == schedule.count - dropped + backfill.count)
         #expect(backfill.allSatisfy { q in q.role == .review && q.conceptId != target })
+        let before = Dictionary(grouping: schedule.filter { !$0.isInterstitial }, by: { $0.gap.id }).mapValues(\.count)
+        let after = Dictionary(grouping: released.filter { !$0.isInterstitial }, by: { $0.gap.id }).mapValues(\.count)
+        for q in backfill {
+            #expect((before[q.gap.id] ?? 0) < Tuning.masteryTarget && (after[q.gap.id] ?? 0) <= Tuning.masteryTarget,
+                    "a backfill only completes a short round")
+        }
 
         #expect(scheduler.releaseTargetConcept(conceptId: target, from: schedule, after: schedule.count - 1).map { $0.id } == schedule.map { $0.id })
         #expect(scheduler.releaseTargetConcept(conceptId: "unknown", from: schedule, after: 0).map { $0.id } == schedule.map { $0.id })
@@ -452,15 +461,39 @@ struct LessonSchedulerTests {
         #expect(released.last?.isProbe == true)
         #expect(backfill.level == .recognition, "r2 is still short of its full round: same tier")
 
-        // With every review gap already at its full round, the extra question comes
-        // back a tier UP instead of repeating a recognition question a third time.
+        // With every review gap already at its full round, nothing is backfilled:
+        // the released question is simply dropped. The old step-up asked r1 a
+        // third time, a tier UP — for a word new at lesson start, a fill-blank on the
+        // sentence its word card had just printed, graded `.easy` (lesson-11-1).
         let full = [mc(target, "t1", role: .target), mc(r1, "r1a"), mc(r1, "r1b"),
                     mc(target, "t2", role: .target), probeQ]
         let stepped = scheduler.releaseTargetConcept(conceptId: "T", from: full, after: 0)
-        let fullIds = Set(full.map { $0.id })
-        let extra = try #require(stepped.first { !fullIds.contains($0.id) })
-        #expect(extra.gap.id == "r1" && extra.level == .recall, "a third asking steps up, it does not repeat")
+        #expect(stepped.map { $0.id } == [full[0].id, full[1].id, full[2].id, probeQ.id],
+                "no third asking: the released question is dropped without a backfill")
         #expect(stepped.last?.isProbe == true)
+    }
+
+    /// The release backfill on a real lesson shape: new review words that already
+    /// had both recognition rounds are never asked again, and never as a fill-blank
+    /// (lesson-11-1). The word card printed their example sentence; a fill-blank on
+    /// it grades `.easy` for an answer copied from the previous screen.
+    @Test func releaseBackfillNeverAsksANewWordAThirdTimeOrAsAFillBlank() throws {
+        let targets = (0..<3).map { gap("t\($0)", concept: "T", reviewCount: 2, consecutiveCorrect: 1) }
+        let reviews = (0..<2).map { gap("r\($0)", concept: "R") }
+        var roles: [String: SelectedItemRole] = [:]
+        for t in targets { roles[t.id] = .target }
+        let l = lesson(targets + reviews, roles: roles, target: "T")
+        let schedule = scheduler.build(for: l, abilityOptionCount: 4)
+        #expect(reviews.allSatisfy { r in questions(for: r.id, in: schedule).count == Tuning.masteryTarget })
+        let lastTargetInRoundZero = try #require(schedule.firstIndex { $0.gap.id == "t2" })
+        let released = scheduler.releaseTargetConcept(conceptId: "T", from: schedule, after: lastTargetInRoundZero)
+
+        for r in reviews {
+            let asked = questions(for: r.id, in: released)
+            #expect(asked.count == Tuning.masteryTarget, "no third asking of \(r.id) in the same lesson")
+            #expect(!asked.contains { $0.kind == .fillBlank }, "a new word is never stepped up to a fill-blank")
+        }
+        #expect(!released.dropFirst(lastTargetInRoundZero + 1).contains { $0.role == .target && !$0.isInterstitial })
     }
 
     /// A mastered concept with no items of its own is verified on a probe item.
@@ -604,15 +637,42 @@ struct LessonSchedulerTests {
         let local = scheduler.build(for: l, abilityOptionCount: 4)
         #expect(merged.count == local.count, "the merge keeps the schedule's shape")
 
+        // A new word's reversed round ("Which one means …?") is never handed to the
+        // AI, which writes forward questions only: replacing it asked the same
+        // forward meaning question twice (lesson-11-5). The forward slot takes the
+        // first usable AI question; the reversed slot stays local.
         let full = questions(for: "full", in: merged)
-        #expect(full.count == Tuning.masteryTarget && full.allSatisfy { $0.source == .ai && $0.role == .target })
-        #expect(full.map { $0.prompt } == ["ai 1", "ai 2"], "the first masteryTarget usable questions, in the schedule's slots")
+        #expect(full.count == Tuning.masteryTarget && full.allSatisfy { $0.role == .target })
+        #expect(full[0].source == .ai && full[0].prompt == "ai 1", "the first usable question, in the forward slot")
+        #expect(full[1].source == .local && full[1].isReversed, "the English → French round survives the merge")
         #expect(questions(for: "partial", in: merged).allSatisfy { $0.source == .local })
         #expect(questions(for: "over", in: merged).allSatisfy { $0.source == .local }, "one usable question is partial")
         #expect(questions(for: "plain", in: merged).allSatisfy { $0.source == .local })
         #expect(questions(for: "check", in: merged).allSatisfy { $0.source == .local } && questions(for: "check", in: merged).count == 1)
         #expect(questions(for: "probe", in: merged).allSatisfy { $0.source == .local && $0.isProbe })
         #expect(merged.filter { $0.isInterstitial }.count == 1)
+    }
+
+    /// Two AI multiple choices on one gap are the same forward meaning question,
+    /// however they are worded: at most one is merged, and the gap's other slot
+    /// keeps its local question (lesson-11-5).
+    @Test func aiMergeNeverAsksAGapTheSameForwardMeaningQuestionTwice() throws {
+        let gaps = [gap("new"), gap("recall", reviewCount: 2, consecutiveCorrect: 1)] + (0..<3).map { gap("o\($0)") }
+        let l = lesson(gaps)
+        func mc(_ g: GapItem, _ tag: String) -> LessonQuestion {
+            LessonQuestion(gap: g, kind: .multipleChoice, prompt: "ai \(tag) \(g.id)", correctAnswer: g.englishTranslation,
+                           options: [g.englishTranslation, "b", "c"])
+        }
+        let ai = [mc(gaps[0], "1"), mc(gaps[0], "2"), mc(gaps[1], "1"), mc(gaps[1], "2")]
+        let merged = scheduler.schedule(for: l, abilityOptionCount: 4, ai: ai)
+        for id in ["new", "recall"] {
+            let qs = questions(for: id, in: merged)
+            #expect(qs.count == Tuning.masteryTarget)
+            #expect(qs.filter { $0.source == .ai }.count == 1, "\(id): one AI meaning question, not two")
+            let forwardMC = qs.filter { $0.kind == .multipleChoice && !$0.isReversed }
+            #expect(forwardMC.count == 1, "\(id): the forward meaning question is asked once")
+        }
+        #expect(questions(for: "new", in: merged).contains { $0.isReversed })
     }
 
     @Test func allowedAIKindsFollowTheLevel() {

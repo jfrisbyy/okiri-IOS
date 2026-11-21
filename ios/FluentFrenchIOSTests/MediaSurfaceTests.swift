@@ -841,6 +841,126 @@ struct MediaSurfaceTests {
         #expect(store.gaps.count == 1)
     }
 
+    // MARK: talkmedia-11-1 — a Watch tap finds the deck's article form
+
+    private func deckWord(_ id: String, _ french: String, _ english: String) -> GapItem {
+        var gap = EngineFixtures.gap(id, concept: nil)
+        gap.frenchWord = french
+        gap.englishTranslation = english
+        return gap
+    }
+
+    @Test func aWatchTapOnAWordTheDeckHoldsWithItsArticleIsAlreadySaved() {
+        let store = EngineFixtures.store(concepts: [], gaps: [deckWord("w1", "l'eau", "the water"),
+                                                              deckWord("w2", "la vie", "life"),
+                                                              deckWord("w3", "l'été", "summer")])
+        let line = "L'eau est froide"
+        let tapped = TranscriptCapture.headword(tokenAt: 0, in: line)
+        #expect(tapped == "eau")
+        #expect(!store.hasGap(forWord: tapped), "the exact key alone misses the deck's \"l'eau\"")
+        let water = WordGloss(term: "eau", translation: "water", explanation: "", example: "", exampleTranslation: "")
+        #expect(TranscriptCapture.isAlreadySaved(tapped, gloss: water, savedMeanings: store.savedHeadwordMeanings()),
+                "\"eau\" is the deck's \"l'eau\": the sheet must not offer a second card")
+        let life = WordGloss(term: "vie", translation: "life", explanation: "", example: "", exampleTranslation: "")
+        #expect(TranscriptCapture.isAlreadySaved("vie", gloss: life, savedMeanings: store.savedHeadwordMeanings()))
+        // A different word spelled like an article form is not saved (read-11-5).
+        let been = WordGloss(term: "été", translation: "been", explanation: "", example: "", exampleTranslation: "")
+        #expect(!TranscriptCapture.isAlreadySaved("été", gloss: been, savedMeanings: store.savedHeadwordMeanings()))
+        // Before the gloss arrives only the word's own key counts.
+        #expect(!TranscriptCapture.isAlreadySaved("eau", gloss: nil, savedMeanings: store.savedHeadwordMeanings()))
+    }
+
+    @Test func aWatchTranscriptHighlightsWordsSavedInAnEarlierSession() {
+        let store = EngineFixtures.store(concepts: [], gaps: [deckWord("w1", "maison", "house")])
+        let keys = store.savedHeadwordKeys()
+        let line = "Maison et jardin"
+        #expect(TranscriptCapture.isHighlighted(TranscriptCapture.headword(tokenAt: 0, in: line), savedKeys: keys),
+                "a word the deck already holds is marked the first time the video shows it")
+        #expect(!TranscriptCapture.isHighlighted(TranscriptCapture.headword(tokenAt: 2, in: line), savedKeys: keys))
+        #expect(TranscriptCapture.isHighlighted("Maison", savedKeys: [AppStore.captureKey("maison")]),
+                "a session save is held under the deck's key")
+    }
+
+    // MARK: talkmedia-11-6 — a number in a transcript is not a word
+
+    @Test func aNumberInATranscriptIsNotOfferedForLookup() {
+        let line = "En 2024 nous avons 15 ans"
+        #expect(TranscriptCapture.headword(tokenAt: 1, in: line) == "2024")
+        #expect(!TranscriptCapture.isLookupable(TranscriptCapture.headword(tokenAt: 1, in: line)))
+        #expect(!TranscriptCapture.isLookupable("15"))
+        #expect(TranscriptCapture.isLookupable(TranscriptCapture.headword(tokenAt: 2, in: line)))
+        #expect(TranscriptCapture.isLookupable("XXe"), "a token with any letter is still a word")
+        #expect(!TranscriptCapture.isHighlighted("2024", savedKeys: ["2024"]))
+    }
+
+    // MARK: talkmedia-11-7 — a deadline bounds an operation that ignores cancellation
+
+    @Test func aDeadlineReturnsOnTimeEvenWhenTheOperationIgnoresCancellation() async {
+        // Timed off the main actor, so other suites' work on it cannot skew the clock.
+        let (late, waited) = await Task.detached { () -> (Int?, Duration) in
+            let clock = ContinuousClock()
+            let start = clock.now
+            // An unstructured task does not inherit cancellation, exactly as the
+            // natural-voice fetch's shared download task does not.
+            let value = await Deadline.run(seconds: 0.1) { () -> Int in
+                await Task.detached { () -> Int in
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    return 1
+                }.value
+            }
+            return (value, clock.now - start)
+        }.value
+        #expect(late == nil)
+        #expect(waited < .seconds(2), "the spinner is held for the deadline, not the request (\(waited))")
+    }
+
+    @Test func aCancelledCallerStopsWaitingAtOnce() async {
+        let (value, waited) = await Task.detached { () -> (Int?, Duration) in
+            let clock = ContinuousClock()
+            let start = clock.now
+            let waiter = Task.detached { () -> Int? in
+                await Deadline.run(seconds: 10) { () -> Int in
+                    await Task.detached { () -> Int in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        return 1
+                    }.value
+                }
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waiter.cancel()
+            let value = await waiter.value
+            return (value, clock.now - start)
+        }.value
+        #expect(value == nil)
+        #expect(waited < .seconds(2), "\(waited)")
+    }
+
+    // MARK: talkmedia-11-9 — a cancelled feed load publishes nothing
+
+    @Test func aCancelledTrendingLoadPublishesNoFailure() async {
+        let categories = Array(WatchCatalog.categories.prefix(2))
+        // What URLSession does when the load's task is cancelled: the request
+        // throws `URLError.cancelled`, which reads as the service not answering.
+        let loader = Task { () -> TrendingFeed.Loaded? in
+            await TrendingFeed.load(categories: categories) { id in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                return .curated(WatchCatalog.curated(for: id), reason: .serviceError)
+            }
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        loader.cancel()
+        let loaded = await loader.value
+        #expect(loaded == nil, "a load the app cancelled is not 'the video service didn't answer'")
+
+        let live = await TrendingFeed.load(categories: categories) { _ in .live([]) }
+        #expect(live?.feeds.count == categories.count)
+        #expect(live?.failure == nil)
+        let keyless = await TrendingFeed.load(categories: categories) { id in
+            id == categories.first?.id ? .curated([], reason: .serviceError) : .curated([], reason: .noKey)
+        }
+        #expect(keyless?.failure == .noKey, "a missing key explains every section")
+    }
+
     // MARK: talkmedia-10-9 — a finished dialogue's bar is full
 
     @Test func aFinishedDialogueShowsAFullProgressBar() {

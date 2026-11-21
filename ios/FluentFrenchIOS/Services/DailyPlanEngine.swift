@@ -406,7 +406,9 @@ struct DailyPlanEngine {
     /// (firstrun-10-5): "weak spots" names the category of the top-ranked concept the
     /// learner has actually practised and is still learning — a never-observed
     /// frontier concept is a NEW skill, not a weak spot — and "leans" is said only
-    /// when the rows really are uneven.
+    /// when the rows really are uneven. A band-inferred placement seed reads
+    /// `.learning` without a single answer, so a weak spot also needs ANSWERED
+    /// evidence (`testedObservations > 0`, firstrun-11-1).
     func rationale(for items: [DailyPlanItem], ranked: [ScoredConcept]) -> String {
         guard let lead = items.first, let leadModality = lead.modality else { return "Here's today's plan." }
         let leadLabel = leadModality.label.lowercased()
@@ -423,7 +425,7 @@ struct DailyPlanEngine {
             tilt = nil                                              // every row the same: no lean to explain
         }
 
-        let weak = ranked.first { !$0.isFrontier && $0.concept.state == .learning }
+        let weak = ranked.first { !$0.isFrontier && $0.concept.state == .learning && $0.concept.testedObservations > 0 }  // firstrun-11-1
         let cause: String?
         if let weak {
             cause = "Your weak spots lately are \(weak.concept.category.label.lowercased())-heavy"

@@ -78,6 +78,59 @@ nonisolated enum FoundationSeeder {
         return result
     }
 
+    /// What says a content item is already on the learner's record: its stable
+    /// content id, or its headword (content carries no id in hand-written tests, and
+    /// a word the learner captured is the same card as the item with its headword).
+    nonisolated struct ContentKey: Hashable {
+        let itemId: String?
+        let headword: String
+    }
+
+    /// Each concept's content items as `ContentKey`s.
+    static func contentKeys(_ content: [GapItem]) -> [String: [ContentKey]] {
+        var result: [String: [ContentKey]] = [:]
+        for item in content {
+            guard let cid = item.conceptId else { continue }
+            result[cid, default: []].append(ContentKey(itemId: item.contentItemId, headword: headwordKey(item.frenchWord)))
+        }
+        return result
+    }
+
+    /// True when the learner's cards of one concept (`conceptGaps`) already hold its
+    /// curriculum: at least `Tuning.foundationTopUpSeededShare` of its content items
+    /// (`keys`), matched by content id or headword. A Foundation card that matches no
+    /// current item still counts as one item held: only content seeding makes
+    /// Foundation cards, so it is an item of an earlier content version (or of the
+    /// inline fallback curriculum) the learner already has. A concept with no content
+    /// holds all there is.
+    ///
+    /// The seeding door used to close on ANY card of the concept (engine-11-1): the
+    /// one item a placement miss seeds (`Tuning.placementMissSeedItems`), or a word
+    /// captured while reading and filed on the skill, stood in for the whole skill.
+    /// Its other eleven authored items were never seeded by any path — the probe skips
+    /// a concept with cards, the bridge stops at A2, the launch top-up waits for half
+    /// the skill — and the concept was certified mastered on that single card. The
+    /// share is the same line the launch top-up uses (`FoundationContentLoader.refreshSeeded`),
+    /// so between them a skill is either seeded here or topped up there, never neither.
+    static func holdsCurriculum(_ keys: [ContentKey], conceptGaps: [GapItem]) -> Bool {
+        guard !keys.isEmpty else { return true }
+        let cards = conceptGaps.filter { !$0.isProbe }
+        let ids = Set(cards.compactMap { $0.contentItemId })
+        let headwords = Set(cards.map { headwordKey($0.frenchWord) })
+        let matched = keys.filter { key in
+            (key.itemId.map { ids.contains($0) } ?? false) || headwords.contains(key.headword)
+        }.count
+        let keyIds = Set(keys.compactMap { $0.itemId })
+        let keyHeadwords = Set(keys.map { $0.headword })
+        let stale = cards.filter { card in
+            card.sourceType == .foundation
+                && !(card.contentItemId.map { keyIds.contains($0) } ?? false)
+                && !keyHeadwords.contains(headwordKey(card.frenchWord))
+        }.count
+        let held = min(keys.count, matched + stale)
+        return Double(held) >= Double(keys.count) * Tuning.foundationTopUpSeededShare
+    }
+
     /// The gap's own id when it is free, else one derived from its headword — stable
     /// across launches, so the same item always lands under the same fallback id
     /// (engine-10-6).

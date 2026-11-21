@@ -148,8 +148,8 @@ nonisolated struct PlacementEngine {
     private(set) var missed: [AssessmentQuestion] = []
     private(set) var correctCount: Int = 0
 
-    /// Current target band (staircase position).
-    private var band: Int = 2
+    /// Current target band (staircase position); starts at `Tuning.placementStartBand` (firstrun-11-8).
+    private var band: Int = Tuning.placementStartBand
     /// Consecutive misses at the lowest band, PER CATEGORY. The test estimates
     /// vocabulary and grammar separately (a false beginner typically has one and
     /// not the other), so bottoming out is per category too: a category that has
@@ -171,8 +171,9 @@ nonisolated struct PlacementEngine {
     let probesPerConcept = Tuning.placementProbesPerConcept
     /// Lowest-band misses in a row that bottom a category out.
     let bottomOutMisses = Tuning.placementBottomOutMisses
-    private let minBand = 1
-    private let maxBand = 4
+    /// The staircase's band range (firstrun-11-8).
+    private let minBand = Tuning.placementMinBand
+    private let maxBand = Tuning.placementMaxBand
 
     /// `seed` makes the staircase fully reproducible (tests, the headless driver);
     /// the app leaves it nil.
@@ -497,7 +498,7 @@ nonisolated struct PlacementEngine {
                 }
                 continue                                                    // otherwise untested / thin — skip, keep going
             }
-            if Double(hit) / Double(pool.count) >= 0.5 || b <= vouchedBand { cleared = b } else { break }
+            if Double(hit) / Double(pool.count) >= Tuning.placementBandClearRatio || b <= vouchedBand { cleared = b } else { break }
         }
         return cleared
     }
@@ -628,7 +629,9 @@ nonisolated enum AssessmentService {
     /// concept the probe diagnosed is seeded from its REAL content items — a
     /// headword with a meaning, an example and a verified blank —
     /// `Tuning.placementMissSeedItems` of them, marked `.hard` and due now. Hand-bank
-    /// items ARE headword items and are seeded as themselves.
+    /// items ARE headword items: one is seeded as its concept's content item with the
+    /// same headword when there is one, and as itself only when there is not
+    /// (firstrun-11-5).
     ///
     /// `items` is the content lookup (the bundled file by default; tests inject).
     /// A concept with no content simply seeds nothing: it is already in
@@ -644,7 +647,22 @@ nonisolated enum AssessmentService {
                 let key = FoundationSeeder.headwordKey(q.french)
                 guard !key.isEmpty, !seenHeadwords.contains(key) else { continue }
                 seenHeadwords.insert(key)
-                result.append(gap(forMissed: q, now: now))
+                // firstrun-11-5: when the concept's own content holds the same headword,
+                // seed THAT item — its taxonomy category and level, its blank, its stable
+                // content id — exactly as the probe path does. The Foundation slices skip
+                // a headword already in the deck, so a hand-built card seeded here would
+                // stand in for the content item for good.
+                let concept = q.conceptId.flatMap { taxonomyConcepts[$0] }
+                if let concept,
+                   let match = items(concept.id).enumerated().first(where: {
+                       FoundationSeeder.headwordKey($0.element.fr) == key && !$0.element.en.isEmpty
+                   }) {
+                    result.append(FoundationContentLoader.gap(from: match.element, conceptId: concept.id, index: match.offset,
+                                                              category: concept.category, level: concept.cefrLevel,
+                                                              difficulty: .hard, now: now))
+                } else {
+                    result.append(gap(forMissed: q, concept: concept, now: now))
+                }
                 continue
             }
             guard let cid = q.conceptId, !seededConcepts.contains(cid) else { continue }
@@ -665,9 +683,19 @@ nonisolated enum AssessmentService {
         return result
     }
 
+    /// The taxonomy's concepts by id: a missed hand item files under its concept's
+    /// category and level, not the placement item's (firstrun-11-5).
+    private static let taxonomyConcepts: [String: Concept] = Dictionary(
+        ConceptTaxonomy.seed().map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
     /// A gap built from a hand-bank placement item the learner missed (a real
-    /// headword → meaning pair).
-    private static func gap(forMissed q: AssessmentQuestion, now: Date) -> GapItem {
+    /// headword → meaning pair) whose concept has no content item for it. It files
+    /// under the concept's taxonomy category and level when the item names one
+    /// (firstrun-11-5), and its difficulty is the one a content card of that level
+    /// marked `.hard` gets (firstrun-11-8).
+    private static func gap(forMissed q: AssessmentQuestion, concept: Concept?, now: Date) -> GapItem {
+        let category = concept?.category ?? q.category
+        let level = concept?.cefrLevel ?? q.level
         var gap = GapItem(
             id: UUID().uuidString,
             frenchWord: q.french,
@@ -677,7 +705,7 @@ nonisolated enum AssessmentService {
             exampleTranslation: q.exampleTranslation,
             pronunciation: nil,
             sourceType: .foundation,
-            category: q.category,
+            category: category,
             difficulty: .hard,
             reviewCount: 0,
             consecutiveCorrect: 0,
@@ -685,10 +713,10 @@ nonisolated enum AssessmentService {
             nextReviewAt: now,
             masteredAt: nil,
             createdAt: now,
-            cefrLevel: q.level,
+            cefrLevel: level,
             easeFactor: 2.5,
             currentInterval: 0,
-            irtDifficulty: Double(q.band) * 0.6 - 0.8,
+            irtDifficulty: FoundationContentLoader.irtDifficulty(level: level, difficulty: .hard),   // firstrun-11-8
             fsrs: nil,
             originalContext: nil,
             confusionLinks: [],

@@ -88,21 +88,45 @@ nonisolated enum KeyVocabulary {
         return lowercasingFirst(stripped)
     }
 
-    /// Whether the deck already holds this reader headword, with or without an
-    /// article (read-10-5). `savedKeys` is `AppStore.savedHeadwordKeys()`.
+    /// Whether the deck holds this reader headword under its OWN key — the test a
+    /// surface makes before it knows what the word means (the body underline, the
+    /// Key Vocabulary checkmark). `savedKeys` is `AppStore.savedHeadwordKeys()`.
     ///
-    /// The deck keys cards by headword with its article kept ("le matin", "le
-    /// café" — Foundation seeds every item that way), while the reader looks a
-    /// tapped word up bare. So "matin" in a story was offered as unsaved, saved as
-    /// a second card beside "le matin", and the two then sat in one lesson where
-    /// "the morning" was a second right answer graded wrong. A headword counts as
-    /// saved under its bare key, under each article it may carry in the deck, and
-    /// — for a swept "le matin" — without its own article.
+    /// Read-10-5 also counted the deck's article forms here ("matin" saved because
+    /// the deck holds "le matin"), but a spelling with an article is not the same
+    /// word: "été" in "a été" ("been") was marked saved because Foundation seeds
+    /// "l'été" ("summer"), "lit" ("reads") because of "le lit", "porte"
+    /// ("carries") because of "la porte" — and the word sheet then refused to save
+    /// it (read-11-5). An article form counts only once the meanings are known to
+    /// agree: `isSaved(_:meaning:in:)`.
     static func isSaved(_ headword: String, in savedKeys: Set<String>) -> Bool {
-        deckKeys(for: headword).contains { savedKeys.contains($0) }
+        guard let own = deckKeys(for: headword).first else { return false }
+        return savedKeys.contains(own)
     }
 
-    /// The `AppStore.captureKey` spellings a headword may be saved under (read-10-5).
+    /// Whether the deck already holds this headword, with or without an article,
+    /// AS THIS MEANING (read-10-5, read-11-5). `savedMeanings` is
+    /// `AppStore.savedHeadwordMeanings()`; `meaning` is the gloss the word sheet
+    /// looked up. The deck keys cards by headword with its article kept ("le
+    /// matin" — Foundation seeds every item that way) while the reader looks a
+    /// tapped word up bare, so "matin" ("morning") is the deck's "le matin" ("the
+    /// morning") and must not become a second card — but "été" ("been") is not
+    /// the deck's "l'été" ("summer").
+    static func isSaved(_ headword: String, meaning: String, in savedMeanings: [String: String]) -> Bool {
+        let keys = deckKeys(for: headword)
+        guard let own = keys.first else { return false }
+        if savedMeanings[own] != nil { return true }
+        let sides = HeuristicTagger.lexiconSides(of: meaning)
+        guard !sides.isEmpty else { return false }
+        for key in keys.dropFirst() {
+            guard let saved = savedMeanings[key] else { continue }
+            if !sides.isDisjoint(with: HeuristicTagger.lexiconSides(of: saved)) { return true }
+        }
+        return false
+    }
+
+    /// The `AppStore.captureKey` spellings a headword may be saved under, its own
+    /// key first (read-10-5).
     static func deckKeys(for headword: String) -> [String] {
         let key = AppStore.captureKey(headword)
         guard !key.isEmpty else { return [] }
@@ -122,6 +146,25 @@ nonisolated enum KeyVocabulary {
 
     /// The articles a deck headword may open with (read-10-5).
     private static let deckArticles = ["le ", "la ", "les ", "l'", "un ", "une "]
+
+    /// The reader's tappable tokens for one line of a body, each with whether it
+    /// opens a sentence. Split on EVERY kind of whitespace (read-11-3): French
+    /// typography puts a no-break space (U+00A0, U+202F) before : ; ? ! and inside
+    /// « », and splitting on U+0020 alone made "« Nous", "dit :" and "pourquoi ?"
+    /// single tokens — a "phrase" that skipped the headword rule and was saved as a
+    /// dirty duplicate of "nous". A lone mark ("?", "«") is then its own token:
+    /// it has no letter, so the reader never offers it, and it hands the
+    /// sentence-opening state on to the word after it ("? Nous", "« Nous").
+    static func readerTokens(inLine line: String) -> [(text: String, opensSentence: Bool)] {
+        var out: [(text: String, opensSentence: Bool)] = []
+        var opensSentence = true
+        for word in line.split(whereSeparator: { $0.isWhitespace }).map(String.init) {
+            out.append((word, opensSentence))
+            let isWord = word.contains(where: { $0.isLetter || $0.isNumber })
+            opensSentence = CaptureBuilder.endsSentence(word) || (opensSentence && !isWord)
+        }
+        return out
+    }
 
     /// The words of a sentence as the learner reads them: original spelling and
     /// accents kept (a chip becomes a headword, so "découvert" must not fold to

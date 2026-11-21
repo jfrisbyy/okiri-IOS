@@ -259,6 +259,45 @@ nonisolated enum TranscriptCapture {
         return KeyVocabulary.headword(for: words[index], opensSentence: opensSentence)
     }
 
+    /// Whether a transcript token can be looked up at all: it has a letter, the
+    /// reader's rule (`ReaderView.isLookupable`). "2024" or "15" is text the
+    /// panel shows, not a word: a tap on it paused the video and opened a sheet
+    /// whose save button refused it as "Too long to save as a card", a reason
+    /// that was false (talkmedia-11-6).
+    static func isLookupable(_ headword: String) -> Bool {
+        headword.contains { $0.isLetter }
+    }
+
+    /// Whether the transcript marks this headword as already in the deck.
+    /// `savedKeys` holds `AppStore.captureKey` spellings: the deck's headwords
+    /// (`AppStore.savedHeadwordKeys()`) and the words saved in this session, so a
+    /// word saved in an earlier session is highlighted the first time it is met —
+    /// a session-only set offered it as new. Only the word's own key: before a tap
+    /// there is no meaning to tell the deck's "l'été" (summer) from "été" (been),
+    /// so an article form is left to the word sheet (talkmedia-11-1, read-11-5).
+    static func isHighlighted(_ headword: String, savedKeys: Set<String>) -> Bool {
+        isLookupable(headword) && KeyVocabulary.isSaved(headword, in: savedKeys)
+    }
+
+    /// Whether the word sheet offers a tapped word as already saved. Since
+    /// talkmedia-10-4 a tap on "L'eau" looks up and saves "eau", and the deck
+    /// keeps Foundation's headwords with their article ("l'eau", "la vie", "le
+    /// temps"), so the exact-key test offered "eau" as new and saved a second card
+    /// beside "l'eau" — which then sat in one lesson where the second right meaning
+    /// was graded wrong. The read-10-5 rule, applied to Watch: saved under the
+    /// word's own key, or under an article form the deck holds WITH THE SAME
+    /// MEANING once the gloss is known ("vie" is "la vie"; "été", "been", is not
+    /// "l'été", "summer" — read-11-5). `savedMeanings` is
+    /// `AppStore.savedHeadwordMeanings()` (talkmedia-11-1).
+    static func isAlreadySaved(_ word: String, gloss: WordGloss?, savedMeanings: [String: String]) -> Bool {
+        if let own = KeyVocabulary.deckKeys(for: word).first, savedMeanings[own] != nil { return true }
+        guard let gloss else { return false }
+        // The card would be saved under the gloss's own term, so ask about both.
+        return [word, gloss.term].contains {
+            KeyVocabulary.isSaved($0, meaning: gloss.translation, in: savedMeanings)
+        }
+    }
+
     /// The sentence the card may quote: the video's own French, nothing else.
     static func quotedContext(_ sentence: String, origin: TranscriptOrigin) -> String {
         origin.isNativeFrench ? sentence : ""
@@ -587,6 +626,45 @@ nonisolated enum VideoFeedResult: Equatable, Sendable {
     }
 }
 
+/// The whole trending feed, one request per category in parallel, so the wait is
+/// bounded by ONE `Tuning.videoFeedTimeout` rather than one per category (EM-7).
+nonisolated enum TrendingFeed {
+    /// Every category's feed in `categories` order, and the reason live results
+    /// are missing (a missing key wins, since it explains every section).
+    struct Loaded: Equatable, Sendable {
+        var feeds: [VideoFeedResult]
+        var failure: MediaServiceFailure?
+    }
+
+    /// nil when the load was cancelled. Opening a video before the feed arrived
+    /// covers Watch, which cancels its load: every request then failed with
+    /// `URLError.cancelled`, classified as the service not answering, and the
+    /// feed stored the curated shelf under "Couldn't load videos — the video
+    /// service didn't answer" — a failure the app caused — and never reloaded,
+    /// because its sections were no longer empty (talkmedia-11-9). A cancelled
+    /// load publishes nothing, so the next appearance loads again.
+    static func load(categories: [YTCategory],
+                     fetch: @escaping @Sendable (String) async -> VideoFeedResult) async -> Loaded? {
+        let byId: [String: VideoFeedResult] = await withTaskGroup(of: (String, VideoFeedResult).self) { group in
+            for category in categories {
+                let id = category.id
+                group.addTask { (id, await fetch(id)) }
+            }
+            var byId: [String: VideoFeedResult] = [:]
+            for await (id, feed) in group { byId[id] = feed }
+            return byId
+        }
+        guard !Task.isCancelled else { return nil }
+        var loaded = Loaded(feeds: [], failure: nil)
+        for category in categories {
+            let feed = byId[category.id] ?? .curated(WatchCatalog.curated(for: category.id), reason: .serviceError)
+            if let f = feed.failure, loaded.failure == nil || f == .noKey { loaded.failure = f }
+            loaded.feeds.append(feed)
+        }
+        return loaded
+    }
+}
+
 /// What a search resolved to. There is no curated substitute for a search: an
 /// empty list means the service answered with nothing.
 nonisolated enum VideoSearchResult: Equatable, Sendable {
@@ -605,19 +683,82 @@ nonisolated enum NaturalVoiceFetch: Equatable, Sendable {
 /// Runs an async operation with a deadline: the operation's value, or nil when
 /// the deadline passed first (the operation is cancelled). Every media spinner
 /// waits through this so none runs unbounded (E26).
+///
+/// The answer is returned the moment the race is decided, WITHOUT waiting for
+/// the loser. A task group cannot do that — it awaits every child before it
+/// returns — so an operation that ignores cancellation (the natural-voice fetch
+/// awaits an unstructured download task) held the spinner for the whole
+/// request, however short the deadline (talkmedia-11-7). The loser is cancelled
+/// and left to finish on its own; its result is dropped. Cancelling the caller
+/// ends the wait at once, with nil.
 nonisolated enum Deadline {
     static func run<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async -> T) async -> T? {
-        let clamped = max(0.05, seconds)
-        return await withTaskGroup(of: T?.self) { group in
-            group.addTask { await operation() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
-                return nil
+        let clamped = max(Tuning.deadlineMinimumSeconds, seconds)
+        let race = DeadlineRace<T>()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+                race.install(continuation)
+                // Detached, so neither racer waits for the caller's actor: a busy
+                // main actor must not hold back the deadline it is bounded by.
+                let priority = Task.currentPriority
+                race.track(Task.detached(priority: priority) { race.finish(await operation()) })
+                race.track(Task.detached(priority: priority) {
+                    try? await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
+                    race.finish(nil)
+                })
             }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        } onCancel: {
+            race.finish(nil)
         }
+    }
+}
+
+/// The one-shot rendezvous behind `Deadline.run`: the first `finish` resumes the
+/// waiting caller and cancels every tracked task; later calls do nothing. A
+/// finish that arrives before the caller is waiting (an already-cancelled
+/// caller) is held and handed over on `install`.
+private nonisolated final class DeadlineRace<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T?, Never>?
+    private var tasks: [Task<Void, Never>] = []
+    private var isDone = false
+    private var early: T?? = nil
+
+    func install(_ continuation: CheckedContinuation<T?, Never>) {
+        lock.lock()
+        if let value = early {
+            early = nil
+            lock.unlock()
+            continuation.resume(returning: value)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func track(_ task: Task<Void, Never>) {
+        lock.lock()
+        if isDone {
+            lock.unlock()
+            task.cancel()
+            return
+        }
+        tasks.append(task)
+        lock.unlock()
+    }
+
+    func finish(_ value: T?) {
+        lock.lock()
+        guard !isDone else { lock.unlock(); return }
+        isDone = true
+        let waiting = continuation
+        continuation = nil
+        if waiting == nil { early = .some(value) }
+        let losers = tasks
+        tasks = []
+        lock.unlock()
+        for task in losers { task.cancel() }
+        waiting?.resume(returning: value)
     }
 }
 

@@ -58,8 +58,41 @@ struct LessonQuestionParserTests {
         #expect(fill.prompt == "Je _____ ici." && fill.correctAnswer == "y-fr")
         #expect(fill.explanation == "Je y-fr ici.")
 
+        // The model's "I am here" is not y-fr's gloss: only y-fr is accepted, so
+        // asking for the sentence would grade correct French wrong. The content's
+        // gloss is asked instead (lesson-11-4); this assertion used to expect the
+        // model's sentence.
         let tr = try #require(batch.questions.first { $0.gap.id == "y" && $0.kind == .translation })
-        #expect(tr.statement == "I am here" && tr.correctAnswer == "y-fr" && tr.hint == nil)
+        #expect(tr.statement == "y-en" && tr.correctAnswer == "y-fr" && tr.hint == nil)
+        #expect(tr.explanation == "y-fr — y-en")
+    }
+
+    /// An AI translation asks for the gap's OWN meaning: a model sentence or a
+    /// broader English word is replaced by the content's gloss, so the feedback never
+    /// pairs the answer with English it does not mean. A statement that IS the gloss,
+    /// or one side of an "a / b" gloss, is kept (lesson-11-4).
+    @Test func aiTranslationAsksForTheGapsOwnMeaning() throws {
+        var suis = gap("suis")
+        suis.frenchWord = "je suis"
+        suis.englishTranslation = "I am"
+        var salut = gap("salut")
+        salut.frenchWord = "salut"
+        salut.englishTranslation = "hi / bye (informal)"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"translation","statement":"I am at home","answer":"je suis"},
+          {"wordIndex":1,"kind":"translation","statement":"hello","answer":"salut"},
+          {"wordIndex":1,"kind":"translation","statement":"hi","answer":"salut"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [suis, salut], optionCount: 4, seed: 1)
+        let trs = batch.questions.filter { $0.kind == .translation }
+        #expect(trs.count == 3)
+        let home = try #require(trs.first { $0.gap.id == "suis" })
+        #expect(home.statement == "I am" && home.explanation == "je suis — I am",
+                "the sentence is not what je suis means")
+        #expect(trs.filter { $0.gap.id == "salut" }.map { $0.statement } == ["hi / bye (informal)", "hi"],
+                "a broader word is replaced; one side of the gloss is kept")
     }
 
     /// The model writes questions, never the truth: an answer that is not the

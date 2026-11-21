@@ -82,9 +82,7 @@ struct AssessmentView: View {
             .accessibilityHidden(true)
             Text(isFirstRun ? "Welcome! Let's find your level" : "Retake the level check")
                 .scaledSerifDisplay(28, weight: .bold).foregroundStyle(Theme.text).multilineTextAlignment(.center)
-            Text(isFirstRun
-                 ? "A few quick questions that adapt to you. We'll set your starting point and only teach what you don't already know."
-                 : "A short retake — it can only raise your level.")
+            Text(HomeCopy.placementIntro(isFirstRun: isFirstRun))   // firstrun-11-2
                 .font(.callout).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
             VStack(spacing: 10) {
@@ -491,24 +489,11 @@ struct AssessmentView: View {
         }
     }
 
+    /// The result's explanation; the copy lives in `HomeCopy` so it can only promise
+    /// what the routing does (firstrun-11-2).
     private func blurb(_ result: PlacementResult) -> String {
-        if isFirstRun && result.isTrueBeginner {
-            return "No worries — we'll guide you from the very first words and build up step by step."
-        }
-        if !isFirstRun {
-            return "Your level was not lowered, and anything you missed has been added to your lessons."
-        }
-        // A lead is claimed only on evidence — a real miss in the trailing
-        // category (PlacementResult.leadingCategory, firstrun-10-1).
-        switch result.leadingCategory {
-        case .vocabulary:
-            return "Your vocabulary is ahead of your grammar — we'll shore up the rules as you go."
-        case .grammar:
-            return "Your grammar is ahead of your vocabulary — we'll grow your word bank quickly."
-        default:
-            break
-        }
-        return "A balanced foundation. We'll target exactly the spots you slipped on."
+        HomeCopy.placementBlurb(isFirstRun: isFirstRun, isTrueBeginner: result.isTrueBeginner,
+                                leadingCategory: result.leadingCategory)
     }
 
     // MARK: Logic

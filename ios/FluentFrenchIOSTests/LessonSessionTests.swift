@@ -435,7 +435,9 @@ struct LessonSessionTests {
 
     @Test func releaseDropsRemainingTargetItemsAndBackfillsFromReview() throws {
         let streak = Tuning.conceptReleaseStreak
-        let targets = (1...streak).map { gap("t\($0)", concept: "T") }
+        // Targets the learner has met before: only answers on words the lesson did
+        // NOT just teach build the release streak (lesson-11-3).
+        let targets = (1...streak).map { gap("t\($0)", concept: "T", reviewCount: 2, consecutiveCorrect: 1) }
         let reviews = (1...2).map { gap("r\($0)", concept: "R") }
         var roles: [String: SelectedItemRole] = [:]
         for t in targets { roles[t.id] = .target }
@@ -460,13 +462,54 @@ struct LessonSessionTests {
         #expect(s.end == .finished && s.summary.releasedConceptIds == ["T"])
     }
 
+    /// A smart lesson's spine is its new target words, asked first. Three right
+    /// answers on words the word cards printed moments ago released the concept in
+    /// every lesson — each word lost its reversed round and the learner was told
+    /// "you've got it" after three recognition taps (lesson-11-3). Answers on words
+    /// the lesson taught never build the streak, so every target word keeps both
+    /// of its rounds.
+    @Test func answersOnWordsTheLessonTaughtNeverReleaseTheConcept() throws {
+        let streak = Tuning.conceptReleaseStreak
+        let targets = (1...streak).map { gap("t\($0)", concept: "T") }
+        let reviews = (1...2).map { gap("r\($0)", concept: "R") }
+        var roles: [String: SelectedItemRole] = [:]
+        for t in targets { roles[t.id] = .target }
+        for r in reviews { roles[r.id] = .review }
+        var s = session(for: lesson(targets + reviews, roles: roles, target: "T"), config: config(hearts: 20))
+        #expect(targets.allSatisfy { s.mayTeach($0) }, "the targets are new: the lesson teaches them")
+
+        var targetAnswers = 0
+        while s.end == nil {
+            let q = try #require(s.current)
+            let out = try answerCorrectly(&s)
+            if q.role == .target && !q.isInterstitial { targetAnswers += 1 }
+            #expect(out.releasedConceptId == nil, "three taps on words just taught are not evidence of the concept")
+            if !s.advance() { break }
+        }
+        #expect(s.end == .finished && s.summary.releasedConceptIds.isEmpty)
+        #expect(targetAnswers == targets.count * Tuning.masteryTarget, "every target word is asked in both rounds")
+        #expect(s.schedule.contains { $0.role == .target && $0.isReversed }, "the English → French round survives")
+    }
+
+    /// A correct answer on a taught word does not BREAK a streak either; a miss does.
+    @Test func releaseTrackerIgnoresTaughtAnswersButResetsOnAMiss() {
+        var tracker = ConceptReleaseTracker()
+        let n = Tuning.conceptReleaseStreak
+        for _ in 0..<(n - 1) { #expect(tracker.record(conceptId: "c", firstTryCorrect: true, releaseStreak: n) == nil) }
+        #expect(tracker.record(conceptId: "c", firstTryCorrect: true, releaseStreak: n, countsTowardStreak: false) == nil,
+                "a taught answer does not complete the streak (lesson-11-3)")
+        #expect(tracker.streaks["c"] == n - 1, "…and does not reset it")
+        #expect(tracker.record(conceptId: "c", firstTryCorrect: false, releaseStreak: n, countsTowardStreak: false) == nil)
+        #expect(tracker.streaks["c"] == 0, "a miss on a taught word still resets the streak")
+    }
+
     /// The practice bar's denominator is what the LIVE schedule can still
     /// deliver: a check-in is asked once, and a released concept's remaining
     /// questions are dropped, so neither was ever masterable. A flawless lesson
     /// must be able to reach the number the bar shows.
     @Test func masteryDenominatorCountsOnlyGapsTheScheduleCanStillMaster() throws {
         let streak = Tuning.conceptReleaseStreak
-        let targets = (1...streak).map { gap("t\($0)", concept: "T") }
+        let targets = (1...streak).map { gap("t\($0)", concept: "T", reviewCount: 2, consecutiveCorrect: 1) }
         let reviews = (1...2).map { gap("r\($0)", concept: "R") }
         let check = gap("chk", concept: "K")
         var roles: [String: SelectedItemRole] = ["chk": .checkIn]

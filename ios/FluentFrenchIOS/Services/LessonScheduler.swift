@@ -283,9 +283,21 @@ nonisolated struct LessonScheduler {
             var picked: [LessonQuestion] = []
             var kindsSeen = Set<QuestionKind>()
             for q in usable where picked.count < config.masteryTarget && kindsSeen.insert(q.kind).inserted { picked.append(q) }
-            for q in usable where picked.count < config.masteryTarget && !picked.contains(where: { $0.id == q.id }) { picked.append(q) }
+            for q in usable where picked.count < config.masteryTarget && !picked.contains(where: { $0.id == q.id }) {
+                // Every AI multiple choice is the FORWARD meaning question with the
+                // gap's own meaning as its answer, so two of them are the same question
+                // to the learner, whatever their wording (lesson-11-5).
+                if q.kind == .multipleChoice, picked.contains(where: { $0.kind == .multipleChoice }) { continue }
+                picked.append(q)
+            }
 
-            let slots = local.indices.filter { local[$0].gap.id == gap.id && !local[$0].isInterstitial }
+            // The AI writes forward questions only, so it never takes the slot of a
+            // REVERSED recognition question ("Which one means …?"): replacing it
+            // asked a new word the same forward meaning question twice and lost the
+            // English → French direction (lesson-11-5).
+            let slots = local.indices.filter {
+                local[$0].gap.id == gap.id && !local[$0].isInterstitial && !local[$0].isReversed
+            }
             for (i, idx) in slots.enumerated() where i < picked.count {
                 var q = picked[i]
                 q.role = role
@@ -602,8 +614,17 @@ nonisolated struct LessonScheduler {
     /// review gaps. Interstitials stay. Nothing changes when there is nothing to drop.
     ///
     /// The backfill lands BEFORE the trailing probes — a blind-spot probe closes the
-    /// lesson — and goes to the gaps with the fewest questions so far: a third
-    /// asking of an item already answered `masteryTarget` times teaches nothing.
+    /// lesson — and goes to the gaps with the fewest questions so far.
+    ///
+    /// Only a review gap still SHORT of `masteryTarget` questions is backfilled, at
+    /// its own tier; with none short, the released questions are dropped and the
+    /// lesson is simply shorter (lesson-11-1). A third and fourth asking in the same
+    /// two minutes is not new recall, yet every answer is a full FSRS review whose
+    /// success term grows stability even at retrievability 1 — and the old step-up
+    /// asked a word first met on this lesson's word card as a fill-blank on the very
+    /// sentence that card had just printed, graded `.easy`. A beginner's interleaved
+    /// review words left their first lesson scheduled ~11 days out, one answer short
+    /// of the gap badge.
     func releaseTargetConcept(conceptId: String, from schedule: [LessonQuestion], after position: Int) -> [LessonQuestion] {
         let cut = max(0, position + 1)
         guard cut < schedule.count else { return schedule }
@@ -632,29 +653,31 @@ nonisolated struct LessonScheduler {
             var order: [String: Int] = [:]
             for (i, gap) in reviewGaps.enumerated() { order[gap.id] = i }
             var rng = LessonRandom(seed: config.seed.map { $0 ^ 0xA5A5 })
+            // What each gap has already been asked, so a backfill never repeats a
+            // question word for word (the lesson-8-4 rule `build` applies).
+            var asked: [String: Set<String>] = [:]
+            for q in schedule where !q.isInterstitial { asked[q.gap.id, default: []].insert(Self.identity(of: q)) }
             var backfill: [LessonQuestion] = []
-            for _ in 0..<dropped.count {
-                // Least-asked first: a gap still short of `masteryTarget` questions
-                // is backfilled before one that has already had its full round.
-                guard let gap = reviewGaps.min(by: { a, b in
+            while backfill.count < dropped.count {
+                // Least-asked first, and only a gap still short of its full round
+                // (lesson-11-1): no third asking, and never a tier above the gap's
+                // own evidence from before the lesson.
+                guard let gap = reviewGaps.filter({ usage[$0.id, default: 0] < config.masteryTarget }).min(by: { a, b in
                     let ua = usage[a.id, default: 0], ub = usage[b.id, default: 0]
                     if ua != ub { return ua < ub }
                     return (order[a.id] ?? 0) < (order[b.id] ?? 0)
                 }) else { break }
                 let n = usage[gap.id, default: 0]
+                let ks = kinds(for: gap)
+                guard let q = question(for: gap, kind: ks[n % ks.count], variant: n, role: .review,
+                                       pool: pool, optionCount: optionCount, rng: &rng),
+                      asked[gap.id, default: []].insert(Self.identity(of: q)).inserted else {
+                    // Nothing new to ask this gap: it is done for this lesson.
+                    usage[gap.id] = config.masteryTarget
+                    continue
+                }
                 usage[gap.id] = n + 1
-                // A gap that has already had its full round comes back one tier UP
-                // — this lesson just supplied the evidence for it — rather than as
-                // the same recognition question a third time.
-                var tier = level(for: gap)
-                if n >= config.masteryTarget, let up = QuestionLevel(rawValue: tier.rawValue + 1) {
-                    tier = min(up, maxLevel(for: gap))
-                }
-                let ks = kinds(for: gap, at: tier)
-                if let q = question(for: gap, kind: ks[n % ks.count], variant: n, role: .review,
-                                    pool: pool, optionCount: optionCount, rng: &rng) {
-                    backfill.append(q)
-                }
+                backfill.append(q)
             }
             let insertAt = remaining.firstIndex { $0.isProbe } ?? remaining.count
             remaining.insert(contentsOf: backfill, at: insertAt)
@@ -776,12 +799,16 @@ nonisolated struct ConceptReleaseTracker {
 
     /// Record one answer. Returns the concept id the FIRST time its streak reaches
     /// `releaseStreak` (a miss resets the streak; a released concept never re-triggers).
-    mutating func record(conceptId: String?, firstTryCorrect: Bool, releaseStreak: Int) -> String? {
+    /// A correct answer that does not `countsTowardStreak` — one on a word the lesson
+    /// just taught (lesson-11-3) — leaves the streak where it was.
+    mutating func record(conceptId: String?, firstTryCorrect: Bool, releaseStreak: Int,
+                         countsTowardStreak: Bool = true) -> String? {
         guard let conceptId else { return nil }
         guard firstTryCorrect else {
             streaks[conceptId] = 0
             return nil
         }
+        guard countsTowardStreak else { return nil }
         let streak = (streaks[conceptId] ?? 0) + 1
         streaks[conceptId] = streak
         guard releaseStreak > 0, streak >= releaseStreak, released.insert(conceptId).inserted else { return nil }

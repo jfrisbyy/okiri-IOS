@@ -138,9 +138,9 @@ actor ElevenLabsTTS {
             "text": text,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": [
-                "stability": 0.5,
-                "similarity_boost": 0.8,
-                "style": 0.2,
+                "stability": Tuning.naturalVoiceStability,
+                "similarity_boost": Tuning.naturalVoiceSimilarityBoost,
+                "style": Tuning.naturalVoiceStyle,
                 "use_speaker_boost": true,
             ],
         ]
@@ -212,7 +212,7 @@ final class NaturalVoice: NSObject {
     /// Speaks `text` with a natural voice.
     /// - Parameters:
     ///   - voice: which natural voice to use.
-    ///   - rate: playback speed (1.0 normal, 0.6 slow for pronunciation drills).
+    ///   - rate: playback speed (1.0 normal, `Tuning.slowVoiceRate` for a slow replay).
     ///   - fallbackLanguage: BCP-47 language for the system-voice fallback.
     ///   - owner: identifies the control that started this utterance.
     func speak(_ text: String, voice: NaturalVoiceID = .female, rate: Float = 1.0, fallbackLanguage: String = "fr-FR", owner: UUID? = nil) {
@@ -286,7 +286,7 @@ final class NaturalVoice: NSObject {
         do {
             let p = try AVAudioPlayer(data: data)
             p.enableRate = true
-            p.rate = max(0.5, min(2.0, rate))
+            p.rate = min(max(rate, Tuning.voicePlaybackRateRange.lowerBound), Tuning.voicePlaybackRateRange.upperBound)
             p.prepareToPlay()
             p.play()
             player = p
@@ -298,6 +298,6 @@ final class NaturalVoice: NSObject {
 
     /// Maps a playback-speed multiplier to an AVSpeechUtterance rate.
     private func synthRate(for rate: Float) -> Float {
-        rate < 1.0 ? AVSpeechUtteranceDefaultSpeechRate * 0.6 : AVSpeechUtteranceDefaultSpeechRate
+        rate < 1.0 ? AVSpeechUtteranceDefaultSpeechRate * Tuning.slowSystemVoiceRateFactor : AVSpeechUtteranceDefaultSpeechRate
     }
 }

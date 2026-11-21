@@ -371,7 +371,8 @@ nonisolated enum FoundationContentLoader {
     /// - A skill the learner was seeded with (at least
     ///   `Tuning.foundationTopUpSeededShare` of its content present) gains the
     ///   items added to it since, due at `now`. A skill they only met through one
-    ///   placement miss is left for its own seeding path.
+    ///   placement miss is left for its own seeding path, which since engine-11-1
+    ///   opens below this same share (`FoundationSeeder.holdsCurriculum`).
     static func refreshSeeded(_ gaps: [GapItem], content: [GapItem], now: Date) -> [GapItem] {
         func key(_ conceptId: String, _ word: String) -> String { conceptId + "\u{1F}" + FoundationSeeder.headwordKey(word) }
         /// A content item's identity: its stable id, or concept + headword for content

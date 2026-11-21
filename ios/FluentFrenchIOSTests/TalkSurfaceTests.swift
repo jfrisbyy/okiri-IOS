@@ -856,4 +856,95 @@ struct TalkSurfaceTests {
         #expect(outcome.strongConceptIds == ["taught", "untaught"], "the evidence is recorded for both")
         #expect(outcome.surfacedStrongConceptIds == ["taught"], "only the teachable one is announced")
     }
+
+    // MARK: talkmedia-11-2 — no correction, no miss
+
+    @Test func aMistakeConceptBesideAnUnchangedLineBooksNoMiss() {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1"), EngineFixtures.concept("c2")], gaps: [])
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["c1", "c2"])
+        let feedback = SpeakFeedback(corrected: "Je suis allé au cinéma hier.", note: "", natural: "", score: 95,
+                                     mistakeConceptIds: ["c1"], strongConceptIds: ["c1", "c2"])
+        #expect(!SpeakGapPlan.plan(original: "je suis allé au cinéma hier", feedback: feedback).hasCorrection)
+        let before = store.concept("c1")!
+        let outcome = store.recordSpeakFeedback(original: "je suis allé au cinéma hier", feedback: feedback,
+                                                promptText: "", now: now)
+        #expect(outcome.savedCount == 0 && outcome.duplicateCount == 0, "your line was already good")
+        #expect(outcome.missedConceptIds.isEmpty, "a line that needed no correction books no slip")
+        #expect(outcome.surfacedMissedConceptIds.isEmpty, "so no 'Work on:' chip contradicts the headline")
+        #expect(store.concept("c1")!.beta == before.beta)
+        #expect(store.concept("c1")!.alpha == before.alpha, "a concept the model also called a mistake is no strength")
+        #expect(outcome.strongConceptIds == ["c2"])
+
+        // Converse records nothing for the same line, either.
+        #expect(store.recordConverseCorrection(originalFrench: "je suis allé au cinéma hier",
+                                               correctedFrench: "Je suis allé au cinéma hier.",
+                                               explanation: "", conceptId: "c1", now: now) == nil)
+        #expect(store.concept("c1")!.beta == before.beta)
+
+        // A real correction still books its miss.
+        #expect(SpeakGapPlan.plan(original: "je suis aller au cinéma",
+                                  feedback: SpeakFeedback(corrected: "Je suis allé au cinéma.", note: "", natural: "",
+                                                          score: 60)).hasCorrection)
+    }
+
+    // MARK: talkmedia-11-3 — a Speak strength alone never certifies mastery
+
+    @Test func speakStrengthsAloneNeverMakeAConceptVerifiedMastered() {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("c1")], gaps: [])
+        let start = store.concept("c1")!.mastery
+        for i in 0..<8 {
+            store.recordSpeakingEvidence(conceptId: "c1", correct: true, now: now.addingTimeInterval(Double(i) * 60))
+        }
+        let spoken = store.concept("c1")!
+        #expect(spoken.mastery > start, "the model's opinion still moves the estimate")
+        #expect(spoken.mastery >= Tuning.masteryThreshold)
+        #expect(spoken.testedObservations == 0, "but no graded answer was ever given")
+        #expect(spoken.state != .mastered, "so the concept is not certified mastered")
+        #expect(!spoken.isVerifiedMastered)
+
+        // Graded answers certify it.
+        for i in 0..<Int(Tuning.minObservations.rounded(.up)) {
+            store.recordConceptAnswer(conceptId: "c1", correct: true, now: now.addingTimeInterval(Double(100 + i) * 60))
+        }
+        #expect(store.concept("c1")!.state == .mastered)
+
+        // A Speak slip is still tested evidence: it can only pull mastery down.
+        let tested = store.concept("c1")!.testedObservations
+        store.recordSpeakingEvidence(conceptId: "c1", correct: false, now: now.addingTimeInterval(9_000))
+        #expect(store.concept("c1")!.testedObservations > tested)
+    }
+
+    // MARK: talkmedia-11-5 — punctuation never splits one phrase into two cards
+
+    @Test func theSamePhraseFromSpeakAndConverseIsOneCard() throws {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let speak = store.recordSpeakFeedback(original: "je suis aller au cinéma",
+                                              feedback: SpeakFeedback(corrected: "Je suis allé au cinéma.", note: "",
+                                                                      natural: "", score: 60),
+                                              promptText: "", now: now)
+        #expect(speak.savedCount == 1)
+        let card = try #require(store.gaps.first)
+        #expect(card.reviewCount == 1)
+
+        let landed = store.recordConverseCorrection(originalFrench: "je suis aller au cinema",
+                                                    correctedFrench: "je suis allé au cinéma",
+                                                    explanation: "", conceptId: nil, now: now.addingTimeInterval(60))
+        #expect(landed?.id == card.id, "the second slip lands on the card holding the history")
+        #expect(store.gaps.count == 1)
+        #expect(store.gaps.first?.reviewCount == 2)
+
+        #expect(!store.captureConversePhrase(french: "Je suis allé au cinéma !", english: "I went to the cinema",
+                                             scenarioTitle: "t"))
+        #expect(store.gaps.count == 1)
+
+        // And Speak finds Converse's card the same way.
+        let other = EngineFixtures.store(concepts: [], gaps: [])
+        #expect(other.captureConversePhrase(french: "Bonjour, madame", english: "Hello, madam", scenarioTitle: "t"))
+        let again = other.recordSpeakFeedback(original: "bonjour madam",
+                                              feedback: SpeakFeedback(corrected: "Bonjour madame.", note: "",
+                                                                      natural: "", score: 70),
+                                              promptText: "", now: now)
+        #expect(again.savedCount == 0 && again.duplicateCount == 1)
+        #expect(other.gaps.count == 1)
+    }
 }

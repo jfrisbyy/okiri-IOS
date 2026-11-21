@@ -353,6 +353,58 @@ nonisolated enum HomeCopy {
     static func addsToMyWords(_ kind: String) -> String {
         "Adds this \(kind) to \(myWordsTitle)"
     }
+
+    // MARK: Placement copy (firstrun-11-2)
+    //
+    // The placement copy promises only what the routing does. Inferred base
+    // concepts rank first as targets (`PlacementResult.inferredConceptIds`), and a
+    // missed concept above them stays prerequisite-blocked until its prerequisites
+    // are mastered, so the copy must not claim it teaches "only what you don't
+    // already know" or targets "exactly the spots you slipped on" first.
+
+    /// The placement intro's subtitle.
+    static func placementIntro(isFirstRun: Bool) -> String {
+        isFirstRun
+            ? "A few quick questions that adapt to you. We'll set your starting point and focus your lessons from there."
+            : "A short retake — it can only raise your level."
+    }
+
+    /// The placement result's one-line explanation under the headline.
+    static func placementBlurb(isFirstRun: Bool, isTrueBeginner: Bool, leadingCategory: GapCategory?) -> String {
+        if isFirstRun && isTrueBeginner {
+            return "No worries — we'll guide you from the very first words and build up step by step."
+        }
+        if !isFirstRun {
+            return "Your level was not lowered, and anything you missed has been added to your lessons."
+        }
+        // A lead is claimed only on evidence — a real miss in the trailing
+        // category (PlacementResult.leadingCategory, firstrun-10-1).
+        switch leadingCategory {
+        case .vocabulary:
+            return "Your vocabulary is ahead of your grammar — we'll shore up the rules as you go."
+        case .grammar:
+            return "Your grammar is ahead of your vocabulary — we'll grow your word bank quickly."
+        default:
+            return "A balanced foundation. We'll build the basics first and come back to what you missed."
+        }
+    }
+}
+
+// MARK: - Deck health tone (firstrun-11-7)
+
+/// The colour family of My words' health chip. `AppStore.gapHealth` returns a
+/// neutral 100 ("No reviews yet", "All clear") when there is no recall evidence;
+/// drawing that in the "Healthy" green made a claim the label and D19 withhold, so
+/// without evidence the chip is neutral, as GapsView's "New" is.
+nonisolated enum GapHealthTone: Hashable {
+    case neutral, healthy, attention, atRisk
+
+    static func tone(score: Int, hasRetentionEvidence: Bool) -> GapHealthTone {
+        guard hasRetentionEvidence else { return .neutral }
+        if score >= Tuning.gapHealthHealthyFloor { return .healthy }
+        if score >= Tuning.gapHealthAttentionFloor { return .attention }
+        return .atRisk
+    }
 }
 
 // MARK: - App version (UX-26)

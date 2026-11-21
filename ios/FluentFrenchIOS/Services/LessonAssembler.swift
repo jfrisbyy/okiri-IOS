@@ -155,6 +155,18 @@ struct LessonAssembler {
         // Items this lesson asks: one of them may only be shown when it is new.
         let askedIds = Set(gaps.map { $0.id })
         let teachable = taught.filter { $0.isNew }
+        // The sentences and headwords of the items the lesson asks but may NOT teach
+        // (reviewed, check-in, probe): the content's own skill card must not print
+        // them either. 57 shipped items have their exact example sentence or their
+        // headword among their own concept's teaching examples — "Ma mère est
+        // gentille." on the family card, then "Ma _____ est gentille." — so the card
+        // spelled out the answer of a fill-blank asked moments later (lesson-10-5,
+        // the rest of lesson-5-3).
+        let teachableIds = Set(teachable.map { $0.id })
+        let withheld = Set(gaps.filter { !teachableIds.contains($0.id) }
+            .flatMap { [$0.exampleSentence, $0.frenchWord] }
+            .map(AnswerGrader.normalize)
+            .filter { !$0.isEmpty })
 
         func makeBlock(_ concept: Concept) -> ConceptBlock {
             let example = teachable.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
@@ -168,7 +180,8 @@ struct LessonAssembler {
                 ?? taught.first { $0.conceptId == concept.id }.flatMap { reasons[$0.id] }
             return ConceptBlock(concept: concept, explanation: concept.description,
                                 example: example, reason: reason,
-                                teaching: FoundationContentLoader.teaching(for: concept.id),
+                                teaching: FoundationContentLoader.teaching(for: concept.id)
+                                    .map { Self.teaching($0, withholding: withheld) },
                                 isStalled: stalled.contains(concept.id))
         }
 
@@ -184,5 +197,17 @@ struct LessonAssembler {
             if blocks.count >= config.maxConceptCards { break }
         }
         return blocks
+    }
+
+    /// A skill card without the examples and contrasts whose French is one of the
+    /// `withheld` (normalised) sentences or headwords. The rule, the common mistake
+    /// and every other example stay (lesson-10-5).
+    nonisolated static func teaching(_ teaching: FoundationTeachingContent,
+                                     withholding withheld: Set<String>) -> FoundationTeachingContent {
+        guard !withheld.isEmpty else { return teaching }
+        var card = teaching
+        card.examples = teaching.examples.filter { !withheld.contains(AnswerGrader.normalize($0.fr)) }
+        card.contrast = teaching.contrast.filter { !withheld.contains(AnswerGrader.normalize($0.fr)) }
+        return card
     }
 }

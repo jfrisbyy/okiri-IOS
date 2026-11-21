@@ -76,7 +76,13 @@ nonisolated struct LessonScheduler {
 
     /// English fallbacks used as distractors only when the lesson's own gaps
     /// cannot supply enough (a one- or two-item lesson). English, never French.
-    static let fallbackDistractors = ["hello", "thank you", "house", "to go", "water", "day", "small", "red", "to speak", "always"]
+    ///
+    /// No entry may be a near-synonym of a shipped gloss that string comparison
+    /// cannot catch: "hello" stood here and was offered as a WRONG meaning of salut
+    /// ("hi / bye (informal)"), so a one-gap lesson graded "“salut” means “hello”"
+    /// False (lesson-10-7). An entry that equals a gloss, or is a gloss stated
+    /// broadly ("thank you" for "Thank you (formal)"), is refused by `sidesCollide`.
+    static let fallbackDistractors = ["tree", "thank you", "house", "to go", "water", "day", "small", "red", "to speak", "always"]
 
     // MARK: Progression (C18)
 
@@ -99,9 +105,26 @@ nonisolated struct LessonScheduler {
         return min(.recall, ceiling)
     }
 
-    /// The gap's example sentence contains its blank form exactly once as a whole word (C1).
+    /// The gap's example sentence contains its blank form exactly once as a whole word (C1),
+    /// and its caption may be shown.
+    ///
+    /// A fill-blank's caption — the example's English — is the only thing on screen that
+    /// says which word an open frame wants ("Le _____ est en retard." takes "bus" as well
+    /// as "train"). When that English spells the answer it has to be withheld
+    /// (lesson-9-1), and the bare frame then grades a correct French word as a miss —
+    /// a "slipped" lapse at capstone weight, or a failed check-in (lesson-5-1). Such an
+    /// item is not asked as a fill-blank at all: its recall tier falls through to
+    /// true/false and multiple choice (lesson-10-4).
     static func isBlankable(_ gap: GapItem) -> Bool {
-        isProducible(gap) && AnswerGrader.blankedPrompt(for: gap) != nil
+        isProducible(gap) && AnswerGrader.blankedPrompt(for: gap) != nil && !fillBlankHintLeaks(gap)
+    }
+
+    /// Whether the gap's example English exists but spells its blank form, so a
+    /// fill-blank would have to be asked without a caption (lesson-10-4).
+    static func fillBlankHintLeaks(_ gap: GapItem) -> Bool {
+        let translation = gap.exampleTranslation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !translation.isEmpty else { return false }
+        return AnswerGrader.hintRevealsAnswer(translation, answer: AnswerGrader.blankForm(for: gap))
     }
 
     /// The gap's example sentence has enough — and not too many — words to arrange.
@@ -190,10 +213,10 @@ nonisolated struct LessonScheduler {
                     // content ships frames that are word-for-word identical across two
                     // items ("Il est ___ heures." for both trois and cinq). Without it
                     // a correct French answer is graded "slipped" and the capstone
-                    // records a lapse at capstone weight on an item the learner knows.
-                    // (It is already nil for the few examples whose English prints the
-                    // French answer — `AnswerGrader.safeHint`, lesson-9-1 — so a
-                    // capstone never reads the answer out either.)
+                    // records a lapse at capstone weight on an item the learner knows
+                    // (lesson-5-1). The few examples whose English prints the French
+                    // answer (lesson-9-1) cannot keep their hint, so they are not
+                    // blankable at all and are asked here as true/false (lesson-10-4).
                     rounds[0].append(q)
                 }
                 continue
@@ -356,7 +379,7 @@ nonisolated struct LessonScheduler {
                                   explanation: note.isEmpty ? nil : note)
 
         case .fillBlank:
-            guard Self.isProducible(gap), let prompt = AnswerGrader.blankedPrompt(for: gap) else {
+            guard Self.isBlankable(gap), let prompt = AnswerGrader.blankedPrompt(for: gap) else {
                 return question(for: gap, kind: .multipleChoice, role: role, pool: pool, optionCount: count, rng: &rng)
             }
             let answer = AnswerGrader.blankForm(for: gap)
@@ -368,8 +391,9 @@ nonisolated struct LessonScheduler {
             // the French answer inside it ("Le _____ est en retard." — "The train is
             // late."): that hands the learner the answer, and a first-try fill-blank
             // grades `.easy`, pushing the interval out on a word they may not know
-            // (lesson-9-1). `safeHint` drops the caption in exactly those cases; the
-            // translation still appears in the explanation, after the answer is in.
+            // (lesson-9-1). Those items never reach here (`isBlankable`, lesson-10-4):
+            // without the caption the open frame grades correct French as wrong.
+            // `safeHint` still trims it, and is nil only for an example with no English.
             return LessonQuestion(gap: gap, kind: .fillBlank, prompt: prompt, correctAnswer: answer,
                                   hint: AnswerGrader.safeHint(translation, answer: answer), role: role,
                                   explanation: explanation)
@@ -432,17 +456,25 @@ nonisolated struct LessonScheduler {
 
     /// English prompt, French options. Nil when the lesson cannot supply enough
     /// distinct French distractors (no French is ever invented in code).
+    ///
+    /// A candidate is judged on its MEANING as well as its spelling: a French option
+    /// whose English collides with the prompt's (`sidesCollide`) is a second correct
+    /// answer — alors under "Which one means “so / therefore”?", on under "Which one
+    /// means “we”?" — and tapping it would be graded wrong, costing a heart, a lapse
+    /// and a confusion link (lesson-10-2, the local twin of lesson-9-2).
     private func reversedMultipleChoice(for gap: GapItem, role: SelectedItemRole, pool: [GapItem],
                                         optionCount: Int, rng: inout LessonRandom) -> LessonQuestion? {
         let answerKey = Self.distractorSides(of: gap.frenchWord)
-        var candidates = pool.filter { $0.id != gap.id && !$0.isProbe }.map { $0.frenchWord }
+        let answerMeaning = Self.distractorSides(of: gap.englishTranslation)
+        var candidates = pool.filter { $0.id != gap.id && !$0.isProbe }
         candidates.shuffle(using: &rng)
         var taken: [String] = []
         var takenSides = answerKey
         for c in candidates where taken.count < optionCount - 1 {
-            let sides = Self.distractorSides(of: c)
-            guard !sides.isEmpty, sides.isDisjoint(with: takenSides) else { continue }
-            taken.append(c)
+            let sides = Self.distractorSides(of: c.frenchWord)
+            guard !sides.isEmpty, sides.isDisjoint(with: takenSides),
+                  !Self.sidesCollide(Self.distractorSides(of: c.englishTranslation), answerMeaning) else { continue }
+            taken.append(c.frenchWord)
             takenSides.formUnion(sides)
         }
         guard taken.count >= config.minMultipleChoiceOptions - 1 else { return nil }
@@ -508,10 +540,17 @@ nonisolated struct LessonScheduler {
                            rng: inout LessonRandom) -> LessonQuestion? {
         let roles = roles ?? Self.roles(in: lesson)
         var seen = Set<String>()
+        var seenSides: [Set<String>] = []
         var distinct: [GapItem] = []
         for gap in lesson.gaps where !gap.isProbe && roles[gap.id] != .probe && roles[gap.id] != .checkIn {
             let key = AnswerGrader.fold(AnswerGrader.normalize(gap.englishTranslation))
-            guard !key.isEmpty, seen.insert(key).inserted else { continue }
+            // Two meanings that collide ("we" and "we (casual) / people in general",
+            // "so / therefore" and "so / well then") are both right for either word,
+            // so pairing a word with the other one would be graded wrong (lesson-10-1).
+            let sides = Self.distractorSides(of: gap.englishTranslation)
+            guard !key.isEmpty, !seenSides.contains(where: { Self.sidesCollide($0, sides) }),
+                  seen.insert(key).inserted else { continue }
+            seenSides.append(sides)
             distinct.append(gap)
         }
         guard distinct.count >= config.matchInterstitialMinGaps else { return nil }
@@ -631,7 +670,8 @@ nonisolated struct LessonScheduler {
 
     /// English distractors from the lesson's own gaps (same category first), then
     /// the English fallback list. Rejects near-duplicates of the answer and of
-    /// each other: diacritic-insensitive equality, and "a / b" glosses that share a side.
+    /// each other: diacritic-insensitive equality, "a / b" glosses that share a side,
+    /// and a side that is another stated broadly (`sidesCollide`, lesson-10-1).
     static func smartDistractors(for gap: GapItem, from pool: [GapItem], count: Int, rng: inout LessonRandom) -> [String] {
         guard count > 0 else { return [] }
         let others = pool.filter { $0.id != gap.id && !$0.isProbe }
@@ -645,12 +685,49 @@ nonisolated struct LessonScheduler {
         var takenSides = distractorSides(of: gap.englishTranslation)
         for c in candidates where taken.count < count {
             let sides = distractorSides(of: c)
-            guard !sides.isEmpty, sides.isDisjoint(with: takenSides) else { continue }
+            guard !sides.isEmpty, !sidesCollide(sides, takenSides) else { continue }
             taken.append(c)
             takenSides.formUnion(sides)
         }
         return taken
     }
+
+    /// Whether two glosses' sides (`distractorSides`) name the same meaning, so neither
+    /// may be offered as a WRONG answer for the other: they share a side, or one side
+    /// is the other stated broadly — the same words with no tag and no leading article,
+    /// against the same words carrying them.
+    ///
+    /// "we" and "we (casual)" are one meaning: the tag narrows it, it does not contrast
+    /// it, and offering "we" as a wrong option for on graded a correct answer wrong and
+    /// had the true/false print "“on” means “we”." as False (lesson-10-1). Two TAGGED
+    /// sides stay distinct — "the (masculine singular)" against "the (feminine
+    /// singular)", "you (informal)" against "you (formal)" are the contrast taught — and
+    /// so do two sides with different articles ("the water" against "some water").
+    static func sidesCollide(_ a: Set<String>, _ b: Set<String>) -> Bool {
+        guard a.isDisjoint(with: b) else { return true }
+        for x in a {
+            let bareX = broadForm(of: x)
+            guard !bareX.isEmpty else { continue }
+            for y in b where broadForm(of: y) == bareX && (x == bareX || y == bareX) { return true }
+        }
+        return false
+    }
+
+    /// A folded side with its parenthetical tags and one leading English article
+    /// removed: "we (casual)" → "we", "the water" → "water". A bare article stays itself.
+    static func broadForm(of side: String) -> String {
+        var t = AnswerGrader.stripTags(side)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for article in broadFormArticles where t.hasPrefix(article) && t.count > article.count {
+            t = String(t.dropFirst(article.count)).trimmingCharacters(in: .whitespaces)
+            break
+        }
+        return t
+    }
+
+    /// The leading English articles `broadForm` drops (folded, lowercase).
+    private static let broadFormArticles = ["the ", "a ", "an ", "some "]
 
     /// The comparison sides of a gloss: "house / home" → {house, home}, folded
     /// (case- and diacritic-insensitive). Parenthetical tags are kept — "the

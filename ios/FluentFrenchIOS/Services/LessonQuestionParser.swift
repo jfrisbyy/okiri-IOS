@@ -221,7 +221,9 @@ nonisolated enum LessonQuestionParser {
             // is a second correct answer — offering "I love" beside the answer "I like"
             // for "j'aime" grades a right answer wrong, costing a heart, an error-log
             // row and an FSRS lapse (lesson-9-2). `smartDistractors` already refuses
-            // candidates that share a side; the model's own option list must too.
+            // candidates that share a side; the model's own option list must too — and,
+            // like it, one that is the gloss stated broadly ("we" for "we (casual)",
+            // lesson-10-1).
             let ownSides = LessonScheduler.distractorSides(of: gap.englishTranslation)
             for option in options {
                 let key = AnswerGrader.normalize(option, keepingTags: true)
@@ -229,7 +231,7 @@ nonisolated enum LessonQuestionParser {
                 if !found, AnswerGrader.optionMatches(option, correct) {
                     correctOption = option
                     found = true
-                } else if LessonScheduler.distractorSides(of: option).isDisjoint(with: ownSides) {
+                } else if !LessonScheduler.sidesCollide(LessonScheduler.distractorSides(of: option), ownSides) {
                     others.append(option)
                 }
             }
@@ -263,18 +265,25 @@ nonisolated enum LessonQuestionParser {
                 let expected = answer.isEmpty ? AnswerGrader.blankForm(for: gap) : answer
                 guard isContentForm(expected, of: gap, kind: .fillBlank) else { return nil }
                 let completed = prompt.replacingOccurrences(of: blank, with: expected)
-                // NO hint: the sentence on screen is the model's own, and
-                // `exampleTranslation` is the English of the CONTENT's example. Printing
-                // it under the field captions one sentence with the translation of a
-                // different one, which a beginner reads as the translation of what they
-                // are filling in. Only the local branch below, where the prompt IS the
-                // content example, may use it.
+                // The hint is the gap's own MEANING, never `exampleTranslation`: the
+                // sentence on screen is the model's own, and the content example's
+                // English would caption it with the translation of a different sentence
+                // (lesson-3-4). But it cannot be nothing: a bare model sentence such as
+                // "Elle porte une _____ rouge." admits robe, jupe and veste, and only the
+                // gap's own forms are accepted, so a correct French word would cost a
+                // heart and a lapse (lesson-5-1 on the AI path, lesson-10-3). The
+                // content's gloss names the word without belonging to any sentence.
+                // When it would spell the answer the question is refused, and the gap
+                // keeps its local one.
+                guard let hint = AnswerGrader.safeHint(gap.englishTranslation, answer: expected) else { return nil }
                 return LessonQuestion(gap: gap, kind: .fillBlank, prompt: prompt, correctAnswer: expected,
-                                      hint: nil,
+                                      hint: hint,
                                       explanation: note.map { "\(completed)\n\($0)" } ?? completed)
             }
-            // No usable AI sentence: the content's own blank, or nothing.
-            guard let local = AnswerGrader.blankedPrompt(for: gap) else { return nil }
+            // No usable AI sentence: the content's own blank, or nothing. An item whose
+            // example English spells the answer is not blankable (lesson-10-4): its
+            // frame would be asked bare, and an open frame grades correct French wrong.
+            guard LessonScheduler.isBlankable(gap), let local = AnswerGrader.blankedPrompt(for: gap) else { return nil }
             let expected = AnswerGrader.blankForm(for: gap)
             var explanation = gap.exampleSentence
             if !gap.exampleTranslation.isEmpty { explanation += " — \(gap.exampleTranslation)" }

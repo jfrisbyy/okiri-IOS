@@ -84,7 +84,7 @@ struct AssessmentView: View {
                 .scaledSerifDisplay(28, weight: .bold).foregroundStyle(Theme.text).multilineTextAlignment(.center)
             Text(isFirstRun
                  ? "A few quick questions that adapt to you. We'll set your starting point and only teach what you don't already know."
-                 : "A short retake to update your level. It adds to what you've already shown — it never lowers what you've earned.")
+                 : "A short retake to update your level. It adds to what you've already shown — it never lowers your level.")
                 .font(.callout).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
             VStack(spacing: 10) {
@@ -93,7 +93,8 @@ struct AssessmentView: View {
                 if isFirstRun {
                     infoRow("signpost.right.fill", "Routes you to the right starting point")
                 } else {
-                    infoRow("arrow.triangle.merge", "Blends with your evidence: practice you've put in outweighs one bad answer")
+                    // firstrun-10-2: a slip is weighed against practice, never promised to lose to it.
+                    infoRow("arrow.triangle.merge", "Blends with your evidence: one slip is weighed against the practice you've put in")
                     infoRow("plus.circle", "Anything you miss becomes something to teach — nothing is wiped")
                 }
             }
@@ -495,13 +496,17 @@ struct AssessmentView: View {
             return "No worries — we'll guide you from the very first words and build up step by step."
         }
         if !isFirstRun {
-            return "Blended with what you'd already shown: nothing you've earned was lowered, and what you slipped on joins your gaps."
+            return "Blended with what you'd already shown: your level was not lowered, and what you slipped on joins your gaps."
         }
-        if result.vocabBand > result.grammarBand + 1 {
+        // A lead is claimed only on evidence — a real miss in the trailing
+        // category (PlacementResult.leadingCategory, firstrun-10-1).
+        switch result.leadingCategory {
+        case .vocabulary:
             return "Your vocabulary is ahead of your grammar — we'll shore up the rules as you go."
-        }
-        if result.grammarBand > result.vocabBand + 1 {
+        case .grammar:
             return "Your grammar is ahead of your vocabulary — we'll grow your word bank quickly."
+        default:
+            break
         }
         return "A balanced foundation. We'll target exactly the spots you slipped on."
     }

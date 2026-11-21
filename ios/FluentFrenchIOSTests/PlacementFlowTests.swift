@@ -104,8 +104,11 @@ struct PlacementFlowTests {
         // answer plus the content's three distractors.
         let base = s.concepts.filter { ConceptTaxonomy.baseConceptIds.contains($0.id) && ($0.category == .grammar || $0.category == .vocabulary) }
         #expect(!base.isEmpty)
+        let hand = Set(AssessmentService.bank.map { $0.id })
         for concept in base {
-            let items = bank.filter { $0.conceptId == concept.id }
+            // The content's own probes. A hand item can sit beside them, at a category
+            // band no content reaches (firstrun-10-1: band-2 vocabulary).
+            let items = bank.filter { $0.conceptId == concept.id && !hand.contains($0.id) }
             #expect(items.count == Tuning.placementProbesPerConcept, "\(concept.id): \(items.count) items")
             for item in items {
                 #expect(item.options.count == 4 && item.options.contains(item.correctAnswer), "\(concept.id): options")
@@ -118,13 +121,22 @@ struct PlacementFlowTests {
         // Hand-written items survive only where content is missing: a band no content
         // probe reaches (band 4 has no taxonomy concept). None of the hand items for a
         // covered concept at a covered band remain.
-        let hand = Set(AssessmentService.bank.map { $0.id })
         let survivors = bank.filter { hand.contains($0.id) }
         #expect(!survivors.isEmpty, "band-4 items have no content counterpart")
-        let coveredBands = Set(bank.filter { !hand.contains($0.id) }.map { $0.band })
+        // Coverage is per CATEGORY band (firstrun-10-1): A2 grammar content does not
+        // cover A2 vocabulary. (This check used to measure bands across categories,
+        // which is the defect: it required the band-2 vocabulary hand items be dropped.)
+        let coveredBands = Set(bank.filter { !hand.contains($0.id) }.map { "\($0.category.rawValue)#\($0.band)" })
         for q in survivors {
             let coveredConcept = q.conceptId.map { cid in bank.contains { $0.conceptId == cid && !hand.contains($0.id) } } ?? false
-            #expect(!coveredConcept || !coveredBands.contains(q.band), "\(q.french): a covered item leaked into the bank")
+            #expect(!coveredConcept || !coveredBands.contains("\(q.category.rawValue)#\(q.band)"),
+                    "\(q.french): a covered item leaked into the bank")
+        }
+        for category in [GapCategory.vocabulary, .grammar] {
+            for band in 1...3 {
+                #expect(bank.contains { $0.category == category && $0.band == band },
+                        "the staircase has \(category.rawValue) material at band \(band)")
+            }
         }
         // The staircase finds material: a learner who knows everything climbs to the
         // top bands on three-probe reads and every base concept is at least inferred.
@@ -144,6 +156,89 @@ struct PlacementFlowTests {
         let a1Result = a1.result()
         #expect(!a1Result.isTrueBeginner && a1Result.estimatedLevel == .A1)
         #expect(!a1Result.masteredConceptIds.isEmpty && !a1Result.inferredConceptIds.isEmpty)
+    }
+
+    /// firstrun-10-1: the shipped bank used to hold NO band-2 vocabulary, because the
+    /// A2 grammar content counted band 2 as covered for every category. The staircase
+    /// starts at band 2, found no vocabulary there and fell back to grammar, so an
+    /// A2-level learner read "Vocabulary: Just starting" and — the stronger the
+    /// learner, the more often — was seeded as knowing nothing.
+    @Test func anA2LearnerOnTheShippedBankReadsTheirVocabularyAndIsSeeded() throws {
+        guard let url = shippedContentURL() else {
+            print("[PlacementFlowTests] FoundationContent.json not reachable from this host — skipping the A2-learner check")
+            return
+        }
+        let file = try FoundationContentLoader.load(from: url)
+        let s = EngineFixtures.store()
+        let bank = AssessmentService.placementBank(concepts: s.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+
+        // Deterministic: knows everything up to A2, nothing above.
+        var vocabReads = 0, seeded = 0
+        let seeds = Array(UInt64(1)...16)
+        for seed in seeds {
+            var engine = PlacementEngine(bank: bank, seed: seed)
+            _ = run(&engine) { $0.band <= 2 }
+            let r = engine.result()
+            if r.vocabBand >= 1 { vocabReads += 1 }
+            if !r.masteredConceptIds.isEmpty { seeded += 1 }
+            #expect(r.vocabBand >= 1 && r.grammarBand >= 1, "seed \(seed): vocab \(r.vocabBand) grammar \(r.grammarBand)")
+            #expect(r.leadingCategory != .grammar,
+                    "seed \(seed): vocab \(r.vocabBand) grammar \(r.grammarBand) — 'grammar ahead of vocabulary' is false for this learner")
+        }
+        #expect(vocabReads == seeds.count, "an A2 learner's vocabulary was read in \(vocabReads) of \(seeds.count) runs")
+        #expect(seeded >= seeds.count * 3 / 4, "an A2 learner was seeded as a knower in \(seeded) of \(seeds.count) runs")
+
+        // Noisy: right 90% of the time at or below a band, 25% above it. A stronger
+        // learner must not be seeded less often than an A1-only one.
+        func sweep(knowsUpTo top: Int) -> (vocabZero: Int, seeded: Int) {
+            var vocabZero = 0, seededRuns = 0
+            for seed in UInt64(1)...48 {
+                var rng = PlacementRandom(seed: seed &+ 1_000)
+                var engine = PlacementEngine(bank: bank, seed: seed)
+                _ = run(&engine) { q in Double.random(in: 0..<1, using: &rng) < (q.band <= top ? 0.9 : 0.25) }
+                let r = engine.result()
+                if r.vocabBand == 0 { vocabZero += 1 }
+                if !r.masteredConceptIds.isEmpty { seededRuns += 1 }
+            }
+            return (vocabZero, seededRuns)
+        }
+        let a1 = sweep(knowsUpTo: 1), a2 = sweep(knowsUpTo: 2), b1 = sweep(knowsUpTo: 3)
+        // Fixing band 2 must not take the A1 learner's vocabulary read away.
+        #expect(a1.vocabZero <= 48 / 6, "A1 learners read 'Vocabulary: Just starting' in \(a1.vocabZero) of 48 runs")
+        #expect(a2.vocabZero <= 48 / 6, "A2 learners read 'Vocabulary: Just starting' in \(a2.vocabZero) of 48 runs")
+        for (name, sw) in [("A1", a1), ("A2", a2), ("B1", b1)] {
+            #expect(sw.seeded >= 48 * 9 / 10, "\(name) learners seeded in \(sw.seeded) of 48 runs")
+        }
+    }
+
+    /// firstrun-10-1: a cleared band is a floor, not a ceiling. Above A1 the bank
+    /// holds little vocabulary, so a learner who answers every item correctly can
+    /// clear vocabulary band 1 and grammar band 4 — and must not be told their
+    /// grammar is ahead of their vocabulary when they never missed a word.
+    @Test func aLeadIsClaimedOnlyWhenTheTrailingCategoryWasMissed() throws {
+        var perfect = PlacementResult(vocabBand: 1, grammarBand: 4, estimatedLevel: .B2, isTrueBeginner: false,
+                                      masteredConceptIds: [], missedGaps: [], askedCount: 12, correctCount: 12)
+        #expect(perfect.leadingCategory == nil, "no vocabulary miss — no evidence vocabulary is behind")
+        perfect.lowestMissedBand = [.vocabulary: 3]
+        #expect(perfect.leadingCategory == .grammar, "missed vocabulary at B1 while grammar cleared B2")
+        perfect.lowestMissedBand = [.grammar: 2]
+        #expect(perfect.leadingCategory == nil, "a grammar miss is no evidence vocabulary is behind")
+        let close = PlacementResult(vocabBand: 1, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                    masteredConceptIds: [], missedGaps: [], askedCount: 8, correctCount: 6,
+                                    lowestMissedBand: [.vocabulary: 2])
+        #expect(close.leadingCategory == nil, "one band apart is not a lead")
+
+        guard let url = shippedContentURL() else { return }
+        let file = try FoundationContentLoader.load(from: url)
+        let s = EngineFixtures.store()
+        let bank = AssessmentService.placementBank(concepts: s.concepts, probes: { FoundationContentLoader.probes(for: $0, in: file) })
+        for seed in UInt64(1)...16 {
+            var engine = PlacementEngine(bank: bank, seed: seed)
+            _ = run(&engine) { _ in true }
+            let r = engine.result()
+            #expect(r.lowestMissedBand.isEmpty)
+            #expect(r.leadingCategory == nil, "seed \(seed): a perfect run (vocab \(r.vocabBand), grammar \(r.grammarBand)) is told one category leads")
+        }
     }
 
     /// Round 8 (firstrun-8-1): a missed placement item has to teach something. Content
@@ -618,6 +713,30 @@ struct PlacementFlowTests {
         #expect(after.nextCheckInAt == now, "but it is verified now, not in a month")
     }
 
+    /// firstrun-10-2: mastery earned through ORDINARY practice survives one retake
+    /// slip. Thirty correct fill-blank answers settle at alpha ≈ 7.6 (the ceiling of an
+    /// unbroken weight-1 streak under recency decay); booked at check-in weight, one
+    /// retake miss used to drop that to 0.69 — out of mastery — while the retake
+    /// screen promised practice outweighs one bad answer.
+    @Test func aRetakeMissOnPractisedMasteryKeepsItAndBringsItsCheckInForward() {
+        let s = EngineFixtures.store()
+        s.hasCompletedAssessment = true
+        for k in 0..<30 {
+            s.recordConceptAnswer(conceptId: "definite-articles", correct: true, now: now.addingTimeInterval(Double(k) * 3_600))
+        }
+        let before = s.concepts.first { $0.id == "definite-articles" }!
+        #expect(before.state == .mastered && !before.isProvisional, "earned through practice")
+        #expect(before.alpha < 8, "an ordinary weight-1 history, not an unreachable one (alpha \(before.alpha))")
+        let result = PlacementResult(vocabBand: 2, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [], askedCount: 8, correctCount: 7,
+                                     missedConceptIds: ["definite-articles"])
+        s.applyPlacement(result, isFirstRun: false, now: now.addingTimeInterval(2 * day))
+        let after = s.concepts.first { $0.id == "definite-articles" }!
+        #expect(after.beta > before.beta, "the slip is still evidence")
+        #expect(after.state == .mastered, "one slip does not undo ordinary practice (mastery \(after.mastery))")
+        #expect(after.nextCheckInAt == now.addingTimeInterval(2 * day), "the next graded check-in decides")
+    }
+
     // MARK: firstrun-5-3 — "Due now" never counts what no lesson can offer
 
     /// A Foundation item of a concept whose prerequisite is not mastered can never
@@ -785,9 +904,12 @@ struct PlacementFlowTests {
         s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
         let bank = AssessmentService.placementBank(concepts: s.concepts,
                                                    probes: { FoundationContentLoader.probes(for: $0, in: file) })
-        // A beginner who only holds the easiest material: they miss real probes.
+        // A beginner who holds only the easiest words: they miss real (grammar) probes.
+        // (This learner used to be "every band-1 item"; since firstrun-10-1 the bank
+        // has band-2 vocabulary, and that learner's upward misses are now hand items,
+        // so they never reach the probe this test needs to see missed.)
         var engine = PlacementEngine(bank: bank, seed: 7)
-        _ = run(&engine) { $0.band <= 1 }
+        _ = run(&engine) { $0.band <= 1 && $0.category == .vocabulary }
         #expect(engine.missed.contains { $0.isProbe }, "the staircase did miss at least one probe")
         let result = engine.result(items: { FoundationContentLoader.items(for: $0, in: file) })
         s.applyPlacement(result, isFirstRun: true, now: now)

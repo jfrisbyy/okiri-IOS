@@ -688,18 +688,24 @@ struct LessonSchedulerTests {
     /// it is the answer, not a hint: the learner reads it off the caption and a
     /// first-try fill-blank grades `.easy`, pushing the interval out on a word they
     /// may not know. The translation still shows in the explanation, after the answer.
+    ///
+    /// lesson-10-4: but the caption is also the only thing that says which word an open
+    /// frame wants ("Le _____ est en retard." takes "bus" too), so an item that cannot
+    /// keep it is not asked as a fill-blank at all. (This test pinned a caption-less
+    /// fill-blank before; that was the defect.)
     @Test func aFillBlankHintThatSpellsTheAnswerIsDropped() throws {
         let s = scheduler
         var rng = LessonRandom(seed: 4)
-        var leak = gap("train", category: .pronunciation)
+        var leak = gap("train", reviewCount: 2, consecutiveCorrect: 1, category: .pronunciation)
         leak.frenchWord = "le train"
         leak.blankForm = "train"
         leak.exampleSentence = "Le train est en retard."
         leak.exampleTranslation = "The train is late."
+        #expect(LessonScheduler.fillBlankHintLeaks(leak))
+        #expect(!LessonScheduler.isBlankable(leak), "a fill-blank without its caption is an open frame")
+        #expect(s.kinds(for: leak) == [.trueFalse, .multipleChoice], "recall falls through to the closed formats")
         let q = try #require(s.question(for: leak, kind: .fillBlank, pool: [leak], optionCount: 4, rng: &rng))
-        #expect(q.kind == .fillBlank && q.correctAnswer == "train")
-        #expect(q.hint == nil, "the caption spells the answer")
-        #expect(q.explanation?.contains("The train is late.") == true, "it still explains after the answer is in")
+        #expect(q.kind != .fillBlank, "never asked bare")
 
         var kept = gap("trois", category: .vocabulary)
         kept.frenchWord = "trois"
@@ -711,7 +717,9 @@ struct LessonSchedulerTests {
     }
 
     /// The same guard holds inside a capstone, where the hint is otherwise kept on
-    /// purpose (identical frames across two items).
+    /// purpose (identical frames across two items): the item is asked as true/false,
+    /// never as a bare fill-blank whose correct alternatives grade "slipped"
+    /// (lesson-10-4, lesson-5-1).
     @Test func aCapstoneFillBlankAlsoDropsALeakingHint() throws {
         var leak = gap("train", category: .pronunciation)
         leak.frenchWord = "le train"
@@ -722,8 +730,166 @@ struct LessonSchedulerTests {
         leak.consecutiveCorrect = Tuning.productionEvidenceFloor
         let capstone = lesson([leak], roles: [leak.id: .review], mode: .capstone)
         let schedule = scheduler.build(for: capstone, abilityOptionCount: 4)
-        let fills = schedule.filter { $0.kind == .fillBlank }
-        #expect(fills.count == 1, "a blankable gap is asked at recall inside a capstone")
-        #expect(fills.allSatisfy { $0.isCapstone && $0.hint == nil })
+        #expect(!schedule.contains { $0.kind == .fillBlank }, "no caption-less fill-blank in a capstone")
+        #expect(schedule.count == 1 && schedule.allSatisfy { $0.isCapstone && $0.kind == .trueFalse })
+        // A check-in takes the same first recall format.
+        let checkIn = scheduler.build(for: lesson([leak], roles: [leak.id: .checkIn]), abilityOptionCount: 4)
+        #expect(checkIn.count == 1 && checkIn[0].kind == .trueFalse)
+    }
+
+    /// Over the shipped content (lesson-10-4): every fill-blank the scheduler asks
+    /// carries its caption. Nine items used to be asked bare on open frames —
+    /// "Elle boit du _____ le soir." (café, lait), "Mes _____ habitent ici." (amis).
+    @Test func everyShippedFillBlankCarriesItsCaption() throws {
+        let data = try #require(bundledContentData(), "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        let gaps = FoundationContentLoader.gaps(from: file, now: now)
+        let s = scheduler
+        var rng = LessonRandom(seed: 9)
+        var asked = 0
+        var withheld = 0
+        for gap in gaps where LessonScheduler.isProducible(gap) {
+            if LessonScheduler.fillBlankHintLeaks(gap) { withheld += 1 }
+            guard s.kinds(for: gap, at: .recall)[0] == .fillBlank else { continue }
+            let q = try #require(s.question(for: gap, kind: .fillBlank, pool: [gap], optionCount: 4, rng: &rng))
+            #expect(q.kind == .fillBlank && q.hint?.isEmpty == false, "\(gap.id): a fill-blank asked with no caption")
+            asked += 1
+        }
+        #expect(asked > 100 && withheld > 0, "fill-blanks asked: \(asked); withheld: \(withheld)")
+    }
+
+    // MARK: lesson-10-1 / lesson-10-2 / lesson-10-7 — no correct meaning is a wrong option
+
+    private func glossed(_ id: String, _ fr: String, _ en: String, category: GapCategory = .grammar) -> GapItem {
+        var g = gap(id, category: category)
+        g.frenchWord = fr
+        g.englishTranslation = en
+        return g
+    }
+
+    /// An untagged gloss is the same meaning stated broadly, not a contrast: "we" is a
+    /// correct meaning of on ("we (casual) / people in general"). Offering it as a
+    /// wrong option graded a right answer wrong, and the true/false printed
+    /// "“on” means “we”." as False. Two TAGGED glosses stay a contrast.
+    @Test func anUntaggedGlossIsNeverAWrongOptionForItsTaggedForm() {
+        #expect(LessonScheduler.sidesCollide(LessonScheduler.distractorSides(of: "we"),
+                                             LessonScheduler.distractorSides(of: "we (casual) / people in general")))
+        #expect(LessonScheduler.sidesCollide(LessonScheduler.distractorSides(of: "you're welcome (formal)"),
+                                             LessonScheduler.distractorSides(of: "you're welcome")))
+        #expect(LessonScheduler.sidesCollide(LessonScheduler.distractorSides(of: "water"),
+                                             LessonScheduler.distractorSides(of: "the water")))
+        #expect(!LessonScheduler.sidesCollide(LessonScheduler.distractorSides(of: "the (masculine singular)"),
+                                              LessonScheduler.distractorSides(of: "the (feminine singular)")),
+                "tag against tag is the contrast taught")
+        #expect(!LessonScheduler.sidesCollide(LessonScheduler.distractorSides(of: "the water"),
+                                              LessonScheduler.distractorSides(of: "some water")))
+
+        let on = glossed("on", "on", "we (casual) / people in general")
+        let nous = glossed("nous", "nous", "we")
+        let pas = glossed("pas", "n'... pas", "not (before a vowel sound)")
+        let nePas = glossed("nepas", "ne... pas", "not")
+        let le = glossed("le", "le", "the (masculine singular)")
+        let la = glossed("la", "la", "the (feminine singular)")
+        let pool = [on, nous, pas, nePas, le, la]
+        var contrastOffered = false
+        for seed in UInt64(0)..<60 {
+            var rng = LessonRandom(seed: seed)
+            for (asked, broad) in [(on, "we"), (pas, "not")] {
+                let mc = LessonScheduler.smartDistractors(for: asked, from: pool, count: 4, rng: &rng)
+                #expect(!mc.contains(broad), "“\(broad)” is a correct meaning of \(asked.frenchWord)")
+                let tf = scheduler.question(for: asked, kind: .trueFalse, pool: pool, optionCount: 4, rng: &rng)
+                #expect(tf?.statement != "“\(asked.frenchWord)” means “\(broad)”.")
+            }
+            let forLe = LessonScheduler.smartDistractors(for: le, from: pool, count: 4, rng: &rng)
+            if forLe.contains(la.englishTranslation) { contrastOffered = true }
+        }
+        #expect(contrastOffered, "le / la stay each other's distractors")
+    }
+
+    /// The reversed question picks French options, and a French option whose meaning
+    /// is the prompt's is a second correct answer: alors under "Which one means
+    /// “so / therefore”?" was graded wrong (lesson-10-2).
+    @Test func aReversedQuestionNeverOffersAWordThatAlsoMeansThePrompt() {
+        let donc = glossed("donc", "donc", "so / therefore", category: .vocabulary)
+        let alors = glossed("alors", "alors", "so / well then", category: .vocabulary)
+        let on = glossed("on", "on", "we (casual) / people in general")
+        let nous = glossed("nous", "nous", "we")
+        let le = glossed("le", "le", "the (masculine singular)")
+        let la = glossed("la", "la", "the (feminine singular)")
+        let pool = [donc, alors, on, nous, le, la, gap("x"), gap("y")]
+        var contrastOffered = false
+        for seed in UInt64(0)..<60 {
+            var rng = LessonRandom(seed: seed)
+            for (asked, twin) in [(donc, alors), (alors, donc), (nous, on), (on, nous)] {
+                guard let q = scheduler.question(for: asked, kind: .multipleChoice, variant: 1, pool: pool,
+                                                 optionCount: 4, rng: &rng) else { continue }
+                #expect(q.isReversed && q.correctAnswer == asked.frenchWord)
+                #expect(!q.options.contains(twin.frenchWord),
+                        "\(twin.frenchWord) also means “\(asked.englishTranslation)”")
+            }
+            if let q = scheduler.question(for: le, kind: .multipleChoice, variant: 1, pool: pool,
+                                          optionCount: 4, rng: &rng), q.options.contains("la") {
+                contrastOffered = true
+            }
+        }
+        #expect(contrastOffered, "le / la stay each other's options")
+    }
+
+    /// The fallback distractors in a one-gap lesson: no near-synonym of a shipped
+    /// greeting ("hello" against salut's "hi"), and no untagged form of the gloss
+    /// ("thank you" against "Thank you (formal)") (lesson-10-7).
+    @Test func aOneGapLessonsFallbacksAreNeverCorrectMeanings() {
+        #expect(!LessonScheduler.fallbackDistractors.contains("hello"))
+        let salut = glossed("salut", "salut", "hi / bye (informal)", category: .phrasing)
+        let remercie = glossed("remercie", "Je vous remercie", "Thank you (formal)", category: .phrasing)
+        var recalled = [salut, remercie]
+        for i in recalled.indices {
+            recalled[i].id += "-recall"
+            recalled[i].reviewCount = 2
+            recalled[i].consecutiveCorrect = 1
+        }
+        for seed in UInt64(0)..<20 {
+            for asked in [salut, remercie] + recalled {
+                let one = lesson([asked])
+                var config = LessonSchedulerConfig.tuning
+                config.seed = seed
+                // "hello" is a correct meaning of salut, "thank you" of Je vous remercie.
+                let correct = asked.frenchWord == "salut" ? "hello" : "thank you"
+                for q in LessonScheduler(config: config).build(for: one, abilityOptionCount: 4) {
+                    let shown = q.options + [q.claimedMeaning ?? ""]
+                    #expect(!shown.contains { $0.lowercased() == correct }, "\(asked.frenchWord): \(shown)")
+                }
+            }
+        }
+    }
+
+    /// The match round never pairs two words whose meanings collide: pairing on with
+    /// "we" would be graded wrong (lesson-10-1).
+    @Test func aMatchRoundNeverHoldsTwoMeaningsThatCollide() throws {
+        let on = glossed("on", "on", "we (casual) / people in general")
+        let nous = glossed("nous", "nous", "we")
+        let donc = glossed("donc", "donc", "so / therefore")
+        let alors = glossed("alors", "alors", "so / well then")
+        let gaps = [on, nous, donc, alors, gap("x"), gap("y"), gap("z")]
+        for seed in UInt64(0)..<20 {
+            var rng = LessonRandom(seed: seed)
+            let match = try #require(scheduler.matchInterstitial(for: lesson(gaps), rng: &rng))
+            let ids = Set(match.matchGaps.map { $0.id })
+            #expect(!(ids.contains("on") && ids.contains("nous")))
+            #expect(!(ids.contains("donc") && ids.contains("alors")))
+        }
+    }
+
+    private func bundledContentData() -> Data? {
+        let here = URL(fileURLWithPath: #filePath)
+        let candidates = [
+            here.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("FluentFrenchIOS/Resources/FoundationContent.json"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/FoundationContent.json"),
+        ]
+        for url in candidates {
+            if let data = try? Data(contentsOf: url) { return data }
+        }
+        return nil
     }
 }

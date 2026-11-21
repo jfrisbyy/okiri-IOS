@@ -138,7 +138,7 @@ nonisolated enum TranslationCache {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 4
+        request.timeoutInterval = Tuning.translationCloudReadTimeoutSeconds
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -176,7 +176,7 @@ nonisolated enum TranslationCache {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 6
+        request.timeoutInterval = Tuning.translationCloudWriteTimeoutSeconds
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -388,14 +388,42 @@ struct HomeGateTests {
     // MARK: D12 / D19 — Home copy from real data
 
     @Test func levelBadgeReadsNotPlacedBeforePlacement() {
-        #expect(HomeCopy.levelBadge(placed: false, level: .A2) == "Not placed")
-        #expect(HomeCopy.levelBadge(placed: true, level: .B1) == "B1 · Studying")
+        #expect(HomeCopy.levelBadge(placed: false, level: .A2, inFoundation: true) == "Not placed")
+        #expect(HomeCopy.levelBadge(placed: true, level: .B1, inFoundation: false) == "B1 · Studying")
         #expect(HomeCopy.placedLine(placed: false, assessedLevel: .A1) == nil)
         #expect(HomeCopy.placedLine(placed: true, assessedLevel: .A2) == "Placed at A2")
 
         let fresh = EngineFixtures.store()
         #expect(!fresh.hasCompletedAssessment, "a fresh store is not placed")
-        #expect(HomeCopy.levelBadge(placed: fresh.hasCompletedAssessment, level: fresh.learnerLevel) == "Not placed")
+        #expect(HomeCopy.levelBadge(placed: fresh.hasCompletedAssessment, level: fresh.learnerLevel,
+                                    inFoundation: fresh.isInFoundation) == "Not placed")
+    }
+
+    /// firstrun-10-3: placement sets ability straight from the measured level, so a
+    /// learner placed at B2 reads `learnerLevel` B2 on day one — while reading is
+    /// locked and every lesson is A1 Foundation. Home must not tell them they are
+    /// "studying" B2, nor mark B2 "In Progress" on the CEFR sheet.
+    @Test func aLearnerPlacedHighButInFoundationIsNotToldTheyAreStudyingThatLevel() {
+        let s = EngineFixtures.store()
+        let strong = PlacementResult(vocabBand: 4, grammarBand: 4, estimatedLevel: .B2, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [], askedCount: 12, correctCount: 12)
+        s.applyPlacement(strong, isFirstRun: true, now: now)
+        #expect(s.learnerLevel == .B2 && s.isInFoundation, "the state the finding describes")
+
+        let badge = HomeCopy.levelBadge(placed: s.hasCompletedAssessment, level: s.learnerLevel, inFoundation: s.isInFoundation)
+        #expect(badge == "B2 · Foundation")
+        #expect(!badge.contains("Studying"))
+        let line = HomeCopy.cefrSheetLine(placed: s.hasCompletedAssessment, assessedLevel: s.assessedLevel,
+                                          learnerLevel: s.learnerLevel, inFoundation: s.isInFoundation)
+        #expect(line == "Placed at B2 · building the Foundation first")
+        #expect(HomeCopy.cefrLevelInProgress(placed: true, level: s.learnerLevel, inFoundation: s.isInFoundation) == nil)
+
+        // Once reading is open the level is what they study.
+        #expect(HomeCopy.cefrSheetLine(placed: true, assessedLevel: .A2, learnerLevel: .B1, inFoundation: false)
+                == "Placed at A2 · now studying at B1")
+        #expect(HomeCopy.cefrLevelInProgress(placed: true, level: .B1, inFoundation: false) == .B1)
+        #expect(HomeCopy.cefrLevelInProgress(placed: false, level: .B1, inFoundation: false) == nil)
+        #expect(HomeCopy.cefrSheetLine(placed: false, assessedLevel: .A1, learnerLevel: .A1, inFoundation: true) == nil)
     }
 
     /// The category rows on the Gap Map and in the deck count the same

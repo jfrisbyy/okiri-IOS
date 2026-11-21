@@ -579,6 +579,22 @@ nonisolated extension Tuning {
     static let readabilityLongWordShare: Double = 0.28
     /// Letters from which a word counts as "long" for the readability estimate.
     static let readabilityLongWordLength: Int = 9
+    /// Highest score keyword hits alone can reach, so only a content-lexicon hit scores a full 1.0 (read-10-10).
+    static let tagKeywordCeiling: Double = 0.95
+    /// Score each keyword hit after the first adds to `tagKeywordWeight` (read-10-10).
+    static let tagKeywordStep: Double = 0.1
+    /// Seconds the AI concept matcher may take before the on-device heuristic decides instead (read-10-10).
+    static let tagAIRequestTimeoutSeconds: TimeInterval = 20
+    /// Seconds a shared translation-cache read may take before the live service is asked instead (read-10-10).
+    static let translationCloudReadTimeoutSeconds: TimeInterval = 4
+    /// Seconds a shared translation-cache write may take before it is abandoned (read-10-10).
+    static let translationCloudWriteTimeoutSeconds: TimeInterval = 6
+    /// News cards the feed shows at first, and how many more each "Load more" adds (read-10-10).
+    static let newsFeedPageSize: Int = 8
+    /// Seconds a finger must rest on the text before a drag selects a phrase instead of scrolling (read-10-10).
+    static let readerPhraseHoldSeconds: TimeInterval = 0.16
+    /// Seconds the gloss sheet stays up after a save, so the "Saved" state is seen before it closes (read-10-10).
+    static let glossSavedDismissDelaySeconds: TimeInterval = 0.6
 }
 
 nonisolated extension Tuning {

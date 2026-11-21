@@ -234,6 +234,14 @@ struct LessonSessionTests {
         while s.advance() {
             guard let q = s.current else { break }
             let wasRemedial = q.isRemedial
+            if q.kind == .match {
+                // A match round's evidence comes pair by pair, and its forced last
+                // pair books nothing (lesson-10-6), so count the whole round.
+                var booked = 0
+                for g in q.matchGaps { booked += s.matchPair(left: g.id, right: g.id)?.evidence.count ?? 0 }
+                #expect(booked == q.matchGaps.count - 1, "an ordinary match round still counts")
+                continue
+            }
             let outcome = try answerCorrectly(&s)
             if wasRemedial {
                 sawRemedial = true
@@ -648,7 +656,8 @@ struct LessonSessionTests {
         let wrong = try #require(crossed?.evidence.first)
         #expect(wrong.gapId == left && wrong.confusedWithGapId == other)
 
-        let paired = s.matchPair(left: left, right: left)
+        // A right pair on a row's first attempt names nobody.
+        let paired = s.matchPair(left: other, right: other)
         let right = try #require(paired?.evidence.first)
         #expect(right.correct && right.confusedWithGapId == nil)
     }
@@ -756,12 +765,20 @@ struct LessonSessionTests {
         let unknown = s.matchPair(left: "zz", right: "g1")
         #expect(unknown == nil, "unknown rows are ignored")
 
+        // lesson-10-6: the corrected pairing of a missed row books nothing — the miss
+        // was its evidence. (This test pinned `correct` evidence with firstTry false
+        // here before; that success put the word back on a streak.)
         let retried = s.matchPair(left: "g1", right: "g1")
         let retry = try #require(retried)
-        #expect(retry.correct && !retry.roundComplete && retry.evidence.first?.firstTry == false)
-        var last: LessonAnswerOutcome? = nil
-        for id in ["g2", "g3", "g4"] { last = s.matchPair(left: id, right: id) }
-        let done = try #require(last)
+        #expect(retry.correct && !retry.roundComplete && retry.evidence.isEmpty)
+        let g2Retried = s.matchPair(left: "g2", right: "g2")
+        #expect(g2Retried?.evidence.isEmpty == true, "g2 was missed too")
+        let g3Paired = s.matchPair(left: "g3", right: "g3")
+        let g3 = try #require(g3Paired?.evidence.first)
+        #expect(g3.gapId == "g3" && g3.correct && g3.firstTry, "a first attempt is evidence")
+        let lastPair = s.matchPair(left: "g4", right: "g4")
+        let done = try #require(lastPair)
+        #expect(done.evidence.isEmpty, "the last row's pairing is forced")
         #expect(done.roundComplete && !done.correct && done.xp == 0)
         #expect(done.feedback?.tone == .incorrect && done.feedback?.title.contains("g1-fr") == true)
         #expect(done.feedback?.detail?.contains("g4-fr — g4-en") == true)
@@ -771,6 +788,34 @@ struct LessonSessionTests {
         #expect(s.summary.scored == 1 && s.summary.scoredCorrect == 0 && s.summary.answered == 1)
         let advanced = s.advance()
         #expect(advanced && s.current?.isRemedial == true)
+    }
+
+    /// lesson-10-6: a left row's first attempt is its only evidence. The last row of
+    /// a round can only go with the last meaning, so it is no evidence at all, and a
+    /// row's correct pairing after a miss is found by elimination. Booking either as
+    /// a success put a word missed seconds earlier back on a streak.
+    @Test func onlyAMatchRowsUnforcedFirstAttemptIsEvidence() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 20))
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+        var booked: [LessonEvidence] = []
+        for g in gaps {
+            let o = s.matchPair(left: g.id, right: g.id)
+            booked += try #require(o).evidence
+        }
+        #expect(booked.map { $0.gapId } == ["g1", "g2", "g3"], "the forced last pair books nothing")
+        #expect(booked.allSatisfy { $0.correct && $0.firstTry })
+
+        var t = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 20))
+        t.start(with: [scheduler.matchQuestion(for: gaps)])
+        let missed = t.matchPair(left: "g1", right: "g2")
+        let miss = try #require(missed)
+        #expect(miss.evidence.map { $0.correct } == [false])
+        let fixed = t.matchPair(left: "g1", right: "g1")
+        let fix = try #require(fixed)
+        #expect(fix.correct && fix.evidence.isEmpty, "no success seconds after the lapse")
+        let ontoMatched = t.matchPair(left: "g3", right: "g1")
+        #expect(ontoMatched == nil, "a matched meaning cannot be paired again")
     }
 
     @Test func cleanMatchRoundScoresOnce() throws {

@@ -20,7 +20,7 @@ enum ConceptTagger {
     nonisolated static var hasKey: Bool { !apiKey.isEmpty }
 
     /// Seconds the AI matcher may take before the heuristic decides instead.
-    nonisolated static let requestTimeout: TimeInterval = 20
+    nonisolated static var requestTimeout: TimeInterval { Tuning.tagAIRequestTimeoutSeconds }
 
     static func tag(gap: GapItem, concepts: [Concept], lexicon: [String: String] = [:]) async -> ConceptTagResult? {
         // A content-named headword is authoritative: no network round-trip needed.

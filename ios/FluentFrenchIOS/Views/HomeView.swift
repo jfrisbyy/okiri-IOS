@@ -478,7 +478,9 @@ struct HomeView: View {
     }
 
     /// The ONE displayed level (D12): "Not placed" until the placement has run.
-    private var levelLabel: String { HomeCopy.levelBadge(placed: placed, level: store.learnerLevel) }
+    private var levelLabel: String {
+        HomeCopy.levelBadge(placed: placed, level: store.learnerLevel, inFoundation: store.isInFoundation)
+    }
 
     // MARK: - Stats chip card (overlapping)
 
@@ -1590,15 +1592,22 @@ private struct CEFRSheet: View {
         (.C2, "Mastery", "Understand virtually everything with precision."),
     ]
 
-    /// The ONE displayed level (D12); nil before placement.
-    private var currentLevel: CEFRLevel? { store.hasCompletedAssessment ? store.learnerLevel : nil }
+    /// The ONE displayed level (D12), marked "In Progress"; nil before placement and
+    /// while the learner is still in Foundation (firstrun-10-3).
+    private var currentLevel: CEFRLevel? {
+        HomeCopy.cefrLevelInProgress(placed: store.hasCompletedAssessment, level: store.learnerLevel,
+                                     inFoundation: store.isInFoundation)
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    if let placedLine = HomeCopy.placedLine(placed: store.hasCompletedAssessment, assessedLevel: store.assessedLevel) {
-                        Text("\(placedLine) · now studying at \(store.learnerLevel.rawValue)")
+                    if let placedLine = HomeCopy.cefrSheetLine(placed: store.hasCompletedAssessment,
+                                                               assessedLevel: store.assessedLevel,
+                                                               learnerLevel: store.learnerLevel,
+                                                               inFoundation: store.isInFoundation) {
+                        Text(placedLine)
                             .font(.footnote).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {

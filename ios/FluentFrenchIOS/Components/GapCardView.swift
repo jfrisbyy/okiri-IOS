@@ -30,8 +30,11 @@ struct GapCardView: View {
             : "\(gap.frenchWord), \(gap.englishTranslation)"
     }
 
+    /// Green only at mastery (`Tuning.gapMasteryStreak`, the target the bar beside it
+    /// reads): a hard-coded 3 turned "3/5" green two answers early (lesson-10-8).
     private var streakColor: Color {
-        gap.consecutiveCorrect >= 3 ? Theme.success : (gap.consecutiveCorrect >= 1 ? Theme.warning : Theme.border)
+        if gap.consecutiveCorrect >= streakTarget { return Theme.success }
+        return gap.consecutiveCorrect > 0 ? Theme.warning : Theme.border
     }
 
     /// The card's due chip, under the SAME rule as every count and every lesson

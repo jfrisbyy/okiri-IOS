@@ -441,7 +441,10 @@ struct AnswerGraderTests {
             #expect(prompt != nil, "\(gap.id) “\(gap.frenchWord)”: blank “\(gap.blankForm ?? "")” must occur exactly once in “\(gap.exampleSentence)”")
             #expect(prompt?.contains(AnswerGrader.blankToken) == true)
             #expect(AnswerGrader.highlightRange(in: gap.exampleSentence, for: gap) != nil)
-            #expect(LessonScheduler.isBlankable(gap))
+            // A blankable shape, asked as a fill-blank unless its caption would have
+            // to be withheld because it spells the answer (lesson-10-4).
+            #expect(LessonScheduler.isBlankable(gap) == !LessonScheduler.fillBlankHintLeaks(gap),
+                    "\(gap.id): blankable unless its caption spells the answer")
             if prompt != nil { blanked += 1 }
         }
         #expect(blanked == gaps.filter { $0.isTestable }.count)

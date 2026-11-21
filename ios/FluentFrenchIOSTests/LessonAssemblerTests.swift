@@ -164,6 +164,57 @@ struct LessonAssemblerTests {
         #expect(block2.reason != nil, "the card still says why the skill is here")
     }
 
+    /// lesson-10-5: lesson-5-3 kept a reviewed item from being a card's worked
+    /// example, but the content's own skill card printed it anyway — 57 shipped items
+    /// have their exact example sentence or their headword among their concept's
+    /// teaching examples ("Ma mère est gentille." on the family card, then "Ma _____
+    /// est gentille."). The card withholds the sentence and headword of every item the
+    /// lesson may not teach, and keeps the rule, the mistake and the other examples.
+    @Test func aSkillCardNeverPrintsTheSentenceOfAnItemItMayNotTeach() throws {
+        let data = try #require(bundledContentData(), "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        let gaps = FoundationContentLoader.gaps(from: file, now: EngineFixtures.now)
+        var overlapping = 0
+        for gap in gaps {
+            guard let conceptId = gap.conceptId,
+                  let card = FoundationContentLoader.teaching(for: conceptId, in: file) else { continue }
+            let own = Set([gap.exampleSentence, gap.frenchWord].map(AnswerGrader.normalize))
+            let shown = (card.examples + card.contrast).map { AnswerGrader.normalize($0.fr) }
+            let leaked = shown.filter { own.contains($0) }.count
+            guard leaked > 0 else { continue }
+            overlapping += 1
+            let withheld = LessonAssembler.teaching(card, withholding: own)
+            let left = (withheld.examples + withheld.contrast).map { AnswerGrader.normalize($0.fr) }
+            #expect(!left.contains { own.contains($0) }, "\(gap.id): the card still prints the item it tests")
+            #expect(left.count == shown.count - leaked, "\(gap.id): only the leaking examples go")
+            #expect(withheld.rule == card.rule && withheld.commonMistake == card.commonMistake)
+        }
+        #expect(overlapping >= 50, "the shipped overlap this guards (\(overlapping))")
+
+        let card = FoundationTeachingContent(rule: "r",
+                                             examples: [FoundationExampleContent(fr: "Ma mère est gentille.", en: "e"),
+                                                        FoundationExampleContent(fr: "Mon père", en: "e")],
+                                             contrast: [FoundationExampleContent(fr: "ma mère", en: "e")],
+                                             commonMistake: "m")
+        #expect(LessonAssembler.teaching(card, withholding: []) == card, "nothing withheld, nothing dropped")
+        let trimmed = LessonAssembler.teaching(card, withholding: [AnswerGrader.normalize("Ma mère est gentille"),
+                                                                   AnswerGrader.normalize("ma mère")])
+        #expect(trimmed.examples.map { $0.fr } == ["Mon père"] && trimmed.contrast.isEmpty)
+    }
+
+    private func bundledContentData() -> Data? {
+        let here = URL(fileURLWithPath: #filePath)
+        let candidates = [
+            here.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("FluentFrenchIOS/Resources/FoundationContent.json"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/FoundationContent.json"),
+        ]
+        for url in candidates {
+            if let data = try? Data(contentsOf: url) { return data }
+        }
+        return nil
+    }
+
     /// A blind-spot probe is a diagnosis, not teaching material: the skill it
     /// probes gets no card, and no card takes its worked example from a probe.
     /// Teaching a skill — with the probe's own sentence and its translation —

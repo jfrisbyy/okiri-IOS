@@ -411,17 +411,27 @@ nonisolated struct LessonSession {
     ///
     /// A left row costs at most one miss per round however many wrong meanings are
     /// tapped for it: guessing down the right column must not stack lapses on one word.
+    ///
+    /// A left row's FIRST attempt is its only evidence (lesson-10-6). Its correct
+    /// pairing after a miss books nothing — the wrong taps have narrowed the column,
+    /// so it is the answer found by elimination, like a remedial that shows the answer
+    /// (lesson-7-2) — and so does the last row of the round, whose pairing is forced
+    /// once every other row is matched. Booking either as a success put a just-missed
+    /// word back on a streak, and back at recall, seconds after its lapse.
     mutating func matchPair(left leftId: String, right rightId: String) -> LessonAnswerOutcome? {
         guard end == nil, !currentAnswered, let q = current, q.kind == .match,
               let leftGap = q.matchGaps.first(where: { $0.id == leftId }),
               let rightGap = q.matchGaps.first(where: { $0.id == rightId }),
-              !matchedIds.contains(leftId),
+              !matchedIds.contains(leftId), !matchedIds.contains(rightId),
               triedPairs.insert("\(leftId)|\(rightId)").inserted else { return nil }
         let matched = leftId == rightId
         let firstTry = !wrongLefts.contains(leftId) && (missCountByGap[leftId] ?? 0) == 0
+        // The last unmatched row can only be paired with the last unmatched meaning.
+        let forced = matchedIds.count == q.matchGaps.count - 1
         // The first wrong meaning tapped for a left row is the evidence; the ones
-        // after it are the same miss, and are recorded once.
-        let counts = matched || wrongLefts.insert(leftId).inserted
+        // after it are the same miss, and are recorded once. A correct pairing counts
+        // only as the row's first attempt, and never when it is forced (lesson-10-6).
+        let counts = matched ? (!wrongLefts.contains(leftId) && !forced) : wrongLefts.insert(leftId).inserted
         var outcome = LessonAnswerOutcome(correct: matched, firstTry: firstTry, roundComplete: false)
         if counts {
             // A wrong pair names both halves of the mix-up: the gap asked and the gap

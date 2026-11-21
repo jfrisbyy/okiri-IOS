@@ -2287,17 +2287,21 @@ final class AppStore {
             // firstrun-5-2: "anything you miss becomes something to teach" has to be
             // true even when the missed item is already in the record — and for a
             // seeded base concept it always is, so the insert above is a no-op there.
-            // A miss is real evidence: it lands on the concept (weighted as a
-            // check-in miss when the engine currently believes the concept is
-            // mastered — the strongest ghost signal placement can give), a concept
-            // that survives the miss gets its verification brought forward to now,
-            // and its material is brought forward so the next lesson can teach it.
-            // Nothing is lowered by hand: the level and ability above still only
-            // rise (D8).
+            // A miss is real evidence: it lands on the concept, a concept that
+            // survives the miss gets its verification brought forward to now, and its
+            // material is brought forward so the next lesson can teach it. Nothing is
+            // lowered by hand: the level and ability above still only rise (D8).
+            // Only a PROVISIONAL seed — a guess placement itself made — takes the
+            // check-in miss weight. Mastery earned through practice takes the miss as
+            // one plain answer (firstrun-10-2): at check-in weight a single retake slip
+            // pulled an ordinarily practised skill (alpha ≈ 7.7, the ceiling of an
+            // unbroken weight-1 streak) out of mastery, while the screen promised that
+            // practice outweighs one bad answer. The next graded check-in decides.
             for cid in result.missedConceptIds {
                 guard let idx = concepts.firstIndex(where: { $0.id == cid }) else { continue }
                 let wasMastered = concepts[idx].state == .mastered
-                recordConceptAnswer(conceptId: cid, correct: false, isCheckIn: wasMastered, now: now)
+                let isSeedGuess = wasMastered && concepts[idx].isProvisional
+                recordConceptAnswer(conceptId: cid, correct: false, isCheckIn: isSeedGuess, now: now)
                 if wasMastered && concepts[idx].state == .mastered { concepts[idx].nextCheckInAt = now }
                 // Bring its material forward — the same dose a first placement seeds
                 // for a missed probe (`Tuning.placementMissSeedItems`), earliest

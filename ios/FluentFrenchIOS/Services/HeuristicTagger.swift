@@ -77,7 +77,8 @@ nonisolated enum HeuristicTagger {
 
         let hits = keywordHits(concept, signals: signals)
         if hits > 0 {
-            primary = max(primary, min(0.95, Tuning.tagKeywordWeight + 0.1 * Double(hits - 1)))
+            primary = max(primary, min(Tuning.tagKeywordCeiling,
+                                       Tuning.tagKeywordWeight + Tuning.tagKeywordStep * Double(hits - 1)))
         }
         if posConcepts(for: signals).contains(concept.id) {
             primary = max(primary, Tuning.tagPartOfSpeechWeight)
@@ -188,31 +189,87 @@ nonisolated enum HeuristicTagger {
     // MARK: Lexicon (content items → concept)
 
     /// The concept whose content items contain the gap's headword (or base form).
+    ///
+    /// Two kinds of entry, because a bare noun is not the article item it was
+    /// stripped from (read-10-1):
+    ///   • the item's EXACT form ("un café", "le lundi") names its skill
+    ///     unconditionally, whatever the skill — a gap that IS that item is that
+    ///     item's evidence;
+    ///   • any other match — the gap or the item had an article stripped to meet
+    ///     ("café" against "le café") — counts only inside a VOCABULARY skill, and
+    ///     only when the gap's meaning shares a side with the item's. Otherwise
+    ///     "café" was filed under Indefinite articles (from "un café"), "lundi"
+    ///     under Definite articles and "coup" ("blow") under Spoken fillers (from
+    ///     "du coup"), all at full confidence — vocabulary recall booked as grammar
+    ///     evidence. The meaning check keeps a homograph ("été", "been") off the
+    ///     theme whose item means something else ("l'été", "summer"); it falls
+    ///     through to the heuristic instead.
     static func lexiconConcept(for gap: GapItem, lexicon: [String: String]) -> String? {
         guard !lexicon.isEmpty else { return nil }
-        for candidate in [gap.frenchWord, gap.baseForm ?? ""] where !candidate.isEmpty {
+        let candidates = [gap.frenchWord, gap.baseForm ?? ""].filter { !$0.isEmpty }
+        for candidate in candidates {
+            if let exact = lexiconKeys(for: candidate).first, let id = lexicon[exact] { return id }
+        }
+        let sides = lexiconSides(of: gap.englishTranslation)
+        guard !sides.isEmpty else { return nil }
+        for candidate in candidates {
             for key in lexiconKeys(for: candidate) {
-                if let id = lexicon[key] { return id }
+                for side in sides.sorted() {
+                    if let id = lexicon[meaningKey(key, side: side)] { return id }
+                }
             }
         }
         return nil
     }
 
-    /// Build the headword → concept map from the bundled content: every item's
-    /// `fr` (and its article-stripped form) names the skill it belongs to. The first
-    /// skill to claim a headword keeps it.
+    /// Build the headword → concept map from the bundled content. Every item's
+    /// exact `fr` names the skill it belongs to; a VOCABULARY skill's items are
+    /// also indexed by form (exact and article-stripped) paired with each side of
+    /// their meaning, for the meaning-checked lookup in `lexiconConcept` (read-10-1).
+    /// The first skill to claim a key keeps it.
     static func lexicon(from file: FoundationContentFile?) -> [String: String] {
         guard let file else { return [:] }
         var map: [String: String] = [:]
         for skill in file.skills {
+            let isVocabulary = skill.category == GapCategory.vocabulary.rawValue
             for item in skill.items {
-                for key in lexiconKeys(for: item.fr) where map[key] == nil {
-                    map[key] = skill.id
+                let keys = lexiconKeys(for: item.fr)
+                if let exact = keys.first, map[exact] == nil { map[exact] = skill.id }
+                guard isVocabulary else { continue }
+                for key in keys {
+                    for side in lexiconSides(of: item.en) where map[meaningKey(key, side: side)] == nil {
+                        map[meaningKey(key, side: side)] = skill.id
+                    }
                 }
             }
         }
         return map
     }
+
+    /// The lexicon key for a form that only counts alongside one meaning (read-10-1).
+    /// The unit separator never occurs in a folded headword, so it cannot collide
+    /// with an exact key.
+    static func meaningKey(_ form: String, side: String) -> String {
+        form + "\u{1F}" + side
+    }
+
+    /// The sides of a meaning ("coffee / café" → coffee, café), each also without
+    /// a leading English article ("the morning" → morning), so the gloss a
+    /// translator returns for a bare noun meets the content's. Read-10-1.
+    static func lexiconSides(of meaning: String) -> Set<String> {
+        var out = Set<String>()
+        for side in LessonScheduler.distractorSides(of: meaning) {
+            out.insert(side)
+            for article in englishArticles where side.hasPrefix(article) {
+                let bare = String(side.dropFirst(article.count))
+                if !bare.isEmpty { out.insert(bare) }
+            }
+        }
+        return out
+    }
+
+    /// English determiners dropped when two meanings are compared (read-10-1).
+    private static let englishArticles = ["the ", "a ", "an ", "some "]
 
     /// Normalised forms a headword is looked up under: as written, and with a
     /// leading article removed ("le pain" → "pain"). Parenthetical tags are dropped.
@@ -499,12 +556,17 @@ nonisolated enum HeuristicTagger {
         "prepositions-place-time": TriggerRow(fr: ["pendant", "depuis", "avant", "après"],
                                               en: ["during", "since", "preposition of place", "preposition of time"]),
         "liaison": TriggerRow(fr: ["liaison"], en: ["liaison", "linking"]),
-        "everyday-connectors": TriggerRow(fr: ["mais", "donc", "parce que", "alors", "puis", "ensuite"],
+        // "parce qu'" so the elided connector ("parce qu'il pleut") is a connector,
+        // as "parce que" already is (read-10-3).
+        "everyday-connectors": TriggerRow(fr: ["mais", "donc", "parce que", "parce qu'", "alors", "puis", "ensuite"],
                                           en: ["connector", "conjunction", "however", "therefore", "because"]),
         "imparfait": TriggerRow(fr: ["imparfait"], en: ["imperfect", "used to", "was -ing", "were -ing"]),
         "imparfait-vs-pc": TriggerRow(fr: ["imparfait vs", "vs passé composé"], en: ["description vs event"]),
         "object-pronouns": TriggerRow(fr: ["lui", "leur"], en: ["object pronoun", "direct object", "indirect object"]),
-        "subjunctive-intro": TriggerRow(fr: ["subjonctif", "il faut que", "que je", "qu'il"], en: ["subjunctive"]),
+        // Only true subjunctive markers. "que je" and "qu'il" open most French
+        // subordinate clauses, nearly all of them indicative ("je pense qu'il est",
+        // "il dit que je suis"), and filed those as subjunctive evidence (read-10-3).
+        "subjunctive-intro": TriggerRow(fr: ["subjonctif", "il faut que"], en: ["subjunctive"]),
         "savoir-vs-connaitre": TriggerRow(fr: ["savoir", "connaître", "connaitre"], en: ["to know", "know how to"]),
         "spoken-fillers": TriggerRow(fr: ["du coup", "quoi", "bref", "enfin", "bah", "ben", "euh", "genre", "voilà"],
                                      en: ["filler", "discourse marker"]),

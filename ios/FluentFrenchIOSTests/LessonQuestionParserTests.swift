@@ -206,14 +206,19 @@ struct LessonQuestionParserTests {
         #expect(batch.covers([gaps[0]], target: 2))
     }
 
-    // MARK: The hint under a typed field (lesson-3-4)
+    // MARK: The hint under a typed field (lesson-3-4, lesson-10-3)
 
     /// `exampleTranslation` is the English of the CONTENT's example sentence. When
     /// the model writes its OWN sentence, that translation belongs to a different
     /// sentence, and printing it under the field captions the prompt with the
     /// translation of something else. Only the local fallback — where the prompt IS
     /// the content example — may show it.
-    @Test func anAIWrittenFillBlankCarriesNoHint() throws {
+    ///
+    /// But an AI fill-blank with NO hint is a bare frame ("Elle porte une _____
+    /// rouge.") that admits several French words while only the gap's own forms are
+    /// accepted (lesson-10-3). Its hint is the gap's own meaning, which belongs to no
+    /// sentence. (This test pinned `hint == nil` before; that was the defect.)
+    @Test func anAIWrittenFillBlankIsCaptionedWithTheGapsOwnMeaning() throws {
         let raw = """
         {"questions":[
           {"wordIndex":0,"kind":"fillBlank","prompt":"Il y a beaucoup d'_____ ici.","answer":"x-fr"},
@@ -224,9 +229,28 @@ struct LessonQuestionParserTests {
         #expect(g.exampleTranslation == "x-en example")
         let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4, seed: 3)
         let ai = try #require(batch.questions.first { $0.prompt.contains("beaucoup") })
-        #expect(ai.hint == nil, "the model's sentence is not the content example")
+        #expect(ai.hint == g.englishTranslation, "the gap's meaning names the word the hole wants")
+        #expect(ai.hint != g.exampleTranslation, "the model's sentence is not the content example")
         let local = try #require(batch.questions.first { $0.prompt == "_____ example" })
         #expect(local.hint == "x-en example", "here the prompt IS the content example")
+    }
+
+    /// A gloss that spells the answer is no hint (lesson-9-1): the AI question is
+    /// refused and the gap keeps its local question (lesson-10-3).
+    @Test func anAIWrittenFillBlankWhoseGlossSpellsTheAnswerIsRefused() {
+        var g = gap("r")
+        g.frenchWord = "le restaurant"
+        g.englishTranslation = "restaurant"
+        g.blankForm = "restaurant"
+        g.exampleSentence = "On dîne au restaurant ce soir."
+        g.exampleTranslation = "We are having dinner at the restaurant tonight."
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Le _____ est fermé.","answer":"restaurant"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4, seed: 3)
+        #expect(batch.questions.isEmpty && batch.rejected == 1)
     }
 
     // MARK: True/false is content-verified too (lesson-3-5)

@@ -117,13 +117,35 @@ nonisolated enum HomeCopy {
     }
 
     /// The header badge: the ONE displayed level, or "Not placed" before placement (D12).
-    static func levelBadge(placed: Bool, level: CEFRLevel) -> String {
-        placed ? "\(level.rawValue) · Studying" : "Not placed"
+    /// While reading is still locked the learner is drilling the A1 Foundation,
+    /// whatever level placement measured, so the badge says "Foundation", never
+    /// "Studying" — a learner placed at B2 is not studying B2 yet (firstrun-10-3;
+    /// round 2 fixed the same claim only for ability drifting up from answers).
+    static func levelBadge(placed: Bool, level: CEFRLevel, inFoundation: Bool) -> String {
+        guard placed else { return "Not placed" }
+        return inFoundation ? "\(level.rawValue) · Foundation" : "\(level.rawValue) · Studying"
     }
 
     /// "Placed at A2" for the CEFR sheet's secondary line; nil before placement.
     static func placedLine(placed: Bool, assessedLevel: CEFRLevel) -> String? {
         placed ? "Placed at \(assessedLevel.rawValue)" : nil
+    }
+
+    /// The CEFR sheet's line under its title: "Placed at B2 · building the Foundation
+    /// first" while reading is locked, "Placed at A2 · now studying at B1" once it is
+    /// open (firstrun-10-3); nil before placement.
+    static func cefrSheetLine(placed: Bool, assessedLevel: CEFRLevel, learnerLevel: CEFRLevel,
+                              inFoundation: Bool) -> String? {
+        guard let line = placedLine(placed: placed, assessedLevel: assessedLevel) else { return nil }
+        return inFoundation ? "\(line) · building the Foundation first"
+                            : "\(line) · now studying at \(learnerLevel.rawValue)"
+    }
+
+    /// The CEFR sheet row marked "In Progress": the displayed level once reading is
+    /// open; none before placement or while the learner is still in Foundation
+    /// (firstrun-10-3).
+    static func cefrLevelInProgress(placed: Bool, level: CEFRLevel, inFoundation: Bool) -> CEFRLevel? {
+        placed && !inFoundation ? level : nil
     }
 
     /// Foundation pace (B10): "Lesson 2 of 3 today", or the done state.

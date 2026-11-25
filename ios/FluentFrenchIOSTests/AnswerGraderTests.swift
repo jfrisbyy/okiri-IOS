@@ -579,9 +579,15 @@ struct AnswerGraderTests {
                     .contains { AnswerGrader.normalize($0) == AnswerGrader.normalize(alt) },
                         "\(gap.id): “Also accepted: \(alt)” under “\(gap.englishTranslation)”")
                 #expect(!LessonQuestionParser.isContentForm(alt, of: gap, kind: .translation), "\(gap.id)")
+                // A fragment alt earns its place only by filling the item's blank
+                // ("suis" under "je suis", blank "suis"). The 66 that filled nothing
+                // ("fini" under "il a fini", blank "a fini") were removed from the
+                // content once the grader refused them; this keeps them out.
+                #expect(AnswerGrader.fitsBlank(alt, gap: gap, expected: AnswerGrader.blankForm(for: gap)),
+                        "\(gap.contentItemId ?? gap.id): “\(alt)” is a fragment of “\(gap.frenchWord)” that fills no blank — remove it from alts")
             }
         }
-        #expect(checked >= 60, "the content carries headword fragments in its alts (\(checked))")
+        #expect(checked >= 60, "the content carries fill-blank fragments in its alts (\(checked))")
     }
 
     // MARK: lesson-9-3 — article leniency is decided by the item, not the skill

@@ -820,9 +820,6 @@
           "exEn": "Me, I love chocolate.",
           "diff": "okay",
           "blank": "j'adore",
-          "alts": [
-            "adore"
-          ],
           "testable": true
         },
         {
@@ -1046,9 +1043,6 @@
           "exEn": "At work, I speak English.",
           "diff": "easy",
           "blank": "je parle",
-          "alts": [
-            "parle"
-          ],
           "testable": true
         },
         {
@@ -1060,9 +1054,6 @@
           "exEn": "Do you speak Spanish?",
           "diff": "okay",
           "blank": "tu parles",
-          "alts": [
-            "parles"
-          ],
           "testable": true
         },
         {
@@ -1074,9 +1065,6 @@
           "exEn": "My neighbour talks very fast.",
           "diff": "okay",
           "blank": "il parle",
-          "alts": [
-            "parle"
-          ],
           "testable": true
         },
         {
@@ -1088,9 +1076,6 @@
           "exEn": "At home, we speak English.",
           "diff": "okay",
           "blank": "nous parlons",
-          "alts": [
-            "parlons"
-          ],
           "testable": true
         },
         {
@@ -1102,9 +1087,6 @@
           "exEn": "Excuse me, do you speak English?",
           "diff": "okay",
           "blank": "vous parlez",
-          "alts": [
-            "parlez"
-          ],
           "testable": true
         },
         {
@@ -1116,9 +1098,6 @@
           "exEn": "My friends talk loudly.",
           "diff": "hard",
           "blank": "ils parlent",
-          "alts": [
-            "parlent"
-          ],
           "testable": true
         },
         {
@@ -1130,9 +1109,6 @@
           "exEn": "Me, I like music.",
           "diff": "okay",
           "blank": "j'aime",
-          "alts": [
-            "aime"
-          ],
           "testable": true
         },
         {
@@ -1144,9 +1120,6 @@
           "exEn": "At the moment, I live in Lyon.",
           "diff": "okay",
           "blank": "j'habite",
-          "alts": [
-            "habite"
-          ],
           "testable": true
         },
         {
@@ -1158,9 +1131,6 @@
           "exEn": "On Saturdays I work at home.",
           "diff": "okay",
           "blank": "je travaille",
-          "alts": [
-            "travaille"
-          ],
           "testable": true
         },
         {
@@ -1172,9 +1142,6 @@
           "exEn": "At noon, we eat together.",
           "diff": "hard",
           "blank": "nous mangeons",
-          "alts": [
-            "mangeons"
-          ],
           "testable": true
         },
         {
@@ -1186,9 +1153,6 @@
           "exEn": "Tell me, do you like chocolate?",
           "diff": "okay",
           "blank": "tu aimes",
-          "alts": [
-            "aimes"
-          ],
           "testable": true
         },
         {
@@ -1200,9 +1164,6 @@
           "exEn": "In the evening, she watches TV.",
           "diff": "okay",
           "blank": "elle regarde",
-          "alts": [
-            "regarde"
-          ],
           "testable": true
         }
       ]
@@ -1372,9 +1333,6 @@
           "exEn": "Yes, I have a dog.",
           "diff": "easy",
           "blank": "j'ai",
-          "alts": [
-            "ai"
-          ],
           "testable": true
         },
         {
@@ -2894,9 +2852,6 @@
           "exEn": "Excuse me, is there a pharmacy near here?",
           "diff": "okay",
           "blank": "est-ce qu'il y a",
-          "alts": [
-            "il y a"
-          ],
           "testable": true
         },
         {
@@ -9857,7 +9812,6 @@
           "diff": "easy",
           "blank": "mangé",
           "alts": [
-            "ai mangé",
             "mangé"
           ],
           "testable": true
@@ -9872,8 +9826,7 @@
           "diff": "easy",
           "blank": "as parlé",
           "alts": [
-            "as parlé",
-            "parlé"
+            "as parlé"
           ],
           "testable": true
         },
@@ -9887,8 +9840,7 @@
           "diff": "okay",
           "blank": "a fini",
           "alts": [
-            "a fini",
-            "fini"
+            "a fini"
           ],
           "testable": true
         },
@@ -9902,8 +9854,7 @@
           "diff": "okay",
           "blank": "avons vendu",
           "alts": [
-            "avons vendu",
-            "vendu"
+            "avons vendu"
           ],
           "testable": true
         },
@@ -9917,8 +9868,7 @@
           "diff": "easy",
           "blank": "avez visité",
           "alts": [
-            "avez visité",
-            "visité"
+            "avez visité"
           ],
           "testable": true
         },
@@ -9932,7 +9882,6 @@
           "diff": "hard",
           "blank": "fait",
           "alts": [
-            "ai fait",
             "fait"
           ],
           "testable": true
@@ -9947,7 +9896,6 @@
           "diff": "hard",
           "blank": "eu",
           "alts": [
-            "ai eu",
             "eu"
           ],
           "testable": true
@@ -9962,7 +9910,6 @@
           "diff": "okay",
           "blank": "vu",
           "alts": [
-            "ai vu",
             "vu"
           ],
           "testable": true
@@ -9977,7 +9924,6 @@
           "diff": "okay",
           "blank": "pris",
           "alts": [
-            "ai pris",
             "pris"
           ],
           "testable": true
@@ -9992,8 +9938,7 @@
           "diff": "hard",
           "blank": "a été",
           "alts": [
-            "a été",
-            "été"
+            "a été"
           ],
           "testable": true
         },
@@ -10141,8 +10086,7 @@
           "diff": "okay",
           "blank": "est allée",
           "alts": [
-            "est allée",
-            "allée"
+            "est allée"
           ],
           "testable": true
         },
@@ -10172,8 +10116,7 @@
           "diff": "okay",
           "blank": "est venu",
           "alts": [
-            "est venu",
-            "venu"
+            "est venu"
           ],
           "testable": true
         },
@@ -10187,8 +10130,7 @@
           "diff": "okay",
           "blank": "est arrivée",
           "alts": [
-            "est arrivée",
-            "arrivée"
+            "est arrivée"
           ],
           "testable": true
         },
@@ -10218,8 +10160,7 @@
           "diff": "okay",
           "blank": "sont rentrés",
           "alts": [
-            "sont rentrés",
-            "rentrés"
+            "sont rentrés"
           ],
           "testable": true
         },
@@ -10249,8 +10190,7 @@
           "diff": "hard",
           "blank": "sont montées",
           "alts": [
-            "sont montées",
-            "montées"
+            "sont montées"
           ],
           "testable": true
         },
@@ -10264,8 +10204,7 @@
           "diff": "okay",
           "blank": "est tombé",
           "alts": [
-            "est tombé",
-            "tombé"
+            "est tombé"
           ],
           "testable": true
         },
@@ -11166,7 +11105,6 @@
           "diff": "easy",
           "blank": "je finis",
           "alts": [
-            "finis",
             "je termine"
           ],
           "testable": true
@@ -11180,9 +11118,6 @@
           "exEn": "Tonight it's your turn: you choose the film.",
           "diff": "okay",
           "blank": "tu choisis",
-          "alts": [
-            "choisis"
-          ],
           "testable": true
         },
         {
@@ -11195,7 +11130,6 @@
           "diff": "okay",
           "blank": "elle finit",
           "alts": [
-            "finit",
             "elle termine"
           ],
           "testable": true
@@ -11210,7 +11144,6 @@
           "diff": "okay",
           "blank": "nous finissons",
           "alts": [
-            "finissons",
             "nous terminons",
             "on finit",
             "on termine"
@@ -11226,9 +11159,6 @@
           "exEn": "If you choose this option, your ticket costs more.",
           "diff": "hard",
           "blank": "vous choisissez",
-          "alts": [
-            "choisissez"
-          ],
           "testable": true
         },
         {
@@ -11241,7 +11171,6 @@
           "diff": "hard",
           "blank": "ils choisissent",
           "alts": [
-            "choisissent",
             "elles choisissent"
           ],
           "testable": true
@@ -11255,9 +11184,6 @@
           "exEn": "If you're interested, I'm selling my bike.",
           "diff": "easy",
           "blank": "je vends",
-          "alts": [
-            "vends"
-          ],
           "testable": true
         },
         {
@@ -11269,9 +11195,6 @@
           "exEn": "At the market he sells fruit and vegetables.",
           "diff": "okay",
           "blank": "il vend",
-          "alts": [
-            "vend"
-          ],
           "testable": true
         },
         {
@@ -11284,7 +11207,6 @@
           "diff": "okay",
           "blank": "nous vendons",
           "alts": [
-            "vendons",
             "on vend"
           ],
           "testable": true
@@ -11298,9 +11220,6 @@
           "exEn": "Sorry, I'm waiting for someone.",
           "diff": "easy",
           "blank": "j'attends",
-          "alts": [
-            "attends"
-          ],
           "testable": true
         },
         {
@@ -11312,9 +11231,6 @@
           "exEn": "Hello, are you waiting for the doctor? Have a seat, he's on his way.",
           "diff": "okay",
           "blank": "vous attendez",
-          "alts": [
-            "attendez"
-          ],
           "testable": true
         },
         {
@@ -11327,7 +11243,6 @@
           "diff": "hard",
           "blank": "ils répondent",
           "alts": [
-            "répondent",
             "elles répondent"
           ],
           "testable": true
@@ -11341,9 +11256,6 @@
           "exEn": "Shh! Listen, can you hear that noise?",
           "diff": "okay",
           "blank": "tu entends",
-          "alts": [
-            "entends"
-          ],
           "testable": true
         }
       ]
@@ -11708,9 +11620,6 @@
           "exEn": "Tomorrow I can come at eight.",
           "diff": "easy",
           "blank": "je peux",
-          "alts": [
-            "peux"
-          ],
           "testable": true
         },
         {
@@ -11722,9 +11631,6 @@
           "exEn": "If you like, you can sleep here.",
           "diff": "easy",
           "blank": "tu peux",
-          "alts": [
-            "peux"
-          ],
           "testable": true
         },
         {
@@ -11737,7 +11643,6 @@
           "diff": "okay",
           "blank": "On peut",
           "alts": [
-            "peut",
             "nous pouvons"
           ],
           "testable": true
@@ -11751,9 +11656,6 @@
           "exEn": "You can leave your suitcases here.",
           "diff": "okay",
           "blank": "Vous pouvez",
-          "alts": [
-            "pouvez"
-          ],
           "testable": true
         },
         {
@@ -11765,9 +11667,6 @@
           "exEn": "I can't come on Saturday, I'm working.",
           "diff": "okay",
           "blank": "je ne peux pas",
-          "alts": [
-            "ne peux pas"
-          ],
           "testable": true
         },
         {
@@ -11779,9 +11678,6 @@
           "exEn": "Tonight I want to stay home.",
           "diff": "easy",
           "blank": "je veux",
-          "alts": [
-            "veux"
-          ],
           "testable": true
         },
         {
@@ -11793,9 +11689,6 @@
           "exEn": "Do you want to invite your sister?",
           "diff": "easy",
           "blank": "Tu veux",
-          "alts": [
-            "veux"
-          ],
           "testable": true
         },
         {
@@ -11831,9 +11724,6 @@
           "exEn": "Sorry, I have to go.",
           "diff": "easy",
           "blank": "je dois",
-          "alts": [
-            "dois"
-          ],
           "testable": true
         },
         {
@@ -11846,7 +11736,6 @@
           "diff": "okay",
           "blank": "Nous devons",
           "alts": [
-            "devons",
             "on doit"
           ],
           "testable": true
@@ -11860,9 +11749,6 @@
           "exEn": "You must show your passport.",
           "diff": "hard",
           "blank": "Vous devez",
-          "alts": [
-            "devez"
-          ],
           "testable": true
         }
       ]
@@ -18309,9 +18195,6 @@
           "exEn": "Yesterday I was very tired.",
           "diff": "easy",
           "blank": "j'étais",
-          "alts": [
-            "étais"
-          ],
           "testable": true
         },
         {
@@ -18324,8 +18207,7 @@
           "diff": "easy",
           "blank": "C'était",
           "alts": [
-            "C'était",
-            "était"
+            "C'était"
           ],
           "testable": true
         },
@@ -18676,9 +18558,6 @@
           "exEn": "As a child, I was afraid of the dark.",
           "diff": "okay",
           "blank": "j'avais peur",
-          "alts": [
-            "avais peur"
-          ],
           "testable": true
         },
         {
@@ -18690,9 +18569,6 @@
           "exEn": "When I saw the dog, I got scared.",
           "diff": "hard",
           "blank": "j'ai eu peur",
-          "alts": [
-            "ai eu peur"
-          ],
           "testable": true
         },
         {
@@ -18849,8 +18725,7 @@
           "diff": "easy",
           "blank": "le",
           "alts": [
-            "je le vois",
-            "le vois"
+            "je le vois"
           ],
           "testable": true
         },
@@ -18991,8 +18866,7 @@
           "diff": "hard",
           "blank": "vue",
           "alts": [
-            "je l'ai vue",
-            "l'ai vue"
+            "je l'ai vue"
           ],
           "testable": true
         },
@@ -19006,8 +18880,7 @@
           "diff": "okay",
           "blank": "lui dire",
           "alts": [
-            "je vais lui dire",
-            "vais lui dire"
+            "je vais lui dire"
           ],
           "testable": true
         }
@@ -19108,8 +18981,7 @@
           "diff": "easy",
           "blank": "Il faut que",
           "alts": [
-            "Il faut que",
-            "faut que"
+            "Il faut que"
           ],
           "testable": true
         },
@@ -19123,8 +18995,7 @@
           "diff": "okay",
           "blank": "Il ne faut pas que",
           "alts": [
-            "Il ne faut pas que",
-            "ne faut pas que"
+            "Il ne faut pas que"
           ],
           "testable": true
         },
@@ -19193,9 +19064,6 @@
           "exEn": "I have to go to the doctor.",
           "diff": "hard",
           "blank": "j'aille",
-          "alts": [
-            "aille"
-          ],
           "testable": true
         },
         {
@@ -19653,8 +19521,7 @@
           "diff": "okay",
           "blank": "Bon ben",
           "alts": [
-            "bon, ben",
-            "ben"
+            "bon, ben"
           ],
           "testable": true
         },
@@ -19905,9 +19772,6 @@
           "exEn": "It's so hot I'm going to faint.",
           "diff": "okay",
           "blank": "tomber dans les pommes",
-          "alts": [
-            "dans les pommes"
-          ],
           "testable": true
         },
         {

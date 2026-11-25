@@ -274,7 +274,7 @@ so they are listed here outside the round totals:
   decode). `ConceptSelector.unfinishedConceptBonus` brings back a lapsed concept at once, and a
   taught-but-unmastered one after `Tuning.unfinishedReturnDays`.
 
-**Two test-standard decisions for owner review:**
+**Two test-standard decisions — signed off by the owner on 2026-11-25:**
 1. `HeadlessDriverTests.expectMasteredCountTracksTruth` now counts "truly mastered" at the
    engine's own standard. That is P(correct) ≥ `Tuning.masteryThreshold`, which is latent
    ≈ 0.6875 under the simulated learner's guess rate. The old line was a stricter 0.85, and with

@@ -484,6 +484,8 @@ nonisolated enum Tuning {
     static let unfinishedConceptBonus: Double = 0.5
     /// Days without any evidence after which a taught, unmastered concept counts as left unfinished (engine-8-3).
     static let unfinishedReturnDays: Double = 3
+    /// Days without any evidence after which a STALLED, unmastered concept comes back with `unfinishedConceptBonus` (engine-12-1).
+    static let stalledReturnDays: Double = 7
     /// Score bonus for a concept that lost practice-earned mastery, until it is re-earned or stalls (engine-8-3).
     static let lapsedConceptBonus: Double = 1.5
 

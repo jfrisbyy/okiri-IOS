@@ -626,7 +626,8 @@ struct ConceptSelectorTests {
     /// mastery a check-in took away) gets `Tuning.lapsedConceptBonus` at once; a
     /// concept taught as a target and never mastered gets `Tuning.unfinishedConceptBonus`
     /// once `Tuning.unfinishedReturnDays` pass with no evidence on it. Neither
-    /// applies to a stalled concept, a mastered one, or one that was never a target.
+    /// applies to a mastered concept, or to one only probed; a stalled one waits
+    /// `Tuning.stalledReturnDays` (engine-12-1, below).
     @Test func unfinishedAndLapsedConceptsEarnTheirReturnBonusesOnlyWhileUnfinished() {
         let now = EngineFixtures.now
         let day = EngineFixtures.day
@@ -656,6 +657,42 @@ struct ConceptSelectorTests {
         var known = EngineFixtures.mastered("known")
         known.lapsedAt = now
         #expect(selector.unfinishedConceptBonus(known, now: now) == 0, "mastered again: nothing to finish")
+    }
+
+    /// engine-12-1: two holes that left skills the learner held untouched for one to
+    /// four weeks. A concept whose curriculum was answered through review, bridge or
+    /// first-run slots — tested evidence at the mastery floor — was never a lesson
+    /// TARGET, so it never earned the return bonus; and a stalled concept lost it for
+    /// good. Tested evidence now counts as investment (a placement seed's inferred
+    /// weight still does not), and a stalled concept comes back once
+    /// `Tuning.stalledReturnDays` pass with no evidence.
+    @Test func reviewedAndStalledConceptsComeBackInsteadOfBeingAbandoned() {
+        let now = EngineFixtures.now
+        let day = EngineFixtures.day
+        let selector = ConceptSelector(store: EngineFixtures.store(concepts: [], gaps: []))
+
+        var reviewed = EngineFixtures.concept("reviewed", alpha: 4, beta: 3)
+        reviewed.observationCount = Tuning.minObservations
+        reviewed.lastTestedAt = now.addingTimeInterval(-Tuning.unfinishedReturnDays * day)
+        #expect(reviewed.lastTaughtSession == nil && reviewed.state == .learning)
+        #expect(selector.unfinishedConceptBonus(reviewed, now: now) == Tuning.unfinishedConceptBonus,
+                "worked through by review, never a target, left alone for the return delay")
+
+        var inferred = reviewed
+        inferred.inferredObservations = inferred.observationCount
+        #expect(selector.unfinishedConceptBonus(inferred, now: now) == 0,
+                "placement-inferred weight is not tested evidence, so it is no investment")
+
+        var stalled = EngineFixtures.concept("stalled", alpha: 4, beta: 3, lastTaughtSession: 1)
+        stalled.stallAttempts = Tuning.stallAttempts
+        stalled.lastTestedAt = now.addingTimeInterval(-Tuning.stalledReturnDays * day + 1)
+        #expect(selector.unfinishedConceptBonus(stalled, now: now) == 0, "a stalled concept is not drilled daily")
+        stalled.lastTestedAt = now.addingTimeInterval(-Tuning.stalledReturnDays * day)
+        #expect(selector.unfinishedConceptBonus(stalled, now: now) == Tuning.unfinishedConceptBonus,
+                "…but it is re-checked once the stalled return delay passes")
+        stalled.lapsedAt = now
+        #expect(selector.unfinishedConceptBonus(stalled, now: now) == Tuning.unfinishedConceptBonus,
+                "a stalled lapse comes back on the same weekly footing, not the lapse bonus")
     }
 
     /// engine-4-1, at curriculum scale: making a never-answered item of a mastered

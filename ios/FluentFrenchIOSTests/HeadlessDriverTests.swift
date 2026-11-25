@@ -404,9 +404,23 @@ struct HeadlessDriverTests {
     private static let stressSettledCalibrationCeiling = 0.22
     /// How far the engine's mastered COUNT may sit from the truth, at the engine's own
     /// mastery standard, at day 60 for a learner who does every lesson the plan asks
-    /// for (measured ≤ 3 of 49 concepts on the 28-concept curriculum; on the 82-concept
-    /// one, after engine-8-3: 6 for the true beginner, 4 fast, 3 false beginner).
-    private static let masteredCountBand = 6
+    /// for. A coarse guard only (engine-12-1): the two failure modes the count stands
+    /// for are bounded directly below. What is left in the total is LAG — skills the
+    /// learner improved on in the last few days, which an estimator that needs
+    /// evidence before it certifies trails by design. Swept over 11 learners on the
+    /// 82-concept curriculum after engine-12-1: 3-7, every one of them under-credit.
+    private static let masteredCountBand = 8
+    /// Concepts the engine may read as mastered that the learner holds below the
+    /// engine's own standard at day 60 (engine-12-1; swept: 0 in 9 of 9 non-forgetful
+    /// learners, 1 before engine-12-1).
+    private static let overCreditBand = 2
+    /// Concepts the learner holds at the engine's standard that the engine reads as
+    /// unmastered AND has asked nothing about for `abandonedAfterDays` — skills it
+    /// dropped, not skills it is still checking (engine-12-1; swept: 2-4 per learner
+    /// before the fix, 0-1 after, the oldest 9 days).
+    private static let abandonedBand = 2
+    /// Days without evidence after which an under-credited concept counts as abandoned.
+    private static let abandonedAfterDays: Double = 7
     /// Days after the seed-resolution deadline on which the engine may transiently
     /// read a concept as mastered that the learner has not really learned (measured 2
     /// of the 49 days after the deadline). Each one must be gone the next day.
@@ -517,7 +531,7 @@ struct HeadlessDriverTests {
     /// is held per certification by `expectCertificationsAreEarned` (mean at or above
     /// 0.85, at most `maxShareCertifiedBelowTruthLine` below it, none below the ghost
     /// line), which is where a stricter-than-the-threshold bar belongs.
-    /// `masteredCountBand` is unchanged.
+    /// `masteredCountBand` was 6 until engine-12-1 split it (see its comment).
     ///
     /// At the matched standard the drift flipped sign and was still 10-12: now the
     /// engine UNDER-counted, leaving concepts the learner held below the line for
@@ -534,6 +548,23 @@ struct HeadlessDriverTests {
         let drift = abs(last.trueMasteredAtEngineStandard - last.estimatedMastered)
         #expect(drift <= Self.masteredCountBand,
                 "\(label) day \(last.day): engine says \(last.estimatedMastered) mastered, truth at the engine's standard (\(run.learner.truthAtEngineMasteryStandard)) says \(last.trueMasteredAtEngineStandard)")
+
+        // engine-12-1: the count mixed three things — over-credit, skills the engine
+        // abandoned, and lag on skills it is still checking — and only the first two
+        // are defects. Each is now held on its own.
+        let store = run.driver.store
+        let standard = run.learner.truthAtEngineMasteryStandard
+        let now = run.driver.now
+        let over = store.concepts.filter { $0.state == .mastered && run.learner.truth($0.id) < standard }
+        #expect(over.count <= Self.overCreditBand,
+                "\(label): mastered below the learner's truth: \(over.map { "\($0.id) truth \(String(format: "%.2f", run.learner.truth($0.id)))" })")
+        let abandoned = store.concepts.filter { concept in
+            guard concept.state != .mastered, run.learner.truth(concept.id) >= standard else { return false }
+            guard let tested = concept.lastTestedAt else { return true }
+            return now.timeIntervalSince(tested) >= Self.abandonedAfterDays * 86_400
+        }
+        #expect(abandoned.count <= Self.abandonedBand,
+                "\(label): held but untouched for \(Int(Self.abandonedAfterDays))+ days: \(abandoned.map { "\($0.id) truth \(String(format: "%.2f", run.learner.truth($0.id))) est \(String(format: "%.2f", $0.mastery))" })")
     }
 
     /// Share of the engine's certifications that may land on a concept the learner

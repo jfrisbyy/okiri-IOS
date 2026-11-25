@@ -362,15 +362,38 @@ struct ConceptSelector {
     /// delay the ranker held a fast learner on one concept for a whole day while the
     /// estimate trailed far behind, and early-day calibration broke its ceiling.
     /// The stall rule bounds both: a concept `Tuning.stallAttempts` target lessons
-    /// leave in the same state loses the bonus, and stall remediation (B15) turns to
+    /// leave in the same state loses the daily bonus, and stall remediation (B15) turns to
     /// its prerequisites instead, so a skill the learner cannot get yet never holds
     /// the target slot. A concept only probed, or seeded by placement, was never a
     /// target and earns nothing; a failed seed is not a lapse (`AppStore.recordConceptAnswer`).
+    ///
+    /// Two holes in that rule left skills the learner holds untouched for one to four
+    /// weeks (engine-12-1, found by splitting the sixty-day mastered-count drift):
+    ///   • "invested in" meant "has been a lesson TARGET". A concept whose curriculum
+    ///     was worked through by review, bridge or first-run slots — every item
+    ///     answered, `Tuning.minObservations` of tested evidence — was never a target,
+    ///     so it earned nothing; all twelve of its items sat overdue for weeks
+    ///     (greetings-politeness, common-verbs, present-ir-re-verbs). Tested evidence
+    ///     at the mastery floor now counts as investment too. A placement seed's
+    ///     inferred weight still does not (`Concept.testedObservations`).
+    ///   • a STALLED concept lost the bonus for good. Stalling means the last
+    ///     `Tuning.stallAttempts` target lessons did not move it, which is the moment
+    ///     to stop drilling it — not to abandon it: the learner often catches up
+    ///     later through its prerequisites and review, and nothing ever asked again
+    ///     (imparfait, stressed-pronouns, formal-register). A stalled concept now
+    ///     comes back with the ordinary bonus once `Tuning.stalledReturnDays` pass
+    ///     with no evidence, so it is re-checked weekly instead of drilled daily.
     func unfinishedConceptBonus(_ concept: Concept, now: Date) -> Double {
-        guard concept.state == .learning, !concept.isStalled else { return 0 }
+        guard concept.state == .learning else { return 0 }
+        let idleDays = concept.lastTestedAt.map { now.timeIntervalSince($0) / 86_400 }
+        if concept.isStalled {
+            guard let idleDays, idleDays >= Tuning.stalledReturnDays else { return 0 }
+            return Tuning.unfinishedConceptBonus
+        }
         if concept.lapsedAt != nil { return Tuning.lapsedConceptBonus }
-        guard concept.lastTaughtSession != nil, let tested = concept.lastTestedAt,
-              now.timeIntervalSince(tested) >= Tuning.unfinishedReturnDays * 86_400 else { return 0 }
+        let investedIn = concept.lastTaughtSession != nil
+            || concept.testedObservations >= Tuning.minObservations
+        guard investedIn, let idleDays, idleDays >= Tuning.unfinishedReturnDays else { return 0 }
         return Tuning.unfinishedConceptBonus
     }
 

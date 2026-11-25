@@ -365,3 +365,51 @@ Each rewrite is described in the fix notes and was checked against its finding.
   certification. Re-picking seeds is not a decision.
 - `Tuning.lessonCreditCapMinutes` still has a comment calling lessons "the activity rule".
   Lessons now use a different rule from Read and Watch (cosmetic).
+
+## After round 11 — engine-12-1: the mastery-count drift, diagnosed and fixed
+
+Round 11 left one item open: the sixty-day mastered-count drift sat at the edge of its band
+(6), and false-beginner seed 7 measured 7. **The round 11 entry above calls this
+over-credit. That was wrong.** A sweep of 16 simulated learners (false beginner seeds 1–10
+and 14, true beginner 1–3 and 11, fast 3 and 7) found the engine **under**-counting in every
+run. It never certified a skill the learner did not hold: 0 ghosts, at most 1 over-credited
+concept, and certifications averaging true mastery 0.95–0.99.
+
+The under-count had three parts:
+- **Lag (2–8 per learner).** These are skills the learner improved on in the last week,
+  whose estimate still carries the misses from before they caught up. An estimator that
+  needs evidence before it certifies trails like this by design. It is not a defect.
+- **Borderline (0–2).** These are skills learned weeks ago that have faded to just above the
+  line.
+- **Abandoned (2–4 per learner): the defect.** These are skills the learner holds, left below
+  the line with no question asked for 8–28 days, all their items overdue. The
+  return-to-unfinished-work rule (`ConceptSelector.unfinishedConceptBonus`, engine-8-3) had
+  two holes:
+  1. Only a concept that had been a lesson **target** counted as "invested in". A skill
+     worked through by review, bridge or first-run slots never qualified
+     (greetings-politeness, common-verbs, present-ir-re-verbs).
+  2. A **stalled** concept lost the bonus for good, even after the learner caught up
+     through its prerequisites (imparfait, stressed-pronouns, formal-register).
+
+**Tuning was tried first and rejected.** Raising `evidenceRecency` from 0.85 to 0.90 or 0.92,
+shortening `unfinishedReturnDays` to 1, and doubling the bonus moved the drift only within
+noise, and λ 0.90 raised the forgetful learner's over-credit to 4 ghosts.
+
+**Fix.**
+- Tested evidence at `Tuning.minObservations` now counts as investment. A placement seed's
+  inferred weight still does not.
+- A stalled concept comes back with the ordinary bonus once the new
+  `Tuning.stalledReturnDays` (7) pass with no evidence. It is re-checked weekly, not
+  drilled daily.
+
+Result on the same 11 learners:
+- Abandoned skills: 2–4 per learner → 0–1 (the oldest 9 days).
+- Over-credit: 0 everywhere.
+- Total drift: 5–9 → 3–7. Certifications are unchanged (0.95–0.99).
+
+**Test change.** `expectMasteredCountTracksTruth` now holds the two defects directly:
+- over-credit ≤ 2;
+- abandoned (held, unmastered, nothing asked for 7+ days) ≤ 2.
+
+The total-count band stays as a coarse guard at 8, because what remains in it is lag.
+Unit test: `ConceptSelectorTests.reviewedAndStalledConceptsComeBackInsteadOfBeingAbandoned`.

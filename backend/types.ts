@@ -350,6 +350,36 @@ export type Database = {
         }
         Relationships: []
       }
+      // One row per user holding the iOS learner state as JSON (`snapshot` is a
+      // ProgressSnapshot; its `schemaVersion` is checked by the app and rows
+      // from a newer app version are never applied).
+      //
+      // Reconcile rule (ios/FluentFrenchIOS/Services/SnapshotReconciler.swift):
+      //   1. No row for the user            -> the device uploads its local state
+      //      (first sign-in migration). This is the only time local state is
+      //      pushed without comparing.
+      //   2. `updated_at` (server clock, set by trigger — see
+      //      backend/migrations/0001_progress_snapshots_updated_at_trigger.sql)
+      //      is the primary tiebreak: the device remembers the row's
+      //      `updated_at` from its last successful sync; if the row has not
+      //      moved since, the device's newer local work is pushed; if the row
+      //      moved and the device has no local work, the row is applied.
+      //   3. The snapshot JSON's own `clientUpdatedAt` (device clock) is only
+      //      the fallback when a server timestamp is missing on either side or
+      //      both sides changed; newest wins, the row wins ties.
+      //      It is also the witness that catches another device's write while the
+      //      `updated_at` trigger is unapplied. The app encodes it WITHOUT
+      //      fractional seconds (JSONEncoder `.iso8601`), so the device compares
+      //      it with its marker at whole-second granularity (store-7-2).
+      //   The `client_updated_at` COLUMN is informational only: the app writes it
+      //   with a separate formatter (it can differ from the JSON field by a
+      //   second) and never reads it. Do not build a filter, trigger or rule on
+      //   it — read `snapshot->>'clientUpdatedAt'` instead (store-10-5).
+      // Fetch errors are never treated as "no row".
+      // The device-side markers rule 2 depends on (last synced `updated_at` +
+      // local clock) are only cleared on a sign-out the learner asked for; a
+      // launch before the session has restored, or a session that expired on its
+      // own, keeps them, so rule 2 stays live instead of degrading to rule 3.
       ios_progress_snapshots: {
         Row: {
           client_updated_at: string

@@ -7,42 +7,66 @@
 //  playful tap reaction with a French speech bubble + haptic, and mood
 //  sparkles that bloom into a celebratory burst on a strong streak.
 //
+//  The pose is a `KiriMood` decided from REAL learner data (`HomeCopy.kiriMood`,
+//  D19): Kiri never celebrates a streak that does not exist.
+//
 //  All motion is applied OUTSIDE the clipped sprite frame so hopping and
-//  scaling never reveal neighbouring cells of the sprite sheet.
+//  scaling never reveal neighbouring cells of the sprite sheet. Reduce Motion
+//  turns the ambient animation off; the pose and the tap reaction stay.
 //
 
+import Foundation
 import SwiftUI
 
-struct KiriView: View {
-    enum Mood {
-        case idle, happy, encouraging, celebrating
-        /// Row/column of this pose in the 4-col × 3-row sprite sheet.
-        var cell: (row: Int, col: Int) {
-            switch self {
-            case .idle: return (2, 0)         // winking, arms crossed
-            case .happy: return (0, 0)        // waving hello
-            case .encouraging: return (2, 3)  // cheerful thumbs-up
-            case .celebrating: return (1, 2)  // trophy + confetti
-            }
+private extension KiriMood {
+    /// Row/column of this pose in the 4-col × 3-row sprite sheet.
+    var cell: (row: Int, col: Int) {
+        switch self {
+        case .idle: return (2, 0)         // winking, arms crossed
+        case .happy: return (0, 0)        // waving hello
+        case .encouraging: return (2, 3)  // cheerful thumbs-up
+        case .celebrating: return (1, 2)  // trophy + confetti
         }
     }
 
-    var mood: Mood = .idle
+    var accessibilityDescription: String {
+        switch self {
+        case .idle: return "relaxed"
+        case .happy: return "waving"
+        case .encouraging: return "cheering you on"
+        case .celebrating: return "celebrating your streak"
+        }
+    }
+}
+
+struct KiriView: View {
+    var mood: KiriMood = .idle
     var size: CGFloat = 100
     /// Forces the richer celebratory sparkle burst regardless of mood.
     var festive: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var breathe = false
     @State private var sway = false
     @State private var hop: CGFloat = 0
     @State private var wiggle: Double = 0
-    @State private var tapMood: Mood? = nil
+    @State private var tapMood: KiriMood? = nil
     @State private var bubble: String? = nil
     @State private var didStart = false
+    /// Generation token for the idle-hop chain. `stopIdle()` bumps it when the
+    /// mascot leaves the screen, so the tick already in flight (and any chain a
+    /// quick disappear/reappear left behind) retires instead of animating state
+    /// nothing renders, every few seconds, for the life of the process.
+    @State private var hopGeneration = 0
+    /// Mirror of `reduceMotion` the escaping hop loop can read. An `@Environment`
+    /// value captured in a closure keeps the value it had when the closure was
+    /// made; `@State` reads through live storage, so this stays current.
+    @State private var motionReduced = false
 
     private let phrases = ["Bravo!", "Allez!", "Continue!", "Super!", "On y va!", "Génial!", "C'est parti!"]
 
-    private var activeMood: Mood { tapMood ?? mood }
+    private var activeMood: KiriMood { tapMood ?? mood }
     private var celebratory: Bool { festive || mood == .celebrating || tapMood == .celebrating }
 
     var body: some View {
@@ -52,11 +76,24 @@ struct KiriView: View {
             if let bubble {
                 speechBubble(bubble)
                     .offset(y: -size * 0.66)
-                    .transition(.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
+                    // Reduce Motion: the bubble fades in instead of popping.
+                    .transition(reduceMotion
+                                ? AnyTransition.opacity
+                                : AnyTransition.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
             }
         }
         .frame(width: size, height: size)
         .onAppear(perform: startIdle)
+        .onDisappear(perform: stopIdle)
+        .onChange(of: reduceMotion) { _, newValue in motionReduced = newValue }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Kiri, your fox mascot, \(activeMood.accessibilityDescription)")
+        .accessibilityValue(bubble ?? "")
+        .accessibilityHint("Double-tap for a cheer")
+        .accessibilityAddTraits(.isButton)
+        // The tap gesture lives on an ignored child, so VoiceOver needs the
+        // action spelled out here or activating the element would do nothing.
+        .accessibilityAction { react() }
     }
 
     // MARK: - Sprite (clipped pose + motion)
@@ -97,8 +134,9 @@ struct KiriView: View {
 
     private func speechBubble(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13, weight: .bold, design: .rounded))
-            .foregroundStyle(Theme.primaryDark)
+            .font(.footnote.weight(.bold))
+            .fontDesign(.rounded)
+            .foregroundStyle(Theme.primaryText)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(Capsule().fill(.white))
@@ -112,26 +150,42 @@ struct KiriView: View {
     private var sparkles: some View {
         ZStack {
             ForEach(0..<(celebratory ? 9 : 4), id: \.self) { i in
-                SparkleParticle(index: i, size: size, festive: celebratory)
+                SparkleParticle(index: i, size: size, festive: celebratory, animated: !reduceMotion)
             }
         }
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Animation drivers
 
     private func startIdle() {
+        motionReduced = reduceMotion
         guard !didStart else { return }
         didStart = true
+        guard !reduceMotion else { return }
         withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) { breathe = true }
         withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) { sway = true }
-        scheduleHop()
+        scheduleHop(generation: hopGeneration)
     }
 
-    private func scheduleHop() {
+    /// Ends the idle loop when the mascot leaves the screen (sign-out, an
+    /// unrecoverable load error, any teardown of the host view). `onAppear`
+    /// starts a fresh chain on the next generation if it comes back.
+    private func stopIdle() {
+        didStart = false
+        hopGeneration &+= 1
+    }
+
+    private func scheduleHop(generation: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 3.5...7.5)) {
+            // The view went away, or a newer chain took over: retire this one.
+            guard didStart, generation == hopGeneration else { return }
+            // Re-checked every tick: the learner can switch Reduce Motion on
+            // while the app is running, long after startIdle() ran.
+            guard !motionReduced else { scheduleHop(generation: generation); return }
             if tapMood == nil { spontaneousHop() }
-            scheduleHop()
+            scheduleHop(generation: generation)
         }
     }
 
@@ -150,18 +204,23 @@ struct KiriView: View {
 
     private func react() {
         Haptics.tap()
-        let cheer: Mood = mood == .celebrating ? .celebrating : .happy
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+        let cheer: KiriMood = mood == .celebrating ? .celebrating : .happy
+        if reduceMotion {
             tapMood = cheer
-            hop = -size * 0.16
-            wiggle = 0
             bubble = phrases.randomElement()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
-            withAnimation(.interpolatingSpring(stiffness: 200, damping: 7)) { hop = 0 }
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                tapMood = cheer
+                hop = -size * 0.16
+                wiggle = 0
+                bubble = phrases.randomElement()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+                withAnimation(.interpolatingSpring(stiffness: 200, damping: 7)) { hop = 0 }
+            }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
-            withAnimation(.easeOut(duration: 0.35)) {
+            withAnimation(Theme.motion(.easeOut(duration: 0.35), reduceMotion: reduceMotion)) {
                 tapMood = nil
                 bubble = nil
             }
@@ -175,6 +234,8 @@ private struct SparkleParticle: View {
     let index: Int
     let size: CGFloat
     let festive: Bool
+    /// False under Reduce Motion: the sparkle sits still at low opacity.
+    var animated: Bool = true
 
     @State private var anim = false
 
@@ -191,13 +252,18 @@ private struct SparkleParticle: View {
     private var dy: CGFloat { CGFloat(sin(angle * .pi / 180)) * radius * 0.85 }
 
     var body: some View {
+        // Not Dynamic Type: this is decorative artwork, not text. The glyph and
+        // its orbit are both derived from the mascot's `size`, so scaling the
+        // symbol with the text size alone would detach the sparkles from the
+        // sprite they orbit. The whole particle field is hidden from VoiceOver.
         Image(systemName: symbol)
             .font(.system(size: glyphSize, weight: .bold))
             .foregroundStyle(color)
             .offset(x: dx, y: dy - (anim ? size * 0.14 : 0))
             .scaleEffect(anim ? 1.05 : 0.3)
-            .opacity(anim ? 0 : 0.9)
+            .opacity(animated ? (anim ? 0 : 0.9) : 0.45)
             .onAppear {
+                guard animated else { return }
                 withAnimation(
                     .easeOut(duration: festive ? 1.2 : 2.4)
                         .repeatForever(autoreverses: false)

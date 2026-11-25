@@ -1,0 +1,909 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "stressed-pronouns",
+      "category": "grammar",
+      "teaching": {
+        "rule": "French has a second set of 'me, you, him' words, the stressed pronouns: moi, toi, lui, elle, nous, vous, eux (them, masculine or mixed) and elles (them, all female). Use them after a preposition (avec moi, chez toi, pour eux), after c'est (c'est lui), after que in a comparison (plus grand que toi), on their own as a short answer (Qui veut du café ? — Moi !), with aussi (moi aussi), and in front of the subject to stress it (Moi, je reste ici). The subject forms je, tu, il and ils can never stand alone or follow a preposition. Elle, nous, vous and elles look the same in both sets; only moi, toi, lui and eux are new.",
+        "examples": [
+          {
+            "fr": "Tu viens avec moi ?",
+            "en": "Are you coming with me?",
+            "note": "After a preposition such as avec, pour, chez or sans, 'me' is moi."
+          },
+          {
+            "fr": "Qui veut du café ? — Moi !",
+            "en": "Who wants coffee? — Me!",
+            "note": "A one-word answer has no verb, so only the stressed form can stand there."
+          },
+          {
+            "fr": "Moi, je préfère le thé.",
+            "en": "I prefer tea (as for me).",
+            "note": "Moi in front of je adds emphasis or contrast, the way English leans on 'I' with the voice."
+          },
+          {
+            "fr": "C'est pour eux.",
+            "en": "It's for them.",
+            "note": "eux is 'them' for a masculine or mixed group; for a group of women it is elles."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "C'est lui.",
+            "en": "It's him.",
+            "note": "NOT 'C'est il': after c'est, use the stressed form."
+          },
+          {
+            "fr": "Elle travaille avec eux.",
+            "en": "She works with them.",
+            "note": "NOT 'avec ils' or 'avec les': after a preposition, 'them' is eux (or elles for an all-female group)."
+          },
+          {
+            "fr": "Moi aussi.",
+            "en": "Me too.",
+            "note": "NOT 'Je aussi': je can never stand without its verb."
+          }
+        ],
+        "commonMistake": "English speakers reach for the subject form everywhere ('avec je', 'C'est il', 'Je aussi'); after a preposition, after c'est and in a short answer with no verb, use moi, toi, lui, eux: avec moi, c'est lui, moi aussi."
+      },
+      "probes": [
+        {
+          "fr": "Paul ? Je pars avec ___ demain.",
+          "en": "lui",
+          "ex": "Paul ? Je pars avec lui demain.",
+          "exEn": "Paul? I'm leaving with him tomorrow.",
+          "options": [
+            "il",
+            "le",
+            "eux"
+          ]
+        },
+        {
+          "fr": "Ce café est pour ___ ?",
+          "en": "toi",
+          "ex": "Ce café est pour toi ?",
+          "exEn": "Is this coffee for you?",
+          "options": [
+            "tu",
+            "te",
+            "ton"
+          ]
+        },
+        {
+          "fr": "Je n'aime pas le café. — ___ non plus.",
+          "en": "Moi",
+          "ex": "Je n'aime pas le café. — Moi non plus.",
+          "exEn": "I don't like coffee. — Me neither.",
+          "options": [
+            "Je",
+            "Me",
+            "Mon"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "avec moi",
+          "en": "with me",
+          "note": "After a preposition, 'me' is moi, never je or me.",
+          "ex": "Tu veux venir avec moi ?",
+          "exEn": "Do you want to come with me?",
+          "diff": "easy",
+          "blank": "moi",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "chez toi",
+          "en": "at your place (informal)",
+          "note": "chez + toi means at your home; with someone you call vous it is chez vous.",
+          "ex": "Tu es malade ? Reste chez toi aujourd'hui.",
+          "exEn": "Are you ill? Stay at home today.",
+          "diff": "okay",
+          "blank": "toi",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "pour lui",
+          "en": "for him",
+          "note": "lui is the stressed form of il; it follows prepositions like pour.",
+          "ex": "Ce cadeau est pour lui.",
+          "exEn": "This present is for him.",
+          "diff": "easy",
+          "blank": "lui",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "avec nous",
+          "en": "with us",
+          "note": "nous is the same in both sets, so after a preposition it simply stays nous.",
+          "ex": "Vous venez avec nous ?",
+          "exEn": "Are you coming with us?",
+          "diff": "easy",
+          "blank": "nous",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "pour vous",
+          "en": "for you (formal or plural)",
+          "note": "vous also stays vous after a preposition; Madame shows this is the polite vous.",
+          "ex": "Madame, il y a un message pour vous.",
+          "exEn": "Madam, there's a message for you.",
+          "diff": "okay",
+          "blank": "vous",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "avec eux",
+          "en": "with them (masculine or mixed)",
+          "note": "eux replaces ils after a preposition; cousins is masculine, so eux, not elles.",
+          "ex": "Mes cousins sont là ; je sors avec eux ce soir.",
+          "exEn": "My cousins are here; I'm going out with them tonight.",
+          "diff": "okay",
+          "blank": "eux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "chez elles",
+          "en": "at their place (all women)",
+          "note": "elles is 'them' for an all-female group; tantes is feminine, so chez elles.",
+          "ex": "Mes tantes nous invitent chez elles dimanche.",
+          "exEn": "My aunts are inviting us to their place on Sunday.",
+          "diff": "hard",
+          "blank": "elles",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "et toi ?",
+          "en": "and you? (informal)",
+          "note": "With no verb after it, 'you' must be the stressed toi; with someone you call vous, ask Et vous ?",
+          "ex": "Salut Léa ! Moi, ça va. Et toi ?",
+          "exEn": "Hi Léa! I'm fine. And you?",
+          "diff": "easy",
+          "blank": "toi",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "c'est elle",
+          "en": "it's her / that's her",
+          "note": "After c'est, French uses the stressed form: c'est elle, c'est lui, c'est moi.",
+          "ex": "Regarde, c'est elle, la nouvelle voisine.",
+          "exEn": "Look, that's her, the new neighbour.",
+          "diff": "okay",
+          "blank": "elle",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "plus grand que toi",
+          "en": "taller than you (informal)",
+          "note": "After que in a comparison, use the stressed form: que toi, never que tu.",
+          "ex": "Ton petit frère est déjà plus grand que toi !",
+          "exEn": "Your little brother is already taller than you!",
+          "diff": "hard",
+          "blank": "toi",
+          "alts": [
+            "plus grande que toi"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "moi aussi",
+          "en": "me too",
+          "note": "With no verb, je becomes moi; the negative answer is moi non plus.",
+          "ex": "J'ai faim. — Moi aussi !",
+          "exEn": "I'm hungry. — Me too!",
+          "diff": "easy",
+          "blank": "Moi aussi",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "à moi",
+          "en": "belonging to me",
+          "note": "être à + stressed pronoun says who something belongs to: c'est à moi, c'est à lui.",
+          "ex": "Ce stylo est à moi.",
+          "exEn": "This pen is mine.",
+          "diff": "okay",
+          "blank": "moi",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "lui aussi",
+          "en": "him too / he does too",
+          "note": "With no verb after it, il becomes lui: lui aussi, like moi aussi; for a woman it is elle aussi.",
+          "ex": "Marie est fatiguée, et Paul ? — Lui aussi !",
+          "exEn": "Marie is tired. And Paul? — He is too!",
+          "diff": "okay",
+          "blank": "Lui",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "demonstrative-adjectives",
+      "category": "grammar",
+      "teaching": {
+        "rule": "To point at one particular thing, French uses a word that agrees with the noun: ce before a masculine singular noun (ce livre), cet before a masculine singular noun starting with a vowel or a silent h (cet ami, cet hôtel), cette before any feminine singular noun, vowel or not (cette maison, cette école), and ces before any plural (ces livres, ces maisons). Each form can mean 'this' or 'that' ('these' or 'those' for ces). To make the difference clear, add -ci (here) or -là (there) to the noun: ce pull-ci, ce pull-là. Cet and cette sound exactly the same, so the noun's gender decides the spelling.",
+        "examples": [
+          {
+            "fr": "ce livre",
+            "en": "this book",
+            "note": "livre is masculine and starts with a consonant, so ce."
+          },
+          {
+            "fr": "cet ami",
+            "en": "this friend (male)",
+            "note": "ami is masculine but starts with a vowel, so ce becomes cet and the t links on: 'sè-ta-mi'."
+          },
+          {
+            "fr": "cette voiture",
+            "en": "this car",
+            "note": "Every feminine singular noun takes cette."
+          },
+          {
+            "fr": "ces amis",
+            "en": "these friends",
+            "note": "Plurals take ces for both genders; before a vowel the s links as a z: 'sé-za-mi'."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "cette école",
+            "en": "this school",
+            "note": "NOT 'cet école': cet is only for masculine nouns; école is feminine, so cette, even before a vowel."
+          },
+          {
+            "fr": "ce pull-ci / ce pull-là",
+            "en": "this jumper / that jumper",
+            "note": "-ci points to what is near, -là to what is further away; without them, ce pull can mean either."
+          },
+          {
+            "fr": "ces livres / ses livres",
+            "en": "these books / his or her books",
+            "note": "ces and ses sound the same: ces points at the books, ses says whose they are."
+          }
+        ],
+        "commonMistake": "English speakers say 'ce ami' or 'cet école', or look for separate words for 'this' and 'that'; choose by the noun's gender and first sound (ce livre, cet ami, cette école, ces livres) and add -ci or -là only when you need the contrast."
+      },
+      "probes": [
+        {
+          "fr": "___ arbre",
+          "en": "cet",
+          "ex": "Cet arbre a cent ans.",
+          "exEn": "This tree is a hundred years old.",
+          "options": [
+            "ce",
+            "cette",
+            "ces"
+          ]
+        },
+        {
+          "fr": "___ idée",
+          "en": "cette",
+          "ex": "Cette idée me plaît beaucoup.",
+          "exEn": "I really like this idea.",
+          "options": [
+            "ce",
+            "cet",
+            "ces"
+          ]
+        },
+        {
+          "fr": "___ questions",
+          "en": "ces",
+          "ex": "Ces questions sont difficiles.",
+          "exEn": "These questions are difficult.",
+          "options": [
+            "ce",
+            "cet",
+            "cette"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "ce livre",
+          "en": "this book",
+          "note": "livre is masculine and starts with a consonant, so ce; ce can mean 'this' or 'that'.",
+          "ex": "Tu as déjà lu ce livre ?",
+          "exEn": "Have you already read this book?",
+          "diff": "easy",
+          "blank": "ce",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cette rue",
+          "en": "this street",
+          "note": "rue is feminine, so cette.",
+          "ex": "J'habite dans cette rue.",
+          "exEn": "I live in this street.",
+          "diff": "easy",
+          "blank": "cette",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ces chaussures",
+          "en": "these shoes",
+          "note": "Any plural takes ces, whatever the gender.",
+          "ex": "Combien coûtent ces chaussures ?",
+          "exEn": "How much are these shoes?",
+          "diff": "easy",
+          "blank": "ces",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cet hôtel",
+          "en": "this hotel",
+          "note": "The h of hôtel is silent, so the noun starts with a vowel sound and ce becomes cet.",
+          "ex": "Nous restons dans cet hôtel trois nuits.",
+          "exEn": "We're staying in this hotel for three nights.",
+          "diff": "okay",
+          "blank": "cet",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cette école",
+          "en": "this school",
+          "note": "école starts with a vowel but is feminine, so cette; cet is for masculine nouns only.",
+          "ex": "Mes enfants vont dans cette école.",
+          "exEn": "My children go to this school.",
+          "diff": "hard",
+          "blank": "cette",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cette amie",
+          "en": "this friend (female)",
+          "note": "amie is feminine, so cette; cet ami and cette amie sound the same, only the spelling shows the gender.",
+          "ex": "Tu connais cette amie de Paul ?",
+          "exEn": "Do you know this friend of Paul's?",
+          "diff": "hard",
+          "blank": "cette",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ces enfants",
+          "en": "these children",
+          "note": "ces before a vowel links with a z sound: 'sé-zan-fan'.",
+          "ex": "Qui sont ces enfants ?",
+          "exEn": "Who are these children?",
+          "diff": "okay",
+          "blank": "ces",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ce week-end",
+          "en": "this weekend",
+          "note": "week-end is masculine and starts with a consonant sound, so ce.",
+          "ex": "Je reste à la maison ce week-end.",
+          "exEn": "I'm staying at home this weekend.",
+          "diff": "easy",
+          "blank": "ce",
+          "alts": [
+            "ce weekend"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ce matin",
+          "en": "this morning",
+          "note": "With a time word, ce means the one we are in now or the nearest one: ce matin, this morning.",
+          "ex": "Je suis très fatigué ce matin.",
+          "exEn": "I'm very tired this morning.",
+          "diff": "easy",
+          "blank": "ce",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cette semaine",
+          "en": "this week",
+          "note": "semaine is feminine, so cette.",
+          "ex": "J'ai beaucoup de travail cette semaine.",
+          "exEn": "I have a lot of work this week.",
+          "diff": "easy",
+          "blank": "cette",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cet été",
+          "en": "this summer",
+          "note": "été is masculine and starts with a vowel, so cet.",
+          "ex": "On part en Bretagne cet été.",
+          "exEn": "We're going to Brittany this summer.",
+          "diff": "okay",
+          "blank": "cet",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "cette fois-ci",
+          "en": "this time",
+          "note": "fois is feminine, so cette; -ci adds 'this one, now', and cette fois on its own means the same.",
+          "ex": "Cette fois-ci, on prend le train.",
+          "exEn": "This time, we're taking the train.",
+          "diff": "hard",
+          "blank": "Cette",
+          "alts": [
+            "cette fois"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "contractions-au-du",
+      "category": "grammar",
+      "teaching": {
+        "rule": "Whenever à or de comes right before the article le or les, the two words must fuse: à + le = au, à + les = aux, de + le = du, de + les = des. Nothing fuses with la or l': à la, à l', de la, de l' stay as two words. The fusion happens wherever à or de is needed: after verbs built with à or de (jouer au foot but jouer du piano, parler du film, penser aux vacances), inside place phrases ending in de (à côté du cinéma, près des magasins), in dish names built with à (une tarte aux pommes) and in time phrases (au début du mois). Before a vowel or silent h, l' blocks the fusion: à l'hôpital, not au hôpital. Only the articles fuse: when le or les means 'it' or 'them', it stays apart (je commence à les comprendre, I'm starting to understand them).",
+        "examples": [
+          {
+            "fr": "Je joue au tennis.",
+            "en": "I play tennis.",
+            "note": "jouer à + a sport or game: à + le tennis fuses into au."
+          },
+          {
+            "fr": "Elle joue du violon.",
+            "en": "She plays the violin.",
+            "note": "jouer de + an instrument: de + le violon fuses into du."
+          },
+          {
+            "fr": "La pharmacie est près des magasins.",
+            "en": "The chemist's is near the shops.",
+            "note": "près de + les magasins fuses into des; here des means 'of the', not 'some'."
+          },
+          {
+            "fr": "Il travaille à la banque.",
+            "en": "He works at the bank.",
+            "note": "banque is feminine: à la never fuses."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je vais à l'hôpital.",
+            "en": "I'm going to the hospital.",
+            "note": "NOT 'au hôpital': before a vowel or silent h the article is l', and à l' never fuses."
+          },
+          {
+            "fr": "Je joue au foot. / Je joue du piano.",
+            "en": "I play football. / I play the piano.",
+            "note": "Same verb, different little word: jouer à for sports and games, jouer de for instruments."
+          },
+          {
+            "fr": "le bureau du directeur",
+            "en": "the manager's office",
+            "note": "NOT 'de le directeur': de + le is always du."
+          }
+        ],
+        "commonMistake": "English speakers translate word by word and leave the pieces apart ('à le cinéma', 'de les enfants'), or fuse where they shouldn't ('au hôpital'); fuse only à or de with le and les: au cinéma, des enfants, but à l'hôpital, de la gare."
+      },
+      "probes": [
+        {
+          "fr": "Il joue ___ guitare.",
+          "en": "de la",
+          "ex": "Il joue de la guitare dans un groupe.",
+          "exEn": "He plays the guitar in a band.",
+          "options": [
+            "du",
+            "à la",
+            "au"
+          ]
+        },
+        {
+          "fr": "Il téléphone ___ médecin.",
+          "en": "au",
+          "ex": "Il téléphone au médecin pour prendre rendez-vous.",
+          "exEn": "He's phoning the doctor to make an appointment.",
+          "options": [
+            "à le",
+            "aux",
+            "à l'"
+          ]
+        },
+        {
+          "fr": "la fin ___ film",
+          "en": "du",
+          "ex": "Je n'ai pas compris la fin du film.",
+          "exEn": "I didn't understand the end of the film.",
+          "options": [
+            "de le",
+            "au",
+            "de la"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "jouer au foot",
+          "en": "to play football",
+          "note": "jouer à + a sport: à + le foot fuses into au.",
+          "ex": "Le samedi, je joue au foot avec mes amis.",
+          "exEn": "On Saturdays I play football with my friends.",
+          "diff": "easy",
+          "blank": "au",
+          "alts": [
+            "jouer au football",
+            "faire du foot",
+            "faire du football"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "jouer du piano",
+          "en": "to play the piano",
+          "note": "jouer de + an instrument: de + le piano fuses into du.",
+          "ex": "Ma fille joue du piano depuis deux ans.",
+          "exEn": "My daughter has been playing the piano for two years.",
+          "diff": "okay",
+          "blank": "du",
+          "alts": [
+            "faire du piano"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "parler du film",
+          "en": "to talk about the film",
+          "note": "parler de means to talk about; de + le film fuses into du.",
+          "ex": "On parle du film après la séance ?",
+          "exEn": "Shall we talk about the film after the screening?",
+          "diff": "okay",
+          "blank": "du",
+          "alts": [
+            "discuter du film"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "à côté du cinéma",
+          "en": "next to the cinema",
+          "note": "à côté de ends in de, so de + le cinéma fuses into du.",
+          "ex": "La boulangerie est à côté du cinéma.",
+          "exEn": "The bakery is next to the cinema.",
+          "diff": "okay",
+          "blank": "du",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "en face de la gare",
+          "en": "opposite the station",
+          "note": "gare is feminine: de la stays as two words, there is nothing to fuse.",
+          "ex": "L'hôtel est en face de la gare.",
+          "exEn": "The hotel is opposite the station.",
+          "diff": "okay",
+          "blank": "de la",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "aller aux toilettes",
+          "en": "to go to the toilet",
+          "note": "toilettes is plural in French, so à + les fuses into aux.",
+          "ex": "Excusez-moi, je dois aller aux toilettes.",
+          "exEn": "Excuse me, I need to go to the toilet.",
+          "diff": "okay",
+          "blank": "aux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "une tarte aux pommes",
+          "en": "an apple tart",
+          "note": "Dish names use à for the main ingredient; à + les pommes fuses into aux.",
+          "ex": "Ma grand-mère fait une tarte aux pommes le dimanche.",
+          "exEn": "My grandmother makes an apple tart on Sundays.",
+          "diff": "okay",
+          "blank": "aux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "une glace à la vanille",
+          "en": "a vanilla ice cream",
+          "note": "vanille is feminine: à la never fuses.",
+          "ex": "Je voudrais une glace à la vanille, s'il vous plaît.",
+          "exEn": "I'd like a vanilla ice cream, please.",
+          "diff": "okay",
+          "blank": "à la",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "rentrer du travail",
+          "en": "to come home from work",
+          "note": "rentrer de + le travail fuses into du; here du means 'from the', not 'some'.",
+          "ex": "Il rentre du travail vers dix-neuf heures.",
+          "exEn": "He gets home from work at around seven p.m.",
+          "diff": "hard",
+          "blank": "du",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "au début du mois",
+          "en": "at the beginning of the month",
+          "note": "Two fusions in one phrase: à + le début gives au, de + le mois gives du.",
+          "ex": "Je suis payé au début du mois.",
+          "exEn": "I get paid at the beginning of the month.",
+          "diff": "hard",
+          "blank": "au",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "demander aux enfants",
+          "en": "to ask the children",
+          "note": "demander à quelqu'un: à + les enfants fuses into aux, with a z sound before the vowel.",
+          "ex": "Demande aux enfants s'ils ont faim.",
+          "exEn": "Ask the children if they're hungry.",
+          "diff": "okay",
+          "blank": "aux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le prix des billets",
+          "en": "the price of the tickets",
+          "note": "de + les billets fuses into des; this des means 'of the', not 'some'.",
+          "ex": "Le prix des billets a encore augmenté.",
+          "exEn": "The price of the tickets has gone up again.",
+          "diff": "hard",
+          "blank": "des",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "à l'hôpital",
+          "en": "to the hospital / at the hospital",
+          "note": "hôpital starts with a silent h, so the article is l' and à l' never fuses: not au hôpital.",
+          "ex": "Ma sœur travaille à l'hôpital.",
+          "exEn": "My sister works at the hospital.",
+          "diff": "okay",
+          "blank": "à l'hôpital",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "de-after-negation",
+      "category": "grammar",
+      "teaching": {
+        "rule": "The change you met after pas also happens after ne... plus and ne... jamais: the articles un, une, du, de la, de l' and des become plain de (d' before a vowel), as in il n'y a plus de lait and il ne prend jamais de dessert. It still happens when the noun belongs to a second verb: je ne veux pas acheter de fleurs. Two things never change: le, la, l' and les (je n'aime pas les tomates), and the article after être (ce n'est pas une erreur). Keep the ne: without it, plus de means 'more', not 'no more'.",
+        "examples": [
+          {
+            "fr": "Il n'y a plus de lait dans le frigo.",
+            "en": "There's no milk left in the fridge.",
+            "note": "du lait becomes de lait after ne... plus, just as after pas."
+          },
+          {
+            "fr": "Il ne prend jamais de dessert.",
+            "en": "He never has dessert.",
+            "note": "un dessert becomes de dessert after ne... jamais."
+          },
+          {
+            "fr": "Je ne veux pas acheter de fleurs.",
+            "en": "I don't want to buy flowers.",
+            "note": "The noun belongs to acheter, but the negative on veux still turns des into de."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je n'aime pas les tomates.",
+            "en": "I don't like tomatoes.",
+            "note": "NOT 'pas de tomates' here: les means tomatoes in general, and le, la, l' and les never change after a negative."
+          },
+          {
+            "fr": "Ce n'est pas une erreur.",
+            "en": "It's not a mistake.",
+            "note": "NOT 'ce n'est pas d'erreur': after être the article stays."
+          },
+          {
+            "fr": "Je ne veux plus de pain. / Je veux plus de pain.",
+            "en": "I don't want any more bread. / I want more bread.",
+            "note": "With ne, plus de means 'no more'; without ne, it means 'more'. Always write the ne."
+          }
+        ],
+        "commonMistake": "English speakers keep the positive article after plus and jamais or when a second verb follows ('je ne veux pas acheter des fleurs'), or change the articles that must stay ('je n'aime pas de tomates', 'ce n'est pas d'erreur'); say de after the negative, but leave le, la, les and the article after être alone."
+      },
+      "probes": [
+        {
+          "fr": "Mon père ne boit jamais ___ alcool.",
+          "en": "d'",
+          "ex": "Mon père ne boit jamais d'alcool.",
+          "exEn": "My father never drinks alcohol.",
+          "options": [
+            "de l'",
+            "de",
+            "des"
+          ]
+        },
+        {
+          "fr": "Ce n'est pas ___ restaurant cher.",
+          "en": "un",
+          "ex": "Ce n'est pas un restaurant cher.",
+          "exEn": "It's not an expensive restaurant.",
+          "options": [
+            "de",
+            "du",
+            "d'"
+          ]
+        },
+        {
+          "fr": "Nous n'avons plus ___ sucre.",
+          "en": "de",
+          "ex": "Nous n'avons plus de sucre, je vais en acheter.",
+          "exEn": "We have no sugar left; I'll go and buy some.",
+          "options": [
+            "du",
+            "de le",
+            "des"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "pas de frères",
+          "en": "no brothers",
+          "note": "des frères becomes de frères after pas.",
+          "ex": "Je n'ai pas de frères, mais j'ai une sœur.",
+          "exEn": "I don't have any brothers, but I have a sister.",
+          "diff": "easy",
+          "blank": "de",
+          "alts": [
+            "pas de frère"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "pas d'argent",
+          "en": "no money",
+          "note": "de l'argent becomes d'argent after pas: de shrinks to d' before the vowel.",
+          "ex": "Désolé, je n'ai pas d'argent sur moi.",
+          "exEn": "Sorry, I don't have any money on me.",
+          "diff": "okay",
+          "blank": "d'argent",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il n'y a plus de pain",
+          "en": "there's no bread left",
+          "note": "du pain becomes de pain after ne... plus; keep the ne, because plus de pain on its own can mean 'more bread'.",
+          "ex": "Il n'y a plus de pain à la boulangerie.",
+          "exEn": "There's no bread left at the bakery.",
+          "diff": "okay",
+          "blank": "de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "jamais de vin",
+          "en": "never any wine",
+          "note": "du vin becomes de vin after ne... jamais.",
+          "ex": "Elle ne boit jamais de vin.",
+          "exEn": "She never drinks wine.",
+          "diff": "okay",
+          "blank": "de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "pas d'animaux",
+          "en": "no animals",
+          "note": "des animaux becomes d'animaux after pas, because animaux starts with a vowel.",
+          "ex": "Nous n'avons pas d'animaux à la maison.",
+          "exEn": "We don't have any animals at home.",
+          "diff": "okay",
+          "blank": "d'animaux",
+          "alts": [
+            "pas d'animal"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je ne bois plus de café",
+          "en": "I don't drink coffee any more",
+          "note": "du café becomes de café after ne... plus.",
+          "ex": "Je ne bois plus de café le soir.",
+          "exEn": "I don't drink coffee in the evening any more.",
+          "diff": "okay",
+          "blank": "de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "pas de problème",
+          "en": "no problem",
+          "note": "Short for il n'y a pas de problème, so de, as after any pas; compare ce n'est pas un problème, where être keeps un.",
+          "ex": "Tu peux m'aider ? — Pas de problème !",
+          "exEn": "Can you help me? — No problem!",
+          "diff": "easy",
+          "blank": "de",
+          "alts": [
+            "pas de souci",
+            "aucun problème"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ne pas faire de bruit",
+          "en": "not to make any noise",
+          "note": "faire du bruit becomes ne pas faire de bruit: ne pas sits together in front of an infinitive, and the article still becomes de.",
+          "ex": "Fais attention à ne pas faire de bruit, le bébé dort.",
+          "exEn": "Be careful not to make any noise; the baby's asleep.",
+          "diff": "hard",
+          "blank": "de",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il n'a pas trouvé de travail",
+          "en": "he hasn't found work",
+          "note": "In the passé composé the rule still applies: du travail becomes de travail after pas.",
+          "ex": "Mon cousin n'a pas encore trouvé de travail.",
+          "exEn": "My cousin hasn't found work yet.",
+          "diff": "hard",
+          "blank": "de",
+          "alts": [
+            "il n'a pas trouvé d'emploi"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ce n'est pas une bonne idée",
+          "en": "it's not a good idea",
+          "note": "After être the article stays: une, not de.",
+          "ex": "Partir maintenant, ce n'est pas une bonne idée.",
+          "exEn": "Leaving now isn't a good idea.",
+          "diff": "hard",
+          "blank": "une",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ce ne sont pas des touristes",
+          "en": "they're not tourists",
+          "note": "After être the plural article des stays too; de would be wrong here.",
+          "ex": "Ce ne sont pas des touristes, ils habitent ici.",
+          "exEn": "They're not tourists; they live here.",
+          "diff": "hard",
+          "blank": "des",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il n'aime pas le fromage",
+          "en": "he doesn't like cheese",
+          "note": "le, la and les never change after a negative: only un, une and the partitives become de.",
+          "ex": "Mon fils n'aime pas le fromage, mais il adore les yaourts.",
+          "exEn": "My son doesn't like cheese, but he loves yoghurts.",
+          "diff": "hard",
+          "blank": "le",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

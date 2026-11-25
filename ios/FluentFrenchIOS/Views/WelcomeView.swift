@@ -6,12 +6,24 @@
 //  learner is signed in, so all progress is tied to an account from the first tap.
 //
 
+// `Foundation` is named explicitly because `handleApple` uses Foundation members
+// (`String(data:encoding:)`, `PersonNameComponents.formatted()`) on types that
+// come from other modules; MEMBER_IMPORT_VISIBILITY does not honour re-exports.
+import Foundation
 import SwiftUI
 import AuthenticationServices
 
 struct WelcomeView: View {
     @Environment(AuthManager.self) private var auth
-    @Environment(\.colorScheme) private var colorScheme
+    /// The hero mark grows with the learner's text size so the glyph stays
+    /// proportionate to the circle behind it.
+    @ScaledMetric(relativeTo: .largeTitle) private var markScale: CGFloat = 1
+    /// Sign-in buttons keep the same height as each other as text grows.
+    @ScaledMetric(relativeTo: .body) private var buttonScale: CGFloat = 1
+    /// Clamped at `Theme.maxChromeScale`: unclamped, the two sign-in buttons would
+    /// take a third of the screen at the largest accessibility text sizes.
+    private var mark: CGFloat { Theme.chromeScale(markScale) }
+    private var buttonHeight: CGFloat { 54 * Theme.chromeScale(buttonScale) }
 
     var body: some View {
         @Bindable var auth = auth
@@ -32,6 +44,7 @@ struct WelcomeView: View {
             if auth.isSigningIn {
                 Color.black.opacity(0.25).ignoresSafeArea()
                 ProgressView().controlSize(.large).tint(.white)
+                    .accessibilityLabel("Signing in")
             }
         }
         .alert("Sign-in failed", isPresented: $auth.showError) {
@@ -55,18 +68,26 @@ struct WelcomeView: View {
     private var hero: some View {
         VStack(spacing: 18) {
             ZStack {
-                Circle().fill(Theme.primaryGradient).frame(width: 96, height: 96)
+                Circle().fill(Theme.primaryGradient)
+                    .frame(width: 96 * mark, height: 96 * mark)
                     .shadow(color: Theme.primary.opacity(0.35), radius: 18, y: 8)
                 Image(systemName: "sparkles")
-                    .font(.system(size: 42, weight: .semibold))
+                    .scaledFont(42, weight: .semibold)
                     .foregroundStyle(.white)
             }
+            .accessibilityHidden(true)
             VStack(spacing: 10) {
                 Text("Okiri")
-                    .font(.serifDisplay(40, weight: .bold))
+                    .scaledSerifDisplay(40, weight: .bold)
                     .foregroundStyle(Theme.text)
-                Text("Your progress, saved and synced everywhere.")
-                    .font(.system(size: 17))
+                // UX-10: the first screen says what the app is for, then how.
+                Text("Learn the French you're missing")
+                    .scaledFont(20, weight: .semibold)
+                    .foregroundStyle(Theme.text)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 300)
+                Text("Short lessons that adapt to you — read, listen and speak as you unlock them.")
+                    .scaledFont(17)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 300)
@@ -74,15 +95,56 @@ struct WelcomeView: View {
         }
     }
 
+    @ViewBuilder
     private var buttons: some View {
+        if let configurationError = auth.configurationError {
+            misconfigured(configurationError)
+        } else {
+            signInButtons
+        }
+    }
+
+    /// The build has no Supabase URL / key: say so plainly instead of offering
+    /// sign-in buttons that can only fail.
+    private func misconfigured(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .scaledFont(22, weight: .semibold)
+                .foregroundStyle(Theme.warning)
+                .accessibilityHidden(true)
+            Text(message)
+                .scaledFont(16, weight: .semibold)
+                .foregroundStyle(Theme.text)
+                .multilineTextAlignment(.center)
+            // Developer note: the missing values are the Supabase project URL
+            // and anon key; the learner-facing copy stays vendor-neutral.
+            Text("Sign-in isn't set up in this build. If you're testing, install a release build; if you're developing, add the account service URL and key.")
+                .scaledFont(13)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(18)
+        .background(Theme.card)
+        .clipShape(.rect(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Theme.border, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    private var signInButtons: some View {
         VStack(spacing: 14) {
             SignInWithAppleButton(.continue) { request in
                 request.requestedScopes = [.email, .fullName]
             } onCompletion: { result in
                 handleApple(result)
             }
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 54)
+            // Always the black style: the app is light-only (UIUserInterfaceStyle =
+            // Light, UX-01), and black is the one that reads on the cream backdrop.
+            .signInWithAppleButtonStyle(.black)
+            .frame(height: buttonHeight)
             .clipShape(.rect(cornerRadius: 16))
             .disabled(auth.isSigningIn)
 
@@ -91,12 +153,13 @@ struct WelcomeView: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "globe")
-                        .font(.system(size: 18, weight: .semibold))
+                        .scaledFont(18, weight: .semibold)
+                        .accessibilityHidden(true)
                     Text("Continue with Google")
-                        .font(.system(size: 17, weight: .semibold))
+                        .scaledFont(17, weight: .semibold)
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 54)
+                .frame(minHeight: buttonHeight)
                 .foregroundStyle(Theme.text)
                 .background(Theme.card)
                 .clipShape(.rect(cornerRadius: 16))
@@ -111,9 +174,9 @@ struct WelcomeView: View {
     }
 
     private var footnote: some View {
-        Text("By continuing you agree to keep your learning progress backed up to your account.")
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.textMuted)
+        Text("Your progress is saved to your account and synced across your devices.")
+            .scaledFont(12)
+            .foregroundStyle(Theme.textSecondary)
             .multilineTextAlignment(.center)
             .padding(.top, 18)
             .frame(maxWidth: 320)
@@ -123,17 +186,26 @@ struct WelcomeView: View {
 
     private func handleApple(_ result: Result<ASAuthorization, Error>) {
         switch result {
-        case .failure:
-            // Cancellation or system error — silently allow retry.
-            return
+        case .failure(let error):
+            // Only the learner's own cancel is silent (firstrun-10-7). Any other
+            // failure on the app's only door used to do nothing visible either, so
+            // the tap looked dead; it now reaches the same alert AuthManager uses.
+            if (error as? ASAuthorizationError)?.code == .canceled { return }
+            showAppleFailure()
         case .success(let authorization):
             guard
                 let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                 let tokenData = credential.identityToken,
                 let idToken = String(data: tokenData, encoding: .utf8)
-            else { return }
+            else { showAppleFailure(); return }
             let fullName = credential.fullName?.formatted()
             Task { await auth.signInWithApple(idToken: idToken, fullName: fullName) }
         }
+    }
+
+    /// The "Sign-in failed" alert for an Apple failure that never reached AuthManager.
+    private func showAppleFailure() {
+        auth.errorMessage = "Sign in with Apple didn't complete. Try again, or continue with Google."
+        auth.showError = true
     }
 }

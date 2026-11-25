@@ -1,0 +1,900 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "futur-simple",
+      "category": "grammar",
+      "teaching": {
+        "rule": "The simple future says what will happen: je parlerai (I will speak). For most verbs, take the whole infinitive and add the endings -ai, -as, -a, -ons, -ez, -ont: parler → je parlerai, tu parleras, il parlera, nous parlerons, vous parlerez, ils parleront. Verbs ending in -re drop their final e first: prendre → je prendrai. A small set of very common verbs have their own stem, but the endings never change: être → ser- (je serai), avoir → aur- (j'aurai), aller → ir- (j'irai), faire → fer- (je ferai), venir → viendr-, pouvoir → pourr-, voir → verr-, pleuvoir → pleuvr- (il pleuvra). Every future stem ends in r, so listen for an r just before the ending. In conversation, aller + infinitive (je vais manger) is the most common way to talk about the future, and the plain present often covers a fixed arrangement (je pars demain). The simple future is the natural choice for things further off or less certain (un jour, dans vingt ans), for predictions and forecasts, for promises, and in writing; often both futures are possible.",
+        "examples": [
+          {
+            "fr": "Un jour, je parlerai français couramment.",
+            "en": "One day I'll speak French fluently.",
+            "note": "A regular -er verb: the whole infinitive parler + -ai."
+          },
+          {
+            "fr": "Demain, il fera beau dans tout le pays.",
+            "en": "Tomorrow it'll be sunny all over the country.",
+            "note": "Weather forecasts use the simple future; fera comes from the irregular stem fer- of faire."
+          },
+          {
+            "fr": "Je t'attendrai devant la gare, promis.",
+            "en": "I'll wait for you outside the station, I promise.",
+            "note": "A promise, so the simple future; attendre drops its final e before the ending: attendr- + -ai."
+          },
+          {
+            "fr": "Je ne serai pas là demain.",
+            "en": "I won't be here tomorrow.",
+            "note": "ne and pas go around the single future verb: there is no helper word to wrap."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je vais manger.",
+            "en": "I'm going to eat.",
+            "note": "aller + infinitive: the near future, for something about to happen or already planned."
+          },
+          {
+            "fr": "Je mangerai plus tard.",
+            "en": "I'll eat later.",
+            "note": "The simple future: one word, and the moment is less immediate."
+          },
+          {
+            "fr": "Je serai médecin.",
+            "en": "I will be a doctor.",
+            "note": "NOT 'j'êtrai': être uses its own stem ser-; only the endings are regular."
+          }
+        ],
+        "commonMistake": "English speakers build the future on the present stem and lose the r ('je prendai'), keep the final e of -re verbs ('je prendrerai'), or apply the rule to être and avoir as written ('j'êtrai', 'j'avoirai'); start from the whole infinitive (parler-), the -re infinitive without its e (prendr-) or the irregular stem (ser-, aur-, ir-, fer-), then add -ai, -as, -a, -ons, -ez, -ont."
+      },
+      "probes": [
+        {
+          "fr": "Un jour, je ___ riche. (être, future)",
+          "en": "serai",
+          "ex": "Un jour, je serai riche.",
+          "exEn": "One day I'll be rich.",
+          "options": [
+            "êtrerai",
+            "êtrai",
+            "sera"
+          ]
+        },
+        {
+          "fr": "Nous irons au Japon.",
+          "en": "We will go to Japan.",
+          "ex": "L'année prochaine, nous irons au Japon.",
+          "exEn": "Next year we'll go to Japan.",
+          "options": [
+            "We are going to Japan right now.",
+            "We went to Japan.",
+            "We would go to Japan."
+          ]
+        },
+        {
+          "fr": "Demain, il ___ beau. (faire, future)",
+          "en": "fera",
+          "ex": "Demain, il fera beau.",
+          "exEn": "Tomorrow it'll be sunny.",
+          "options": [
+            "faira",
+            "fairera",
+            "faisera"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "je parlerai",
+          "en": "I will speak",
+          "note": "Regular -er verbs keep the whole infinitive and add -ai: parler + ai.",
+          "ex": "Un jour, je parlerai français couramment.",
+          "exEn": "One day I'll speak French fluently.",
+          "diff": "easy",
+          "blank": "parlerai",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je serai",
+          "en": "I will be",
+          "note": "être has its own future stem, ser-; the ending -ai is the regular one.",
+          "ex": "Plus tard, je serai médecin.",
+          "exEn": "Later on I'll be a doctor.",
+          "diff": "okay",
+          "blank": "serai",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "tu auras",
+          "en": "you will have (informal)",
+          "note": "avoir has the future stem aur-; avoir froid (to be cold) keeps avoir in every tense.",
+          "ex": "Prends un pull, sinon tu auras froid.",
+          "exEn": "Take a jumper, or you'll be cold.",
+          "diff": "okay",
+          "blank": "auras",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il fera beau",
+          "en": "it will be sunny",
+          "note": "faire has the future stem fer-; il fera beau is also the standard phrase in a weather forecast.",
+          "ex": "J'espère qu'il fera beau le jour de ton mariage.",
+          "exEn": "I hope it'll be sunny on your wedding day.",
+          "diff": "okay",
+          "blank": "fera",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je pourrai",
+          "en": "I will be able to",
+          "note": "pouvoir has the future stem pourr-, with a double r; it is the future of 'can'.",
+          "ex": "Dans deux ans, je pourrai voter.",
+          "exEn": "In two years I'll be able to vote.",
+          "diff": "hard",
+          "blank": "pourrai",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "nous aurons",
+          "en": "we will have",
+          "note": "avoir has the future stem aur-; the nous ending is -ons, as in the present.",
+          "ex": "Dans dix ans, nous aurons une maison à la campagne.",
+          "exEn": "In ten years we'll have a house in the countryside.",
+          "diff": "okay",
+          "blank": "aurons",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "tu iras",
+          "en": "you will go (informal)",
+          "note": "aller has the shortest future stem of all, ir-: j'irai, tu iras, nous irons.",
+          "ex": "Ne t'inquiète pas, tu iras au Japon un jour.",
+          "exEn": "Don't worry, you'll go to Japan one day.",
+          "diff": "okay",
+          "blank": "iras",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "tu comprendras",
+          "en": "you will understand (informal)",
+          "note": "-re verbs drop their final e before the ending: comprendre → comprendr- + -as.",
+          "ex": "Tu es trop jeune, mais un jour tu comprendras.",
+          "exEn": "You're too young, but one day you'll understand.",
+          "diff": "okay",
+          "blank": "comprendras",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il y aura",
+          "en": "there will be",
+          "note": "il y a becomes il y aura: avoir's future stem aur- + -a.",
+          "ex": "Dans vingt ans, il y aura des voitures sans conducteur partout.",
+          "exEn": "In twenty years there'll be driverless cars everywhere.",
+          "diff": "hard",
+          "blank": "aura",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je ferai de mon mieux",
+          "en": "I'll do my best",
+          "note": "A set phrase and a promise, where the simple future is the natural choice; je vais faire de mon mieux is also heard.",
+          "ex": "Je ne promets rien, mais je ferai de mon mieux.",
+          "exEn": "I'm not promising anything, but I'll do my best.",
+          "diff": "okay",
+          "blank": "ferai",
+          "alts": [
+            "je vais faire de mon mieux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ce sera tout ?",
+          "en": "will that be all?",
+          "note": "What a shopkeeper or waiter asks at the end of an order; ce sera is the future of c'est.",
+          "ex": "Merci, madame. Ce sera tout ?",
+          "exEn": "Thank you, madam. Will that be all?",
+          "diff": "easy",
+          "blank": "sera",
+          "alts": [
+            "ça sera tout"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "etre-en-train-de",
+      "category": "grammar",
+      "teaching": {
+        "rule": "French has no separate -ing tense. The ordinary present covers both 'I eat' and 'I am eating': je mange can mean either, and the context tells you which. When you want to insist that something is happening right now, at this very moment, use être en train de + infinitive: je suis en train de manger (I'm in the middle of eating). Only être changes with the person (je suis, tu es, il est, nous sommes, vous êtes, ils sont); the second verb stays in the infinitive, and de becomes d' before a vowel (en train d'écrire). It is often used to explain why you cannot do something else. Do not use it for states such as wearing, living or knowing, or for plans: English 'I'm leaving tomorrow' is just je pars demain. In the past, the same phrase with the imparfait (j'étais en train de) describes what was going on when something else happened.",
+        "examples": [
+          {
+            "fr": "Je ne peux pas te parler, je suis en train de travailler.",
+            "en": "I can't talk to you, I'm in the middle of working.",
+            "note": "en train de insists that the work is happening right now."
+          },
+          {
+            "fr": "Qu'est-ce que tu fais ?",
+            "en": "What are you doing?",
+            "note": "The plain present already means 'are you doing': no extra word is needed."
+          },
+          {
+            "fr": "Elle est en train d'écrire un roman.",
+            "en": "She's writing a novel.",
+            "note": "de becomes d' before the vowel of écrire."
+          },
+          {
+            "fr": "J'étais en train de dormir quand tu as appelé.",
+            "en": "I was sleeping when you called.",
+            "note": "With the imparfait of être, it sets the scene that the call interrupted."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je mange.",
+            "en": "I eat. / I'm eating.",
+            "note": "The plain present covers both English forms."
+          },
+          {
+            "fr": "Je suis en train de manger.",
+            "en": "I'm eating right now (I'm in the middle of it).",
+            "note": "Only for insisting on the moment: 'je suis mangeant' does not exist."
+          },
+          {
+            "fr": "Je pars demain.",
+            "en": "I'm leaving tomorrow.",
+            "note": "An English -ing for a plan is the plain present in French, never en train de."
+          }
+        ],
+        "commonMistake": "English speakers translate every '-ing' with être, saying 'je suis mange' or 'je suis mangeant'; the plain present (je mange) is already 'I'm eating', and être en train de + infinitive is there only when you want to stress 'right now'."
+      },
+      "probes": [
+        {
+          "fr": "Je suis en train de manger.",
+          "en": "I'm eating right now.",
+          "ex": "Je te rappelle, je suis en train de manger.",
+          "exEn": "I'll call you back, I'm eating right now.",
+          "options": [
+            "I'm eating on the train.",
+            "I'm going to eat.",
+            "I've just eaten."
+          ]
+        },
+        {
+          "fr": "Demain, je suis en train de partir.",
+          "en": "wrong: for a plan French uses the plain present (je pars demain)",
+          "ask": "Is “Demain, je suis en train de partir.” right?",
+          "ex": "Je pars demain.",
+          "exEn": "I'm leaving tomorrow.",
+          "options": [
+            "correct: en train de translates every English -ing",
+            "correct: en train de turns a verb into the future",
+            "wrong: en train de must be followed by a noun"
+          ]
+        },
+        {
+          "fr": "Nous sommes en train ___ regarder le match.",
+          "en": "de",
+          "ex": "Nous sommes en train de regarder le match.",
+          "exEn": "We're watching the match right now.",
+          "options": [
+            "à",
+            "d'",
+            "pour"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "je suis en train de cuisiner",
+          "en": "I'm busy cooking",
+          "note": "être en train de + infinitive stresses that the action is happening right now.",
+          "ex": "Je suis en train de cuisiner, je te rappelle.",
+          "exEn": "I'm busy cooking, I'll call you back.",
+          "diff": "easy",
+          "blank": "en train de",
+          "alts": [
+            "je cuisine"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "il est en train de dormir",
+          "en": "he's sleeping (right now)",
+          "note": "Only être changes with the person: il est; dormir stays in the infinitive.",
+          "ex": "Chut, il est en train de dormir.",
+          "exEn": "Shh, he's asleep right now.",
+          "diff": "easy",
+          "blank": "est",
+          "alts": [
+            "il dort"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "nous sommes en train de manger",
+          "en": "we're in the middle of eating",
+          "note": "sommes is the nous form of être; the phrase explains why now is a bad moment.",
+          "ex": "Rappelle plus tard, nous sommes en train de manger.",
+          "exEn": "Call back later, we're in the middle of eating.",
+          "diff": "okay",
+          "blank": "sommes",
+          "alts": [
+            "nous mangeons",
+            "on est en train de manger",
+            "on mange"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ils sont en train de travailler",
+          "en": "they're busy working",
+          "note": "sont is the ils form of être; travailler stays in the infinitive.",
+          "ex": "Ne les dérange pas, ils sont en train de travailler.",
+          "exEn": "Don't disturb them, they're busy working.",
+          "diff": "okay",
+          "blank": "sont",
+          "alts": [
+            "ils travaillent"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "elle est en train d'écrire",
+          "en": "she's (busy) writing",
+          "note": "de becomes d' before a vowel: en train d'écrire, en train d'attendre.",
+          "ex": "Elle est en train d'écrire un roman.",
+          "exEn": "She's writing a novel.",
+          "diff": "hard",
+          "blank": "en train d'écrire",
+          "alts": [
+            "elle écrit"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je ne suis pas en train de dormir",
+          "en": "I'm not sleeping",
+          "note": "ne ... pas goes around être, the only conjugated verb in the phrase.",
+          "ex": "Je ne suis pas en train de dormir, je réfléchis !",
+          "exEn": "I'm not asleep, I'm thinking!",
+          "diff": "hard",
+          "blank": "ne suis pas",
+          "alts": [
+            "je ne dors pas"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "qu'est-ce que tu fais ?",
+          "en": "what are you doing? (informal)",
+          "note": "The plain present already means 'are you doing'; tu fais quoi ? is the casual spoken version.",
+          "ex": "Qu'est-ce que tu fais ? On t'attend !",
+          "exEn": "What are you doing? We're waiting for you!",
+          "diff": "easy",
+          "blank": "fais",
+          "alts": [
+            "tu fais quoi",
+            "que fais-tu"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je regarde un film",
+          "en": "I'm watching a film",
+          "note": "The plain present covers English '-ing': je regarde is 'I watch' and 'I'm watching'.",
+          "ex": "Je ne peux pas sortir, je regarde un film.",
+          "exEn": "I can't go out, I'm watching a film.",
+          "diff": "easy",
+          "blank": "regarde",
+          "alts": [
+            "je suis en train de regarder un film"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je porte un manteau",
+          "en": "I'm wearing a coat",
+          "note": "Wearing is a state, not an activity in progress, so French uses the plain present, not en train de.",
+          "ex": "Il fait froid, alors je porte un manteau.",
+          "exEn": "It's cold, so I'm wearing a coat.",
+          "diff": "okay",
+          "blank": "porte",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je pars demain",
+          "en": "I'm leaving tomorrow",
+          "note": "English uses '-ing' for plans; French uses the plain present, never en train de.",
+          "ex": "Je pars demain matin pour Rome.",
+          "exEn": "I'm leaving for Rome tomorrow morning.",
+          "diff": "okay",
+          "blank": "pars",
+          "alts": [
+            "je vais partir demain"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "en ce moment",
+          "en": "at the moment / currently",
+          "note": "With the plain present, en ce moment does the job of English '-ing' for something going on these days.",
+          "ex": "Je lis un livre passionnant en ce moment.",
+          "exEn": "I'm reading a gripping book at the moment.",
+          "diff": "easy",
+          "blank": "ce moment",
+          "alts": [
+            "actuellement"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "on-pronoun",
+      "category": "grammar",
+      "teaching": {
+        "rule": "on is one of the most frequent words in spoken French. In conversation it usually means 'we' and replaces nous: on part (we're leaving) is what people say, nous partons sounds formal or written. It also means 'people' or 'you' in general (en France, on dit bonjour en entrant dans un magasin), and 'someone' when you do not know or do not say who (on frappe à la porte). Whatever it means, on always takes the same verb form as il and elle: on est, on a, on fait, on va, never 'on sommes' or 'on avons'. In speech, nous often comes first for emphasis, then on carries the verb: nous, on préfère la mer. To say 'we' in writing or formal French, use nous with its own verb form.",
+        "examples": [
+          {
+            "fr": "On part à huit heures.",
+            "en": "We're leaving at eight.",
+            "note": "Spoken 'we': on + the il form of the verb (part), never 'on partons'."
+          },
+          {
+            "fr": "En France, on dit bonjour en entrant dans un magasin.",
+            "en": "In France, people say hello when they walk into a shop.",
+            "note": "on as 'people in general': a habit or rule that applies to everyone."
+          },
+          {
+            "fr": "On a sonné, va ouvrir.",
+            "en": "Somebody rang the bell, go and open the door.",
+            "note": "on as 'someone': the speaker does not know who it is."
+          },
+          {
+            "fr": "Nous, on préfère la mer.",
+            "en": "As for us, we prefer the seaside.",
+            "note": "nous first for emphasis, then on with the verb: very common in speech."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "On a faim.",
+            "en": "We're hungry.",
+            "note": "Spoken French: on + a (the il form of avoir)."
+          },
+          {
+            "fr": "Nous avons faim.",
+            "en": "We are hungry.",
+            "note": "Written or formal French: nous + avons; the meaning is the same."
+          },
+          {
+            "fr": "Il part demain.",
+            "en": "He's leaving tomorrow.",
+            "note": "il is one person; on part demain is 'we're leaving tomorrow', with the same verb form."
+          }
+        ],
+        "commonMistake": "English speakers hear on as 'we' and give it the nous verb ('on sommes', 'on allons'); on always takes the il / elle form: on est, on va."
+      },
+      "probes": [
+        {
+          "fr": "On part demain.",
+          "en": "We're leaving tomorrow.",
+          "ex": "On part demain matin, très tôt.",
+          "exEn": "We're leaving tomorrow morning, very early.",
+          "options": [
+            "He's leaving tomorrow.",
+            "They left yesterday.",
+            "Someone left this morning."
+          ]
+        },
+        {
+          "fr": "En France, on mange du pain tous les jours.",
+          "en": "In France, people eat bread every day.",
+          "ex": "En France, on mange du pain tous les jours.",
+          "exEn": "In France, people eat bread every day.",
+          "options": [
+            "In France, he eats bread every day.",
+            "In France, you must eat bread every day.",
+            "In France, nobody eats bread any more."
+          ]
+        },
+        {
+          "fr": "Nous, on ___ du sport le samedi.",
+          "en": "fait",
+          "ex": "Nous, on fait du sport le samedi.",
+          "exEn": "We do sport on Saturdays.",
+          "options": [
+            "faisons",
+            "font",
+            "faites"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "on part",
+          "en": "we're leaving",
+          "note": "Spoken 'we': on takes the il form of the verb, so part, not partons.",
+          "ex": "On part dans dix minutes, tu es prêt ?",
+          "exEn": "We're leaving in ten minutes, are you ready?",
+          "diff": "easy",
+          "blank": "part",
+          "alts": [
+            "nous partons"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on est en retard",
+          "en": "we're late",
+          "note": "on + est (the il form of être); nous sommes en retard says the same in writing.",
+          "ex": "Dépêche-toi, on est en retard !",
+          "exEn": "Hurry up, we're late!",
+          "diff": "easy",
+          "blank": "est",
+          "alts": [
+            "nous sommes en retard"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on a gagné",
+          "en": "we won",
+          "note": "The passé composé of on uses a, the il form of avoir: on a gagné, never 'on avons gagné'.",
+          "ex": "On a gagné le match !",
+          "exEn": "We won the match!",
+          "diff": "okay",
+          "blank": "a",
+          "alts": [
+            "nous avons gagné"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on peut entrer ?",
+          "en": "can we come in?",
+          "note": "peut is the il form of pouvoir; a polite, everyday way to ask for permission for a group.",
+          "ex": "Bonjour, on peut entrer ?",
+          "exEn": "Hello, can we come in?",
+          "diff": "okay",
+          "blank": "peut",
+          "alts": [
+            "nous pouvons entrer",
+            "est-ce qu'on peut entrer",
+            "pouvons-nous entrer",
+            "peut-on entrer",
+            "est-ce que nous pouvons entrer"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on verra",
+          "en": "we'll see",
+          "note": "A fixed phrase for putting off a decision: on means 'we', and verra is the future of voir in the il form.",
+          "ex": "Je ne sais pas encore, on verra.",
+          "exEn": "I don't know yet, we'll see.",
+          "diff": "okay",
+          "blank": "on",
+          "alts": [
+            "nous verrons"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on se voit demain",
+          "en": "see you tomorrow",
+          "note": "Literally 'we see each other tomorrow': spoken 'we' is on, and the verb after se stays in the il form (voit).",
+          "ex": "Bon, on se voit demain au bureau.",
+          "exEn": "Right, see you tomorrow at the office.",
+          "diff": "okay",
+          "blank": "on",
+          "alts": [
+            "à demain",
+            "on se verra demain",
+            "nous nous voyons demain"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "nous, on préfère",
+          "en": "as for us, we prefer",
+          "note": "nous in front adds emphasis; on still carries the verb, in the il form.",
+          "ex": "Nous, on préfère la montagne.",
+          "exEn": "As for us, we prefer the mountains.",
+          "diff": "hard",
+          "blank": "préfère",
+          "alts": [
+            "nous on préfère",
+            "nous préférons"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on dit que",
+          "en": "people say that",
+          "note": "on as 'people in general': a rumour or a reputation, with no one in particular behind it.",
+          "ex": "On dit que ce restaurant est très bon.",
+          "exEn": "People say this restaurant is very good.",
+          "diff": "okay",
+          "blank": "dit",
+          "alts": [
+            "les gens disent que"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on parle français",
+          "en": "people speak French",
+          "note": "on as 'people in general' for the language spoken somewhere.",
+          "ex": "Au Québec, on parle français.",
+          "exEn": "In Quebec, people speak French.",
+          "diff": "easy",
+          "blank": "parle",
+          "alts": [
+            "les gens parlent français"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on ne sait jamais",
+          "en": "you never know",
+          "note": "on is the general 'you' here: it applies to anybody.",
+          "ex": "Prends un parapluie, on ne sait jamais.",
+          "exEn": "Take an umbrella, you never know.",
+          "diff": "okay",
+          "blank": "sait",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "on frappe à la porte",
+          "en": "someone's knocking at the door",
+          "note": "on as 'someone': the speaker does not know who it is.",
+          "ex": "Chut, on frappe à la porte.",
+          "exEn": "Shh, someone's knocking at the door.",
+          "diff": "okay",
+          "blank": "frappe",
+          "alts": [
+            "quelqu'un frappe à la porte"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "on m'a dit que",
+          "en": "I was told that",
+          "note": "on as 'someone' after a past verb: English often turns this into a passive.",
+          "ex": "On m'a dit que le musée était fermé.",
+          "exEn": "I was told the museum was closed.",
+          "diff": "hard",
+          "blank": "dit",
+          "alts": [
+            "quelqu'un m'a dit que"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "depuis-pendant-il-y-a",
+      "category": "grammar",
+      "teaching": {
+        "rule": "Three small words answer 'how long?' and 'when?'. depuis is for something that started in the past and is still going on, and the verb stays in the PRESENT where English says 'have been': je suis à Paris depuis trois jours (I've been in Paris for three days). depuis works with a length of time (depuis trois jours) and with a starting point (depuis lundi, since Monday). ça fait + time + que says the same thing with the length up front: ça fait trois jours que je suis à Paris. pendant gives the length of a stretch seen as a whole, with an end: one that is over (j'ai attendu pendant deux heures), planned (je serai là pendant une semaine) or repeated (je marche pendant une heure tous les jours); it never means 'and still going on'. With an event or a period, pendant means 'during': pendant les vacances. il y a + time means 'ago' and points to a moment in the past, so it goes with a past verb: je suis arrivé il y a dix minutes. To ask, use depuis combien de temps ? (casually, depuis quand ?) for something still going on, and pendant combien de temps ? for a stretch with an end.",
+        "examples": [
+          {
+            "fr": "J'apprends le français depuis six mois.",
+            "en": "I've been learning French for six months.",
+            "note": "Still learning now, so depuis takes the present where English says 'have been learning'."
+          },
+          {
+            "fr": "Il neige depuis dimanche.",
+            "en": "It's been snowing since Sunday.",
+            "note": "depuis + a starting point means 'since'; the verb is still in the present."
+          },
+          {
+            "fr": "Ça fait une heure que je t'attends !",
+            "en": "I've been waiting for you for an hour!",
+            "note": "ça fait ... que puts the length first; the verb is still in the present."
+          },
+          {
+            "fr": "J'ai habité à Rome pendant trois ans.",
+            "en": "I lived in Rome for three years.",
+            "note": "Finished: the person no longer lives there, so pendant + passé composé."
+          },
+          {
+            "fr": "Nous sommes arrivés il y a une semaine.",
+            "en": "We arrived a week ago.",
+            "note": "il y a + time = 'ago': it points to one moment in the past."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "J'habite à Lyon depuis cinq ans.",
+            "en": "I've lived in Lyon for five years (and still do).",
+            "note": "depuis + present: the situation continues today."
+          },
+          {
+            "fr": "J'ai habité à Lyon pendant cinq ans.",
+            "en": "I lived in Lyon for five years (and then left).",
+            "note": "pendant + past: the five years are over."
+          },
+          {
+            "fr": "J'ai quitté Lyon il y a cinq ans.",
+            "en": "I left Lyon five years ago.",
+            "note": "il y a dates a moment in the past; it says nothing about how long anything lasted."
+          }
+        ],
+        "commonMistake": "English speakers copy 'have been' and say 'j'ai été à Paris depuis trois jours'; when the situation is still going on, French keeps the present: je suis à Paris depuis trois jours."
+      },
+      "probes": [
+        {
+          "fr": "J'habite à Nantes depuis trois ans.",
+          "en": "I've lived in Nantes for three years (and still do).",
+          "ex": "J'habite à Nantes depuis trois ans et j'adore cette ville.",
+          "exEn": "I've lived in Nantes for three years and I love this city.",
+          "options": [
+            "I lived in Nantes for three years (and then left).",
+            "I'll live in Nantes for three years.",
+            "I lived in Nantes three years ago."
+          ]
+        },
+        {
+          "fr": "Je suis arrivé il y a dix minutes.",
+          "en": "I arrived ten minutes ago.",
+          "ex": "Ne t'inquiète pas, je suis arrivé il y a dix minutes.",
+          "exEn": "Don't worry, I arrived ten minutes ago.",
+          "options": [
+            "I'll arrive in ten minutes.",
+            "I arrived after ten minutes.",
+            "I waited ten minutes before arriving."
+          ]
+        },
+        {
+          "fr": "J'ai travaillé à Londres ___ cinq ans, puis je suis rentré en France.",
+          "en": "pendant",
+          "ex": "J'ai travaillé à Londres pendant cinq ans, puis je suis rentré en France.",
+          "exEn": "I worked in London for five years, then I came back to France.",
+          "options": [
+            "depuis",
+            "dans",
+            "ça fait"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "depuis deux ans",
+          "en": "for two years (and still going)",
+          "note": "Still true today, so depuis + a present-tense verb, where English says 'have been'.",
+          "ex": "Je travaille ici depuis deux ans.",
+          "exEn": "I've been working here for two years.",
+          "diff": "easy",
+          "blank": "depuis",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "depuis lundi",
+          "en": "since Monday",
+          "note": "depuis + a starting point means 'since'; the verb stays in the present because it is still happening.",
+          "ex": "Il pleut depuis lundi.",
+          "exEn": "It's been raining since Monday.",
+          "diff": "easy",
+          "blank": "depuis",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "depuis ce matin",
+          "en": "since this morning",
+          "note": "The same depuis + present pattern with a time of day as the starting point.",
+          "ex": "Elle est malade depuis ce matin.",
+          "exEn": "She's been ill since this morning.",
+          "diff": "okay",
+          "blank": "depuis",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "depuis toujours",
+          "en": "always (and still now)",
+          "note": "Literally 'since always': for something that has always been true and still is.",
+          "ex": "Je connais Paul depuis toujours.",
+          "exEn": "I've always known Paul.",
+          "diff": "okay",
+          "blank": "depuis",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "depuis combien de temps ?",
+          "en": "how long (so far)?",
+          "note": "The question for something still going on; the answer uses depuis and the verb stays in the present.",
+          "ex": "Vous attendez depuis combien de temps ?",
+          "exEn": "How long have you been waiting?",
+          "diff": "okay",
+          "blank": "depuis",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ça fait une heure",
+          "en": "it's been an hour",
+          "note": "ça fait + a length of time + que + present: the same meaning as depuis, with the length placed first.",
+          "ex": "Ça fait une heure que je t'attends !",
+          "exEn": "I've been waiting for you for an hour!",
+          "diff": "hard",
+          "blank": "fait",
+          "alts": [
+            "cela fait une heure"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "pendant deux heures",
+          "en": "for two hours (in all)",
+          "note": "pendant gives the length of a stretch with an end; this wait is over, so the verb is in the past.",
+          "ex": "J'ai attendu pendant deux heures.",
+          "exEn": "I waited for two hours.",
+          "diff": "easy",
+          "blank": "pendant",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "pendant les vacances",
+          "en": "during the holidays",
+          "note": "pendant + an event or a period means 'during'; here with a present for something that happens every holiday.",
+          "ex": "Je lis beaucoup pendant les vacances.",
+          "exEn": "I read a lot during the holidays.",
+          "diff": "easy",
+          "blank": "pendant",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "pendant combien de temps ?",
+          "en": "for how long (in total)?",
+          "note": "The question for a stretch that is over or planned as a whole; compare depuis combien de temps ? for something still going on.",
+          "ex": "Tu as vécu à Londres pendant combien de temps ?",
+          "exEn": "How long did you live in London?",
+          "diff": "hard",
+          "blank": "pendant",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il y a deux jours",
+          "en": "two days ago",
+          "note": "il y a + a length of time means 'ago' and goes with a past verb; here it has nothing to do with 'there is'.",
+          "ex": "Je l'ai vu il y a deux jours.",
+          "exEn": "I saw him two days ago.",
+          "diff": "okay",
+          "blank": "il y a",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il y a longtemps",
+          "en": "a long time ago",
+          "note": "il y a + longtemps: a moment far back in the past.",
+          "ex": "J'ai lu ce livre il y a longtemps.",
+          "exEn": "I read this book a long time ago.",
+          "diff": "okay",
+          "blank": "il y a",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

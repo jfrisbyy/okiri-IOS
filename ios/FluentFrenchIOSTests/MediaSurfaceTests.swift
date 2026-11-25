@@ -1,0 +1,994 @@
+//
+//  MediaSurfaceTests.swift
+//  FluentFrenchIOSTests
+//
+//  Package E-media — Listen and Watch: the per-turn listening capture split and
+//  its store path (E8 / E7), the dialogue player's state machine (E17), the
+//  curated Watch catalogue validation (E19), the level-aware listening shelf,
+//  the media failure vocabulary and the bounded wait (E26), and the transcript
+//  text helpers.
+//
+
+import Foundation
+import Testing
+@testable import FluentFrenchIOS
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
+@MainActor
+struct MediaSurfaceTests {
+    private let now = EngineFixtures.now
+
+    private func dialogue(_ lines: [(String, String, String)], difficulty: ListeningDifficulty = .beginner) -> ListeningItem {
+        ListeningItem(
+            id: "t-dialogue", title: "t-title", titleEnglish: "t-title-en", description: "", emoji: "",
+            difficulty: difficulty, type: .dialogue, durationSeconds: 30, category: "test",
+            turns: lines.map { ListeningTurn(speaker: $0.0, french: $0.1, english: $0.2) }
+        )
+    }
+
+    // MARK: - E8 capture split
+
+    @Test func aMultiTurnSelectionYieldsOneSpecPerTurnWithItsOwnEnglish() {
+        let item = dialogue([("A", "fr-0", "en-0"), ("B", "fr-1", "en-1"), ("A", "fr-2", "en-2"), ("B", "fr-3", "en-3")])
+        let specs = ListeningCapture.specs(for: item, from: 1, to: 3)
+        #expect(specs.map(\.turnIndex) == [1, 2, 3])
+        #expect(specs.map(\.french) == ["fr-1", "fr-2", "fr-3"])
+        #expect(specs.map(\.english) == ["en-1", "en-2", "en-3"], "each line keeps the English of ITS turn")
+        #expect(specs.map(\.speaker) == ["B", "A", "B"])
+        #expect(!specs.contains { $0.french.contains(" fr-") }, "never a joined passage")
+    }
+
+    @Test func selectionRangeIsNormalisedAndClamped() {
+        let item = dialogue([("A", "fr-0", "en-0"), ("B", "fr-1", "en-1"), ("A", "fr-2", "en-2")])
+        #expect(ListeningCapture.specs(for: item, from: 2, to: 0).map(\.turnIndex) == [0, 1, 2], "either end may come first")
+        #expect(ListeningCapture.specs(for: item, from: 1, to: 9).map(\.turnIndex) == [1, 2], "clamped to the dialogue")
+        #expect(ListeningCapture.specs(for: item, from: -3, to: -1).isEmpty, "a selection entirely outside the dialogue saves nothing")
+        #expect(ListeningCapture.specs(for: item, from: -3, to: 0).map(\.turnIndex) == [0])
+        #expect(ListeningCapture.specs(for: item, from: 1, to: 1).map(\.french) == ["fr-1"], "a single line is one spec")
+        #expect(ListeningCapture.specs(for: dialogue([]), from: 0, to: 0).isEmpty)
+    }
+
+    @Test func emptyAndRepeatedLinesAreSkippedWithinASelection() {
+        let item = dialogue([("A", "Bonjour", "hello"), ("B", "   ", ""), ("A", "bonjour", "hello again")])
+        let specs = ListeningCapture.specs(for: item, from: 0, to: 2)
+        #expect(specs.map(\.turnIndex) == [0], "blank French is skipped; a case-insensitive repeat appears once")
+    }
+
+    // MARK: - E8 / E7 store path
+
+    @Test func capturingASelectionSavesOneScheduledGapPerTurnAtTheDialogueLevel() {
+        let store = EngineFixtures.store()
+        let item = dialogue([("A", "fr-0", "en-0"), ("B", "fr-1", "en-1"), ("A", "fr-2", "en-2")], difficulty: .intermediate)
+        let specs = ListeningCapture.specs(for: item, from: 0, to: 2)
+        let outcome = store.captureListeningTurns(specs, from: item, now: now)
+        #expect(outcome.savedCount == 3)
+        #expect(outcome.duplicateCount == 0)
+        let saved = store.visibleGaps.filter { $0.sourceType == .listening }
+        #expect(saved.count == 3)
+        for gap in saved {
+            #expect(gap.category == .phrasing)
+            #expect(gap.cefrLevel == ListeningDifficulty.intermediate.captureLevel, "level comes from the dialogue, not a hard-coded A2")
+            #expect(gap.fsrs != nil, "built through the capture factory so it starts scheduled")
+            #expect(gap.irtDifficulty == Tuning.irtDifficulty(for: .B1) + Tuning.irtHardBump,
+                    "B1 material is a stretch for the default A2 learner")
+            #expect(gap.needsTranslation == false)
+            #expect(gap.originalContext?.sourceTab == "listen")
+            #expect(gap.explanation.contains("t-title"))
+        }
+        let byWord = Dictionary(uniqueKeysWithValues: saved.map { ($0.frenchWord, $0.englishTranslation) })
+        #expect(byWord == ["fr-0": "en-0", "fr-1": "en-1", "fr-2": "en-2"], "each gap's translation is its own turn's English")
+    }
+
+    @Test func recapturingTheSameLinesReportsDuplicatesAndAddsNothing() {
+        let store = EngineFixtures.store()
+        let item = dialogue([("A", "fr-0", "en-0"), ("B", "fr-1", "en-1")])
+        let specs = ListeningCapture.specs(for: item, from: 0, to: 1)
+        store.captureListeningTurns(specs, from: item, now: now)
+        let again = store.captureListeningTurns(specs, from: item, now: now)
+        #expect(again.savedCount == 0)
+        #expect(again.duplicateCount == 2)
+        #expect(store.visibleGaps.count == 2)
+        if case .duplicate = store.captureListeningTurn(specs[0], from: item, now: now) {} else {
+            Issue.record("a single re-capture reports the existing gap")
+        }
+    }
+
+    @Test func aLineWithoutEnglishIsSavedAwaitingTranslationNeverWithAPlaceholder() {
+        let store = EngineFixtures.store()
+        let item = dialogue([("A", "fr-0", "")])
+        let outcome = store.captureListeningTurn(ListeningCapture.specs(for: item, from: 0, to: 0)[0], from: item, now: now)
+        guard case .saved(let gap) = outcome else { Issue.record("expected a save"); return }
+        #expect(gap.needsTranslation)
+        #expect(gap.englishTranslation.isEmpty)
+        #expect(gap.originalContext?.translation == nil)
+    }
+
+    @Test func beginnerDialoguesAreEasyForAnAdvancedLearner() {
+        let store = EngineFixtures.store()
+        store.abilityTheta = 2.2   // C1
+        let item = dialogue([("A", "fr-0", "en-0")], difficulty: .beginner)
+        guard case .saved(let gap) = store.captureListeningTurn(ListeningCapture.specs(for: item, from: 0, to: 0)[0], from: item, now: now) else {
+            Issue.record("expected a save"); return
+        }
+        #expect(gap.cefrLevel == .A1)
+        #expect(gap.difficulty == .easy)
+    }
+
+    // MARK: - talkmedia-5-1 card-size rule on listening captures
+
+    /// talkmedia-6-1. Requiring a line to be TYPEABLE before it could be saved
+    /// refused half the shipped dialogue. A dialogue turn is a card even when it is
+    /// long or made of two short sentences; what it must never become is a question
+    /// the learner types out, and the scheduler enforces that separately. Only a
+    /// line past `maxCardWords`, or one cut off mid-sentence, is text rather than a card.
+    @Test func aDialogueLineIsACardUnlessItIsTextRatherThanAnUtterance() {
+        let store = EngineFixtures.store()
+        let overCard = (1...(Tuning.maxCardWords + 1)).map { "mot\($0)" }.joined(separator: " ")
+        let longButWhole = (1...(Tuning.maxCaptureWords + 3)).map { "mot\($0)" }.joined(separator: " ") + " ."
+        let twoSentences = "Bonjour ! Je voudrais un café."
+        let item = dialogue([("A", overCard, "en-over"), ("B", twoSentences, "en-two"), ("A", longButWhole, "en-long")])
+        let specs = ListeningCapture.specs(for: item, from: 0, to: 2)
+        #expect(specs.map(\.isCardSized) == [false, true, true],
+                "the sheet can tell which lines the deck would take")
+        #expect(store.captureListeningTurn(specs[0], from: item, now: now) == .rejected,
+                "past \(Tuning.maxCardWords) words it is text, not a card")
+        guard case .saved = store.captureListeningTurn(specs[1], from: item, now: now) else {
+            Issue.record("a complete two-sentence dialogue turn is a card"); return
+        }
+        guard case .saved = store.captureListeningTurn(specs[2], from: item, now: now) else {
+            Issue.record("a long but complete line is a card, just not a typed one"); return
+        }
+        #expect(store.gaps.filter { $0.sourceType == .listening }.count == 2)
+        #expect(!CaptureBuilder.isTypeableHeadword(longButWhole),
+                "saved, but the lesson may never ask the learner to write it out")
+    }
+
+    @Test func savingAWholeSelectionKeepsOnlyTheCardSizedLines() {
+        let store = EngineFixtures.store()
+        let long = (1...(Tuning.maxCardWords + 1)).map { "mot\($0)" }.joined(separator: " ")
+        let item = dialogue([("A", "un café", "a coffee"), ("B", long, "en-long"), ("A", "s'il vous plaît", "please")])
+        let outcome = store.captureListeningTurns(ListeningCapture.specs(for: item, from: 0, to: 2), from: item, now: now)
+        #expect(outcome.savedCount == 2)
+        #expect(outcome.duplicateCount == 0)
+        #expect(store.gaps.map(\.frenchWord).sorted() == ["s'il vous plaît", "un café"])
+        #expect(store.gaps.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.frenchWord) })
+    }
+
+    @Test func everyShippedDialogueLineTheDeckAcceptsIsCardSized() {
+        let store = EngineFixtures.store()
+        for item in ListeningData.items {
+            let specs = ListeningCapture.specs(for: item, from: 0, to: max(0, item.turns.count - 1))
+            for spec in specs {
+                let outcome = store.captureListeningTurn(spec, from: item, now: now)
+                if case .saved = outcome {
+                    #expect(spec.isCardSized, "\(spec.french) was saved but is not card-sized")
+                    #expect(CaptureBuilder.isAcceptableHeadword(spec.french))
+                } else if case .rejected = outcome {
+                    #expect(!spec.isCardSized, "\(spec.french) is card-sized but was refused")
+                }
+            }
+        }
+        #expect(store.gaps.allSatisfy { CaptureBuilder.isAcceptableHeadword($0.frenchWord) },
+                "no shipped dialogue line can put an unanswerable card in the deck")
+    }
+
+    // MARK: - E17 playback state machine
+
+    @Test func pauseWhileBufferingClearsTheSpinnerAndDropsTheClip() {
+        var s = PlaybackState()
+        s.load(turnCount: 3)
+        let started = s.play()
+        #expect(started)
+        let token = s.beginFetch()
+        #expect(s.isBuffering)
+        s.pause()
+        #expect(!s.isBuffering, "E17: pause clears buffering")
+        #expect(!s.isPlaying)
+        let stale = s.finishFetch(token: token)
+        #expect(!stale, "the clip that arrives after pause is stale")
+        #expect(!s.isBuffering)
+    }
+
+    @Test func jumpWhileBufferingClearsTheSpinnerAndInvalidatesTheFetch() {
+        var s = PlaybackState()
+        s.load(turnCount: 3)
+        _ = s.play()
+        let token = s.beginFetch()
+        let wasPlaying = s.jump(to: 2)
+        #expect(wasPlaying, "jump reports the player was playing so the new line starts")
+        #expect(s.currentIndex == 2)
+        #expect(!s.isBuffering)
+        let stale = s.finishFetch(token: token)
+        #expect(!stale)
+        let clampedHigh = s.jump(to: 99)
+        #expect(clampedHigh)
+        #expect(s.currentIndex == 2, "clamped")
+        _ = s.jump(to: -1)
+        #expect(s.currentIndex == 0)
+    }
+
+    /// talkmedia-2-4: tapping a transcript line promises "Plays from this line",
+    /// so it must make sound from a paused player too — `jump(to:)` keeps the
+    /// transport state (skip buttons), `jumpAndPlay(to:)` starts the line.
+    @Test func tappingALineStartsItEvenWhenThePlayerIsPaused() {
+        var paused = PlaybackState()
+        paused.load(turnCount: 3)
+        #expect(!paused.isPlaying, "a freshly loaded dialogue is paused")
+        let transportJump = paused.jump(to: 1)
+        #expect(!transportJump, "the transport jump does not start playback")
+        #expect(paused.currentIndex == 1)
+        #expect(!paused.isPlaying)
+        let tapped = paused.jumpAndPlay(to: 2)
+        #expect(tapped, "the tap asks for the line out loud")
+        #expect(paused.currentIndex == 2)
+        #expect(paused.isPlaying)
+
+        // After the end, a tap restarts from the tapped line rather than staying finished.
+        var finished = PlaybackState()
+        finished.load(turnCount: 2)
+        _ = finished.play()
+        _ = finished.turnFinished()
+        _ = finished.turnFinished()
+        #expect(finished.didFinish)
+        let restarted = finished.jumpAndPlay(to: 0)
+        #expect(restarted)
+        #expect(!finished.didFinish)
+        #expect(finished.isPlaying)
+        #expect(finished.currentIndex == 0)
+
+        // A clip in flight for the old line is invalidated, as with any jump.
+        var buffering = PlaybackState()
+        buffering.load(turnCount: 3)
+        _ = buffering.play()
+        let token = buffering.beginFetch()
+        let jumpedWhileBuffering = buffering.jumpAndPlay(to: 2)
+        #expect(jumpedWhileBuffering)
+        #expect(!buffering.isBuffering)
+        let stale = buffering.finishFetch(token: token)
+        #expect(!stale, "the stale clip is ignored")
+
+        var empty = PlaybackState()
+        empty.load(turnCount: 0)
+        let nothingToPlay = empty.jumpAndPlay(to: 0)
+        #expect(!nothingToPlay, "nothing to play")
+        #expect(!empty.isPlaying)
+    }
+
+    @Test func aFetchThatLandsInTimePlaysOnlyWhileStillPlaying() {
+        var s = PlaybackState()
+        s.load(turnCount: 2)
+        _ = s.play()
+        let token = s.beginFetch()
+        let plays = s.finishFetch(token: token)
+        #expect(plays)
+        #expect(!s.isBuffering)
+        // A second fetch, then stop before it lands: buffering clears, audio must not play.
+        let second = s.beginFetch()
+        s.stop()
+        #expect(!s.isBuffering)
+        let playsAfterStop = s.finishFetch(token: second)
+        #expect(!playsAfterStop)
+    }
+
+    @Test func skippingTheWaitSpeaksNowWithTheBuiltInVoice() {
+        var s = PlaybackState()
+        s.load(turnCount: 2)
+        _ = s.play()
+        let token = s.beginFetch()
+        let speakNow = s.skipBuffering()
+        #expect(speakNow, "still playing → caller speaks with the built-in voice")
+        #expect(!s.isBuffering)
+        let stale = s.finishFetch(token: token)
+        #expect(!stale, "the skipped clip is ignored when it lands")
+        let nothingToSkip = s.skipBuffering()
+        #expect(!nothingToSkip, "nothing to skip when not buffering")
+    }
+
+    @Test func turnsAdvanceThenFinishAndReplayRestartsTheLine() {
+        var s = PlaybackState()
+        s.load(turnCount: 2)
+        let ignored = s.turnFinished()
+        #expect(ignored == .ignore, "not playing → ignored")
+        _ = s.play()
+        let next = s.turnFinished()
+        #expect(next == .speakNext)
+        #expect(s.currentIndex == 1)
+        #expect(s.progress == 0.5)
+        let finished = s.turnFinished()
+        #expect(finished == .finished)
+        #expect(s.didFinish)
+        #expect(!s.isPlaying)
+        let replayed = s.replay()
+        #expect(replayed)
+        #expect(s.isPlaying)
+        #expect(!s.didFinish)
+        #expect(s.currentIndex == 1, "replay keeps the line")
+        s.load(turnCount: 0)
+        let playedEmpty = s.play()
+        #expect(!playedEmpty, "no turns → nothing to play")
+        let replayedEmpty = s.replay()
+        #expect(!replayedEmpty)
+        #expect(s.progress == 0)
+    }
+
+    @Test func everyTransitionThatStartsALineBumpsTheToken() {
+        var s = PlaybackState()
+        s.load(turnCount: 3)
+        _ = s.play()
+        let a = s.beginTurn()
+        let b = s.beginFetch()
+        #expect(b > a)
+        _ = s.jump(to: 1)
+        #expect(s.token > b)
+        let c = s.token
+        _ = s.replay()
+        #expect(s.token > c)
+        let stale = s.finishFetch(token: b)
+        #expect(!stale)
+    }
+
+    // MARK: - E19 curated catalogue
+
+    @Test func everyCuratedIdIsAWellFormedUniqueYouTubeId() {
+        var seen: Set<String> = []
+        for (category, entries) in WatchCatalog.curatedEntries {
+            #expect(WatchCatalog.categories.contains { $0.id == category }, "curated category \(category) exists")
+            for entry in entries {
+                #expect(YouTubeVideoID.isValid(entry.videoId), "\(entry.videoId) is malformed")
+                #expect(seen.insert(entry.videoId).inserted, "\(entry.videoId) listed twice")
+                #expect(!entry.title.isEmpty && !entry.channel.isEmpty)
+            }
+        }
+    }
+
+    @Test func removedIdsNeverComeBackAndNothingIsSubstituted() {
+        // The corrupted id, the placeholder it used to be swapped for, the ids
+        // that were not French-learning content, and the Education ids that
+        // could not be verified before beta (EM-3).
+        let banned = ["kKL5t竹", "dQw4w9WgXcQ", "9bZkp7q19f0", "M7lc1UVf-VE", "e-ORhEE9VVg", "ScMzIvxBSi4",
+                      "tQKkR-EBh3E", "0yzZGz5Vg7Y", "5MgBikgcWnY"]
+        let all = WatchCatalog.curatedEntries.values.flatMap { $0 }.map(\.videoId)
+        for id in banned { #expect(!all.contains(id), "\(id) must not be in the catalogue") }
+        for category in WatchCatalog.categories {
+            for video in WatchCatalog.curated(for: category.id) {
+                #expect(video.thumbnailUrl.contains(video.videoId), "thumbnail is derived from the video's OWN id")
+                #expect(!banned.contains(video.videoId))
+                #expect(video.views == 0, "curated entries show no invented view counts")
+            }
+        }
+    }
+
+    @Test func categoriesWithoutJustifiedEntriesAreEmptyNotBorrowed() {
+        #expect(WatchCatalog.curated(for: "27").isEmpty, "Education ships empty until its ids are verified (EM-3)")
+        #expect(WatchCatalog.curated(for: "10").isEmpty, "Music lost every entry it could not justify")
+        #expect(WatchCatalog.curated(for: "24").isEmpty)
+        #expect(WatchCatalog.curated(for: "17").isEmpty)
+        #expect(WatchCatalog.curated(for: "no-such-category").isEmpty, "never falls back to another category")
+    }
+
+    @Test func videoIdValidationIsStrict() {
+        #expect(YouTubeVideoID.isValid("dQw4w9WgXcQ"))
+        #expect(YouTubeVideoID.isValid("a-b_c1D2E3F"))
+        #expect(!YouTubeVideoID.isValid("kKL5t竹"))
+        #expect(!YouTubeVideoID.isValid("tooshort"))
+        #expect(!YouTubeVideoID.isValid("waytoolongid1"))
+        #expect(!YouTubeVideoID.isValid("has space 1"))
+        #expect(!YouTubeVideoID.isValid(""))
+    }
+
+    @Test func isoDurationsParse() {
+        #expect(YouTubeDuration.seconds(fromISO: "PT1H2M3S") == 3723)
+        #expect(YouTubeDuration.seconds(fromISO: "PT15M") == 900)
+        #expect(YouTubeDuration.seconds(fromISO: "PT45S") == 45)
+        #expect(YouTubeDuration.seconds(fromISO: nil) == 0)
+        #expect(YTVideo(videoId: "a-b_c1D2E3F", title: "", channel: "", thumbnailUrl: "", durationSeconds: 3723, views: 1_500).durationLabel == "1:02:03")
+        #expect(YTVideo(videoId: "a-b_c1D2E3F", title: "", channel: "", thumbnailUrl: "", durationSeconds: 0, views: 0).viewsLabel == "")
+    }
+
+    // MARK: - Level-aware shelf
+
+    @Test func shelfOrdersTheLearnersBandFirstThenEasierThenStretch() {
+        let items = [
+            dialogue([("A", "a", "a")], difficulty: .advanced),
+            dialogue([("A", "b", "b")], difficulty: .beginner),
+            dialogue([("A", "c", "c")], difficulty: .intermediate),
+            dialogue([("A", "d", "d")], difficulty: .beginner),
+        ]
+        let ordered = ListeningShelf.ordered(items, learnerLevel: .B1)
+        #expect(ordered.map(\.difficulty) == [.intermediate, .beginner, .beginner, .advanced])
+        #expect(ordered[1].turns[0].french == "b" && ordered[2].turns[0].french == "d", "stable within a group")
+        #expect(ListeningShelf.fit(.beginner, learnerLevel: .A1) == .atLevel)
+        #expect(ListeningShelf.fit(.beginner, learnerLevel: .A2) == .atLevel)
+        #expect(ListeningShelf.fit(.intermediate, learnerLevel: .A2) == .stretch)
+        #expect(ListeningShelf.fit(.beginner, learnerLevel: .C2) == .easy)
+        #expect(ListeningShelf.recommendedDifficulty(for: .C1) == .advanced)
+        #expect(ListeningShelf.ordered(ListeningData.items, learnerLevel: .A1).first?.difficulty == .beginner)
+    }
+
+    @Test func difficultyBandsCoverEveryLevelExactlyOnce() {
+        let covered = ListeningDifficulty.allCases.flatMap(\.cefrLevels)
+        #expect(Set(covered) == Set(CEFRLevel.allCases))
+        #expect(covered.count == CEFRLevel.allCases.count)
+        #expect(ListeningDifficulty.beginner.captureLevel == .A1)
+        #expect(ListeningDifficulty.advanced.captureLevel == .C1)
+    }
+
+    // MARK: - Bundled dialogues stay sound
+
+    @Test func bundledDialoguesHaveUniqueIdsAndCompleteTurns() {
+        var ids: Set<String> = []
+        for item in ListeningData.items {
+            #expect(ids.insert(item.id).inserted, "duplicate listening id \(item.id)")
+            #expect(!item.turns.isEmpty)
+            for turn in item.turns {
+                #expect(!turn.french.trimmingCharacters(in: .whitespaces).isEmpty)
+                #expect(!turn.english.trimmingCharacters(in: .whitespaces).isEmpty)
+                #expect(["A", "B", "narrator"].contains(turn.speaker))
+                #expect(!turn.french.contains("Je hésite"), "E24: elision fixed in content")
+            }
+        }
+    }
+
+    // MARK: - E26 failure vocabulary and bounded wait
+
+    @Test func transportErrorsClassifyAsOfflineOrService() {
+        #expect(MediaServiceFailure.classify(URLError(.notConnectedToInternet)) == .offline)
+        #expect(MediaServiceFailure.classify(URLError(.cannotFindHost)) == .offline)
+        #expect(MediaServiceFailure.classify(URLError(.timedOut)) == .serviceError)
+        #expect(MediaServiceFailure.classify(NSError(domain: "x", code: 1)) == .serviceError)
+        #expect(MediaServiceFailure.classify(statusCode: 200) == nil)
+        #expect(MediaServiceFailure.classify(statusCode: 429) == .serviceError)
+        #expect(!MediaServiceFailure.noKey.isRetryable)
+        #expect(MediaServiceFailure.offline.isRetryable)
+    }
+
+    @Test func everyFailureHasLearnerFacingCopyWithNoToolNames() {
+        for failure in [MediaServiceFailure.noKey, .offline, .serviceError] {
+            let strings = [
+                VideoFeedCopy.title(failure), VideoFeedCopy.message(failure),
+                VideoFeedCopy.searchTitle(failure), VideoFeedCopy.searchMessage(failure),
+                VideoFeedCopy.curatedLabel, VideoFeedCopy.unavailableLabel, VideoFeedCopy.emptyCategory,
+                TranscriptCopy.title(failure), TranscriptCopy.message(failure),
+                TranscriptCopy.coverageFootnote(.english(.failed(failure))) ?? "",
+                TranscriptCopy.coverageFootnote(.partlyEnglish(englishLines: 3, stop: .failed(failure))) ?? "",
+                TranscriptCopy.coverageFootnote(.partlyEnglish(englishLines: 1, stop: .outOfTime)) ?? "",
+                TranscriptCopy.coverageFootnote(.translating(done: 2, total: 9)) ?? "",
+                SystemVoiceReason(failure).notice,
+            ]
+            for s in strings {
+                #expect(!s.isEmpty)
+                for leak in ["Rork", "Supadata", "ElevenLabs", "OpenRouter", "YouTube API"] {
+                    #expect(!s.contains(leak), "\(s) leaks \(leak)")
+                }
+            }
+        }
+        #expect(VoiceSource.natural.notice == nil)
+        #expect(VoiceSource.system(.skippedWait).notice == SystemVoiceReason.skippedWait.notice)
+        #expect(VoiceSource.system(.noKey).label != VoiceSource.natural.label)
+    }
+
+    @Test func deadlineReturnsTheValueInTimeAndNilWhenLate() async {
+        let fast = await Deadline.run(seconds: 2) { 42 }
+        #expect(fast == 42)
+        let late = await Deadline.run(seconds: 0.05) { () -> Int in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            return 1
+        }
+        #expect(late == nil)
+    }
+
+    // MARK: - Transcript text
+
+    @Test func transcriptTextHelpers() {
+        #expect(TranscriptText.cleanHTML("<i>Bonjour</i> &amp; bienvenue\n&#39;ok&#39;") == "Bonjour & bienvenue 'ok'")
+        #expect(TranscriptText.parseNumberedLine("[3] Salut tout le monde")?.index == 3)
+        #expect(TranscriptText.parseNumberedLine("[3] Salut tout le monde")?.text == "Salut tout le monde")
+        #expect(TranscriptText.parseNumberedLine("[x] nope") == nil)
+        #expect(TranscriptText.parseNumberedLine("[4]") == nil)
+        let segments = [
+            TranscriptSegment(id: "a", text: "a", start: 0, duration: 2),
+            TranscriptSegment(id: "b", text: "b", start: 2, duration: 2),
+            TranscriptSegment(id: "c", text: "c", start: 4, duration: 2),
+        ]
+        #expect(TranscriptText.activeIndex(in: segments, at: 0) == 0)
+        #expect(TranscriptText.activeIndex(in: segments, at: 3.5) == 1)
+        #expect(TranscriptText.activeIndex(in: segments, at: 99) == 2)
+        #expect(TranscriptText.activeIndex(in: segments, at: -1) == -1)
+        #expect(TranscriptText.activeIndex(in: [], at: 5) == -1)
+    }
+
+    // MARK: - EM-1 / EM-2 English captions → French, outside the fetch budget
+
+    private func englishLines(_ count: Int) -> [TranscriptSegment] {
+        (0..<count).map { TranscriptSegment(id: "e\($0)", text: "english \($0)", start: Double($0), duration: 1, language: .english) }
+    }
+
+    /// A translator that answers every batch correctly, advancing the fake
+    /// clock by `delay` seconds per call (so timing is deterministic even when
+    /// the suite runs under load).
+    private func echoTranslator(delay: TimeInterval = 0, clock: FakeClock? = nil, calls: CallCounter) -> TranscriptTranslation.Translator {
+        { numbered in
+            await calls.bump()
+            clock?.advance(by: delay)
+            let reply = numbered.split(separator: "\n").compactMap { line -> String? in
+                guard let match = TranscriptText.parseNumberedLine(String(line)) else { return nil }
+                return "[\(match.index)] français \(match.index)"
+            }.joined(separator: "\n")
+            return .success(reply)
+        }
+    }
+
+    @Test func theEnglishFallbackResultKeepsTheLinesTaggedEnglish() {
+        let lines = englishLines(3)
+        let result = TranscriptResult.segments(lines, language: .english, origin: .translatedFromEnglish)
+        guard case .segments(let got, let language, let origin) = result else { Issue.record("expected segments"); return }
+        #expect(language == .english)
+        #expect(origin == .translatedFromEnglish)
+        #expect(got.allSatisfy { $0.language == .english })
+        #expect(TranscriptSegment(id: "x", text: "x", start: 0, duration: 1).language == .french, "lines default to French")
+        // EM-2: an English line offers no word lookup, so a caption word can
+        // never be captured as a French deck card — the rule every transcript
+        // surface (list row, portrait subtitle, fullscreen subtitle) asks.
+        #expect(got.allSatisfy { !$0.allowsWordLookup }, "English lines are inert")
+        #expect(got[0].translated("bonjour").allowsWordLookup, "a translated line is French again")
+        #expect(TranscriptSegment(id: "x", text: "x", start: 0, duration: 1).allowsWordLookup)
+        #expect(got[0].translated("bonjour").language == .french)
+        #expect(got[0].translated("bonjour").id == "e0" && got[0].translated("bonjour").start == 0)
+        #expect(TranscriptCoverage.of(got, finished: true, stop: .failed(.noKey)) == .english(.failed(.noKey)))
+        #expect(TranscriptCoverage.of(got, finished: false, stop: nil) == .translating(done: 0, total: 3))
+        #expect(TranscriptCoverage.of([got[0].translated("a"), got[1], got[2]], finished: true, stop: nil)
+                == .partlyEnglish(englishLines: 2, stop: .outOfTime), "stopping without a failure is out of time")
+        #expect(TranscriptCoverage.of(got.map { $0.translated("fr") }, finished: true, stop: nil) == .french)
+        #expect(TranscriptCoverage.of([], finished: false, stop: nil) == .french)
+    }
+
+    @Test func aLongEnglishTranscriptWithASlowTranslatorStillYieldsEveryLine() async {
+        let lines = englishLines(100)
+        let calls = CallCounter()
+        let clock = FakeClock()
+        var snapshots: [TranscriptTranslationProgress] = []
+        // Each batch "takes" 15 s of a 45 s budget: exactly three land.
+        for await progress in TranscriptTranslation.stream(
+            lines, batchSize: 10, maxBatches: 100, budget: 45, maxConsecutiveFailures: 2,
+            translator: echoTranslator(delay: 15, clock: clock, calls: calls),
+            now: { clock.now }
+        ) {
+            snapshots.append(progress)
+        }
+        guard let final = snapshots.last else { Issue.record("no final snapshot"); return }
+        #expect(final.segments.count == 100, "the lines are never dropped into a failure")
+        #expect(final.segments.map(\.id) == lines.map(\.id))
+        let translated = final.segments.filter { $0.language == .french }.count
+        #expect(translated == 30, "the batches that landed before the budget ran out (\(translated))")
+        if case .partlyEnglish(let englishLines, let stop) = final.coverage {
+            #expect(englishLines == 100 - translated)
+            #expect(stop == .outOfTime)
+            #expect(final.coverage.isRetryable)
+        } else {
+            Issue.record("expected partlyEnglish, got \(final.coverage)")
+        }
+        #expect(snapshots.count == 4, "a snapshot per batch, then the final one")
+        #expect(snapshots.dropLast().allSatisfy { $0.coverage.isTranslating })
+        #expect(snapshots[0].coverage == .translating(done: 10, total: 100))
+        let made = await calls.count
+        #expect(made == 3, "the pass stopped at the budget instead of running every batch (\(made))")
+    }
+
+    @Test func noTranslationKeyIsReportedNotSkipped() async {
+        let calls = CallCounter()
+        let final = await TranscriptTranslation.run(
+            englishLines(25), batchSize: 10, maxBatches: 10, budget: 600, maxConsecutiveFailures: 2,
+            translator: { _ in await calls.bump(); return .failure(.noKey) }
+        )
+        #expect(final.coverage == .english(.failed(.noKey)))
+        #expect(!final.coverage.isRetryable)
+        #expect(final.segments.allSatisfy { $0.language == .english })
+        #expect(final.segments.count == 25)
+        let made = await calls.count
+        #expect(made == 1, "a missing key stops the pass immediately")
+        #expect(TranscriptCopy.coverageFootnote(.english(.failed(.noKey)))?.contains("isn't available in this build") == true)
+    }
+
+    @Test func unreadableRepliesAndServiceErrorsCountAsFailuresAndStopThePass() async {
+        let calls = CallCounter()
+        let garbage = await TranscriptTranslation.run(
+            englishLines(50), batchSize: 10, maxBatches: 10, budget: 600, maxConsecutiveFailures: 2,
+            translator: { _ in await calls.bump(); return .success("Sure! Here are the lines.") }
+        )
+        #expect(garbage.coverage == .english(.failed(.serviceError)), "an answer in the wrong shape is a failure, not silence")
+        let garbageCalls = await calls.count
+        #expect(garbageCalls == 2, "two unreadable batches in a row end the pass")
+
+        let flaky = CallCounter()
+        let mixed = await TranscriptTranslation.run(
+            englishLines(30), batchSize: 10, maxBatches: 10, budget: 600, maxConsecutiveFailures: 2,
+            translator: { numbered in
+                let n = await flaky.bump()
+                if n == 1 { return .failure(.serviceError) }
+                let reply = numbered.split(separator: "\n").compactMap { line -> String? in
+                    guard let m = TranscriptText.parseNumberedLine(String(line)) else { return nil }
+                    return "[\(m.index)] fr \(m.index)"
+                }.joined(separator: "\n")
+                return .success(reply)
+            }
+        )
+        #expect(mixed.coverage == .partlyEnglish(englishLines: 10, stop: .failed(.serviceError)),
+                "one failed batch keeps its lines English while the rest translate, and the footnote names the service")
+        #expect(mixed.segments.prefix(10).allSatisfy { $0.language == .english })
+        #expect(mixed.segments.dropFirst(10).allSatisfy { $0.language == .french })
+
+        let offline = await TranscriptTranslation.run(
+            englishLines(30), batchSize: 10, maxBatches: 10, budget: 600, maxConsecutiveFailures: 5,
+            translator: { _ in .failure(.offline) }
+        )
+        #expect(offline.coverage == .english(.failed(.offline)), "offline stops on the first failure")
+    }
+
+    @Test func theBatchCapLeavesTheRestEnglishAndSaysSo() async {
+        let calls = CallCounter()
+        let final = await TranscriptTranslation.run(
+            englishLines(30), batchSize: 10, maxBatches: 1, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: calls)
+        )
+        #expect(final.coverage == .partlyEnglish(englishLines: 20, stop: .outOfTime))
+        #expect(final.segments.prefix(10).allSatisfy { $0.language == .french && $0.text.hasPrefix("français") })
+        #expect(final.segments.dropFirst(10).allSatisfy { $0.language == .english })
+        let made = await calls.count
+        #expect(made == 1)
+
+        let complete = await TranscriptTranslation.run(
+            englishLines(30), batchSize: 10, maxBatches: 3, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: calls)
+        )
+        #expect(complete.coverage == .french)
+        #expect(TranscriptCopy.coverageFootnote(.french) == nil)
+    }
+
+    // talkmedia-3-2: once the English → French pass finishes every line is
+    // tagged `.french` and the coverage footnote goes away, so the provenance
+    // has to live somewhere the pass cannot erase. Only the video's own French
+    // captions are unlabelled.
+    @Test func translatedFrenchIsAlwaysLabelledAsATranslation() async {
+        #expect(TranscriptCopy.originFootnote(.nativeFrench) == nil)
+        #expect(TranscriptOrigin.nativeFrench.isNativeFrench)
+        #expect(!TranscriptOrigin.providerTranslated.isNativeFrench)
+        #expect(!TranscriptOrigin.translatedFromEnglish.isNativeFrench)
+
+        let provider = TranscriptCopy.originFootnote(.providerTranslated)
+        let fromEnglish = TranscriptCopy.originFootnote(.translatedFromEnglish)
+        #expect(provider?.contains("Auto-translated") == true)
+        #expect(fromEnglish?.contains("English captions") == true)
+        #expect(fromEnglish != provider, "the two translated sources are not described the same way")
+
+        // A fully translated transcript reads as `.french` coverage — which is
+        // exactly the state that used to leave the panel unlabelled.
+        let complete = await TranscriptTranslation.run(
+            englishLines(20), batchSize: 10, maxBatches: 5, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: CallCounter())
+        )
+        #expect(complete.coverage == .french)
+        #expect(TranscriptCopy.coverageFootnote(complete.coverage) == nil)
+        #expect(TranscriptCopy.originFootnote(.translatedFromEnglish) != nil,
+                "the provenance note survives a finished translation pass")
+    }
+
+    /// talkmedia-7-1: the provenance has to survive the tap, not just sit in the
+    /// header. A word saved from generated French keeps the word and names its
+    /// source; the generated sentence is never quoted on the card, and never
+    /// becomes the card's own example when the lookup fails.
+    @Test func aWordSavedFromGeneratedFrenchIsNeverFiledAsSeenInTheWild() {
+        let line = "Je voudrais un café, s'il vous plaît."
+        let gloss = WordGloss(term: "café", translation: "coffee", explanation: "A drink.",
+                              example: "Un café noir.", exampleTranslation: "A black coffee.")
+
+        let native = TranscriptCapture.draft(gloss: gloss, context: line, origin: .nativeFrench)
+        #expect(native.contextSentence == line, "the video's own French is real French met in the wild")
+        #expect(native.note.isEmpty)
+        #expect(native.sourceTab == TranscriptCapture.sourceTab)
+
+        for origin in [TranscriptOrigin.providerTranslated, .translatedFromEnglish] {
+            let draft = TranscriptCapture.draft(gloss: gloss, context: line, origin: origin)
+            #expect(draft.contextSentence.isEmpty, "generated French is not quoted on the card")
+            #expect(!draft.note.isEmpty, "the card says where the word was met instead")
+            #expect(draft.frenchWord == "café")
+
+            // The lookup failing is the worse case: the context would otherwise
+            // become the card's example sentence, which the lesson then blanks.
+            let unglossed = TranscriptCapture.draft(word: "café", context: line, origin: origin)
+            #expect(unglossed.contextSentence.isEmpty)
+            #expect(unglossed.exampleSentence.isEmpty)
+            #expect(!unglossed.note.isEmpty)
+        }
+        #expect(TranscriptCapture.note(for: .nativeFrench) == nil)
+        #expect(TranscriptCapture.note(for: .providerTranslated) != TranscriptCapture.note(for: .translatedFromEnglish))
+        #expect(TranscriptCapture.quotedContext(line, origin: .nativeFrench) == line)
+        #expect(TranscriptCapture.quotedContext(line, origin: .translatedFromEnglish).isEmpty)
+
+        // End to end: the card the store builds has no "seen in the wild"
+        // sentence at all — GapCardView only renders that box for a context —
+        // and the machine line is not its example either.
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        guard case .saved(let card) = store.capture(TranscriptCapture.draft(word: "café", context: line,
+                                                                           origin: .translatedFromEnglish)) else {
+            Issue.record("the word itself is still a card")
+            return
+        }
+        #expect(card.originalContext == nil, "no sentence is quoted as French met in the wild")
+        #expect(card.exampleSentence.isEmpty, "the generated line never becomes the card's example")
+        #expect(card.explanation.contains("English captions"), "the card says where the word came from")
+    }
+
+    @Test func aReplyOnlyTouchesItsOwnBatch() {
+        var lines = englishLines(6)
+        let batches = TranscriptTranslation.batches(of: lines, size: 4)
+        #expect(batches == [[0, 1, 2, 3], [4, 5]])
+        #expect(TranscriptTranslation.numbered(lines, indices: [4, 5]) == "[4] english 4\n[5] english 5")
+        let applied = TranscriptTranslation.apply(reply: "[4] quatre\n[0] zéro\n[9] neuf\n[5]\nnoise", to: &lines, indices: [4, 5])
+        #expect(applied == 1, "only [4] is in the batch and well formed")
+        #expect(lines[4].text == "quatre" && lines[4].language == .french)
+        #expect(lines[0].text == "english 0" && lines[0].language == .english, "a line outside the batch is untouched")
+        #expect(TranscriptTranslation.batches(of: lines, size: 4) == [[0, 1, 2, 3], [5]], "already-French lines are not re-sent")
+        #expect(TranscriptTranslation.batches(of: [], size: 4).isEmpty)
+    }
+
+    /// talkmedia-2-3: the footnote's "Try again" resumes the pass over the lines
+    /// still in English instead of refetching the transcript — the work that
+    /// already succeeded is kept, and only the missing lines cost a call.
+    @Test func retryingAPartlyTranslatedTranscriptOnlyRetranslatesTheEnglishLines() async {
+        let calls = CallCounter()
+        let first = await TranscriptTranslation.run(
+            englishLines(30), batchSize: 10, maxBatches: 1, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: calls)
+        )
+        #expect(first.coverage == .partlyEnglish(englishLines: 20, stop: .outOfTime))
+        #expect(first.coverage.isRetryable, "the footnote offers Try again")
+        let firstCalls = await calls.count
+        #expect(firstCalls == 1)
+
+        // The retry starts from the lines on screen, not from a fresh fetch.
+        let resumed = await TranscriptTranslation.run(
+            first.segments, batchSize: 10, maxBatches: 10, budget: 600, maxConsecutiveFailures: 2,
+            translator: echoTranslator(calls: calls)
+        )
+        #expect(resumed.coverage == .french)
+        #expect(resumed.segments.map(\.id) == first.segments.map(\.id), "the transcript itself is never re-fetched")
+        #expect(resumed.segments.prefix(10).map(\.text) == first.segments.prefix(10).map(\.text),
+                "lines translated by the first pass are kept as they were")
+        let resumedCalls = await calls.count
+        #expect(resumedCalls == 1 + 2, "only the two batches still in English were sent (\(resumedCalls))")
+        #expect(TranscriptCoverage.of(resumed.segments, finished: false, stop: nil) == .french,
+                "nothing is left to translate, so the panel shows no footnote")
+    }
+
+    // MARK: talkmedia-10-1 — a caption reply counts only in the language asked for
+
+    @Test func captionLanguagesMatchOnThePrimarySubtagOnly() {
+        #expect(CaptionLanguage.matches("fr", requested: "fr"))
+        #expect(CaptionLanguage.matches("fr-CA", requested: "fr"))
+        #expect(CaptionLanguage.matches("FR_fr", requested: "fr-FR"))
+        #expect(!CaptionLanguage.matches("en", requested: "fr"))
+        #expect(!CaptionLanguage.matches("en-US", requested: "fr"))
+        #expect(!CaptionLanguage.matches(nil, requested: "fr"), "an unreported language is unverified")
+        #expect(!CaptionLanguage.matches("", requested: "fr"))
+        #expect(CaptionLanguage.fromBackendSource("supadata:fr") == "fr")
+        #expect(CaptionLanguage.fromBackendSource("supadata:en") == "en")
+        #expect(CaptionLanguage.fromBackendSource("supadata_translate:fr-FR") == "fr-FR")
+        #expect(!CaptionLanguage.matches(CaptionLanguage.fromBackendSource("supadata:empty"), requested: "fr"))
+        #expect(CaptionLanguage.fromBackendSource("none") == nil)
+        #expect(CaptionLanguage.fromBackendSource(nil) == nil)
+    }
+
+    @Test func aProviderFallbackToEnglishIsNoFrenchTranscript() throws {
+        let english = Data(#"{"content":[{"text":"Hello everyone","offset":0,"duration":1500}],"lang":"en","availableLangs":["en"]}"#.utf8)
+        let asFrench = try #require(TranscriptService.providerReply(english, requested: "fr", videoId: "v"))
+        #expect(asFrench.segments.isEmpty, "English captions returned for a French request are not the video's French")
+        #expect(asFrench.availableLangs == ["en"])
+        let asEnglish = try #require(TranscriptService.providerReply(english, requested: "en", videoId: "v"))
+        #expect(asEnglish.segments.map(\.text) == ["Hello everyone"], "the same lines are the English stage's")
+
+        let french = Data(#"{"content":[{"text":"Bonjour à tous","offset":0,"duration":1500}],"lang":"fr","availableLangs":["fr","en"]}"#.utf8)
+        let native = try #require(TranscriptService.providerReply(french, requested: "fr", videoId: "v"))
+        #expect(native.segments.count == 1)
+
+        let unlabelled = Data(#"{"content":[{"text":"Hello","offset":0,"duration":1500}]}"#.utf8)
+        #expect(try #require(TranscriptService.providerReply(unlabelled, requested: "fr", videoId: "v")).segments.isEmpty)
+        #expect(TranscriptService.providerReply(Data("not json".utf8), requested: "fr", videoId: "v") == nil)
+    }
+
+    @Test func aBackendFallbackToEnglishIsNoFrenchTranscript() throws {
+        // The backend retries an empty French request with the first available
+        // language and says so only in `source`.
+        let fallback = Data(#"{"segments":[{"id":"s0","text":"Hello everyone","start":0,"duration":1.5}],"source":"supadata:en"}"#.utf8)
+        #expect(try TranscriptService.backendReply(fallback, requiredLanguage: "fr").isEmpty)
+        #expect(try TranscriptService.backendReply(fallback, requiredLanguage: "en").map(\.text) == ["Hello everyone"])
+
+        let french = Data(#"{"segments":[{"id":"s0","text":"Bonjour à tous","start":0,"duration":1.5}],"source":"supadata:fr"}"#.utf8)
+        #expect(try TranscriptService.backendReply(french, requiredLanguage: "fr").count == 1)
+
+        let translated = Data(#"{"segments":[{"id":"s0","text":"Bonjour à tous","start":0,"duration":1.5}],"source":"supadata_translate:fr"}"#.utf8)
+        #expect(try TranscriptService.backendReply(translated, requiredLanguage: nil).count == 1,
+                "the translate endpoint has no language fallback to check")
+        let unlabelled = Data(#"{"segments":[{"id":"s0","text":"Hello","start":0,"duration":1.5}]}"#.utf8)
+        #expect(try TranscriptService.backendReply(unlabelled, requiredLanguage: "fr").isEmpty)
+    }
+
+    // MARK: talkmedia-10-4 — a Watch tap saves the reader's headword
+
+    @Test func aWatchTapSavesTheHeadwordNotTheElidedOrCapitalisedForm() {
+        let line = "Alors je vois l'homme. Qu'il parte avant Paris"
+        #expect(TranscriptCapture.tokens(of: line).count == 8)
+        #expect(TranscriptCapture.headword(tokenAt: 0, in: line) == "alors", "a line-opening capital comes off")
+        #expect(TranscriptCapture.headword(tokenAt: 3, in: line) == "homme", "the elision comes off")
+        #expect(TranscriptCapture.headword(tokenAt: 4, in: line) == "il", "after a full stop the word opens a sentence")
+        #expect(TranscriptCapture.headword(tokenAt: 7, in: line) == "Paris", "a capital inside a sentence is a name")
+        #expect(TranscriptCapture.headword(tokenAt: 0, in: "J’ai faim") == "ai")
+        #expect(TranscriptCapture.headword(tokenAt: 9, in: line) == "", "out of range is nothing")
+        // The reader's rule, so the same word from a video and an article is one card.
+        #expect(TranscriptCapture.headword(tokenAt: 3, in: line) == KeyVocabulary.headword(for: "l'homme."))
+    }
+
+    @Test func aWordTappedInAVideoAndInAnArticleIsOneCard() {
+        let store = EngineFixtures.store(concepts: [], gaps: [])
+        let fromArticle = CaptureDraft(untranslated: KeyVocabulary.headword(for: "école"), sourceType: .reading, sourceTab: "read")
+        _ = store.capture(fromArticle, now: now)
+        let tapped = TranscriptCapture.headword(tokenAt: 3, in: "on va à l'école demain")
+        #expect(tapped == "école")
+        #expect(store.hasGap(forWord: tapped), "\"l'école\" in a video is the card the article already saved")
+        let draft = TranscriptCapture.draft(word: tapped, context: "on va à l'école demain", origin: .nativeFrench)
+        if case .saved = store.capture(draft, now: now) { Issue.record("the same word became a second card") }
+        #expect(store.gaps.count == 1)
+    }
+
+    // MARK: talkmedia-11-1 — a Watch tap finds the deck's article form
+
+    private func deckWord(_ id: String, _ french: String, _ english: String) -> GapItem {
+        var gap = EngineFixtures.gap(id, concept: nil)
+        gap.frenchWord = french
+        gap.englishTranslation = english
+        return gap
+    }
+
+    @Test func aWatchTapOnAWordTheDeckHoldsWithItsArticleIsAlreadySaved() {
+        let store = EngineFixtures.store(concepts: [], gaps: [deckWord("w1", "l'eau", "the water"),
+                                                              deckWord("w2", "la vie", "life"),
+                                                              deckWord("w3", "l'été", "summer")])
+        let line = "L'eau est froide"
+        let tapped = TranscriptCapture.headword(tokenAt: 0, in: line)
+        #expect(tapped == "eau")
+        #expect(!store.hasGap(forWord: tapped), "the exact key alone misses the deck's \"l'eau\"")
+        let water = WordGloss(term: "eau", translation: "water", explanation: "", example: "", exampleTranslation: "")
+        #expect(TranscriptCapture.isAlreadySaved(tapped, gloss: water, savedMeanings: store.savedHeadwordMeanings()),
+                "\"eau\" is the deck's \"l'eau\": the sheet must not offer a second card")
+        let life = WordGloss(term: "vie", translation: "life", explanation: "", example: "", exampleTranslation: "")
+        #expect(TranscriptCapture.isAlreadySaved("vie", gloss: life, savedMeanings: store.savedHeadwordMeanings()))
+        // A different word spelled like an article form is not saved (read-11-5).
+        let been = WordGloss(term: "été", translation: "been", explanation: "", example: "", exampleTranslation: "")
+        #expect(!TranscriptCapture.isAlreadySaved("été", gloss: been, savedMeanings: store.savedHeadwordMeanings()))
+        // Before the gloss arrives only the word's own key counts.
+        #expect(!TranscriptCapture.isAlreadySaved("eau", gloss: nil, savedMeanings: store.savedHeadwordMeanings()))
+    }
+
+    @Test func aWatchTranscriptHighlightsWordsSavedInAnEarlierSession() {
+        let store = EngineFixtures.store(concepts: [], gaps: [deckWord("w1", "maison", "house")])
+        let keys = store.savedHeadwordKeys()
+        let line = "Maison et jardin"
+        #expect(TranscriptCapture.isHighlighted(TranscriptCapture.headword(tokenAt: 0, in: line), savedKeys: keys),
+                "a word the deck already holds is marked the first time the video shows it")
+        #expect(!TranscriptCapture.isHighlighted(TranscriptCapture.headword(tokenAt: 2, in: line), savedKeys: keys))
+        #expect(TranscriptCapture.isHighlighted("Maison", savedKeys: [AppStore.captureKey("maison")]),
+                "a session save is held under the deck's key")
+    }
+
+    // MARK: talkmedia-11-6 — a number in a transcript is not a word
+
+    @Test func aNumberInATranscriptIsNotOfferedForLookup() {
+        let line = "En 2024 nous avons 15 ans"
+        #expect(TranscriptCapture.headword(tokenAt: 1, in: line) == "2024")
+        #expect(!TranscriptCapture.isLookupable(TranscriptCapture.headword(tokenAt: 1, in: line)))
+        #expect(!TranscriptCapture.isLookupable("15"))
+        #expect(TranscriptCapture.isLookupable(TranscriptCapture.headword(tokenAt: 2, in: line)))
+        #expect(TranscriptCapture.isLookupable("XXe"), "a token with any letter is still a word")
+        #expect(!TranscriptCapture.isHighlighted("2024", savedKeys: ["2024"]))
+    }
+
+    // MARK: talkmedia-11-7 — a deadline bounds an operation that ignores cancellation
+
+    @Test func aDeadlineReturnsOnTimeEvenWhenTheOperationIgnoresCancellation() async {
+        // Timed off the main actor, so other suites' work on it cannot skew the clock.
+        let (late, waited) = await Task.detached { () -> (Int?, Duration) in
+            let clock = ContinuousClock()
+            let start = clock.now
+            // An unstructured task does not inherit cancellation, exactly as the
+            // natural-voice fetch's shared download task does not.
+            let value = await Deadline.run(seconds: 0.1) { () -> Int in
+                await Task.detached { () -> Int in
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    return 1
+                }.value
+            }
+            return (value, clock.now - start)
+        }.value
+        #expect(late == nil)
+        #expect(waited < .seconds(2), "the spinner is held for the deadline, not the request (\(waited))")
+    }
+
+    @Test func aCancelledCallerStopsWaitingAtOnce() async {
+        let (value, waited) = await Task.detached { () -> (Int?, Duration) in
+            let clock = ContinuousClock()
+            let start = clock.now
+            let waiter = Task.detached { () -> Int? in
+                await Deadline.run(seconds: 10) { () -> Int in
+                    await Task.detached { () -> Int in
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        return 1
+                    }.value
+                }
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waiter.cancel()
+            let value = await waiter.value
+            return (value, clock.now - start)
+        }.value
+        #expect(value == nil)
+        #expect(waited < .seconds(2), "\(waited)")
+    }
+
+    // MARK: talkmedia-11-9 — a cancelled feed load publishes nothing
+
+    @Test func aCancelledTrendingLoadPublishesNoFailure() async {
+        let categories = Array(WatchCatalog.categories.prefix(2))
+        // What URLSession does when the load's task is cancelled: the request
+        // throws `URLError.cancelled`, which reads as the service not answering.
+        let loader = Task { () -> TrendingFeed.Loaded? in
+            await TrendingFeed.load(categories: categories) { id in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                return .curated(WatchCatalog.curated(for: id), reason: .serviceError)
+            }
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        loader.cancel()
+        let loaded = await loader.value
+        #expect(loaded == nil, "a load the app cancelled is not 'the video service didn't answer'")
+
+        let live = await TrendingFeed.load(categories: categories) { _ in .live([]) }
+        #expect(live?.feeds.count == categories.count)
+        #expect(live?.failure == nil)
+        let keyless = await TrendingFeed.load(categories: categories) { id in
+            id == categories.first?.id ? .curated([], reason: .serviceError) : .curated([], reason: .noKey)
+        }
+        #expect(keyless?.failure == .noKey, "a missing key explains every section")
+    }
+
+    // MARK: talkmedia-10-9 — a finished dialogue's bar is full
+
+    @Test func aFinishedDialogueShowsAFullProgressBar() {
+        var s = PlaybackState()
+        s.load(turnCount: 4)
+        _ = s.play()
+        for _ in 0..<3 { _ = s.turnFinished() }
+        #expect(s.progress == 0.75, "on the last line, three of four lines are behind the learner")
+        #expect(s.turnFinished() == .finished)
+        #expect(s.didFinish)
+        #expect(s.progress == 1, "\"Finished\" never sits over a bar that is not full")
+        _ = s.replay()
+        #expect(s.progress == 0.75, "replaying the last line reopens it")
+    }
+}
+
+/// A clock the translator advances by hand, so the budget check is deterministic.
+private nonisolated final class FakeClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var offset: TimeInterval = 0
+    private let origin = Date(timeIntervalSince1970: 1_700_000_000)
+    var now: Date { lock.lock(); defer { lock.unlock() }; return origin.addingTimeInterval(offset) }
+    func advance(by seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; offset += seconds }
+}
+
+/// Counts translator calls from `@Sendable` closures.
+private actor CallCounter {
+    private(set) var count = 0
+    @discardableResult
+    func bump() -> Int { count += 1; return count }
+}

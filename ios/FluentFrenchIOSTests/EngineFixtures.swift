@@ -16,18 +16,131 @@ enum EngineFixtures {
     /// A fixed clock so every selection in the tests is reproducible.
     nonisolated static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    /// An in-memory store: seed taxonomy, no gaps, nothing persisted.
+    /// An in-memory store: seed taxonomy, no gaps, nothing persisted. Probe content
+    /// is synthetic (no bundle on the test host), so probes and gap-less check-ins work.
     static func store() -> AppStore {
-        AppStore(persistence: nil)
+        let s = AppStore(persistence: nil)
+        s.probeContent = syntheticProbes
+        return s
     }
 
     /// An in-memory store holding exactly these concepts and gaps.
     static func store(concepts: [Concept], gaps: [GapItem], theta: Double = 0.2) -> AppStore {
-        let s = AppStore(persistence: nil)
+        let s = store()
         s.concepts = concepts
         s.gaps = gaps
         s.abilityTheta = theta
         return s
+    }
+
+    /// The concepts the shipped `FoundationContent.json` actually covers. The map
+    /// spans A1–C1 (D6.1) but content is authored band by band (D6.5): a concept
+    /// with no content has no teaching, no probes and no items in the app — it shows
+    /// on the map with its real state and seeds nothing. Fixtures must not invent
+    /// content for it either, or every simulation measures a curriculum the product
+    /// does not ship. GROW THIS LIST as each band is authored.
+    nonisolated static let authoredConceptIds: Set<String> = [
+        "definite-articles", "indefinite-articles", "noun-gender", "subject-pronouns",
+        "present-er-verbs", "present-irregular", "basic-prepositions", "plurals", "negation",
+        "questions", "possessive-adjectives", "c-est-il-y-a", "everyday-vocab", "numbers-time",
+        "family-vocab", "food-drink-vocab", "home-vocab", "colors-vocab", "body-vocab",
+        "clothing-vocab", "weather-vocab", "places-town-vocab", "directions-vocab", "jobs-vocab",
+        "days-months-seasons", "common-adjectives", "common-verbs", "guttural-r", "nasal-vowels",
+        "greetings-politeness", "tu-vs-vous", "adjective-agreement", "adjective-placement",
+        "partitive-articles", "near-future", "reflexive-verbs", "passe-compose-avoir",
+        "passe-compose-etre", "prepositions-place-time", "liaison", "everyday-connectors",
+        "imparfait", "imparfait-vs-pc", "object-pronouns", "subjunctive-intro",
+        "savoir-vs-connaitre", "spoken-fillers", "idioms", "formal-register",
+        // The 33 A1/A2 concepts merged from ios/tools/content-staging (merge_staged.py).
+        "silent-final-consonants", "accent-marks", "elision", "e-muet", "vowel-contrasts",
+        "rhythm-and-stress", "avoir-expressions", "il-faut-necessity", "present-ir-re-verbs",
+        "imperative", "modal-verbs", "venir-de-recent-past", "futur-simple", "etre-en-train-de",
+        "on-pronoun", "depuis-pendant-il-y-a", "stressed-pronouns", "demonstrative-adjectives",
+        "contractions-au-du", "de-after-negation", "quantity-expressions",
+        "comparatives-superlatives", "adverb-formation", "countries-prepositions",
+        "shopping-money-vocab", "travel-transport-vocab", "health-vocab", "daily-routine-vocab",
+        "leisure-sports-vocab", "describing-people", "feelings-vocab", "everyday-transactions",
+        "polite-requests",
+    ]
+
+    /// A `foundationContent` closure that supplies synthetic items for exactly the
+    /// named concepts. Anything that asks whether a concept is TEACHABLE reads this
+    /// same source (`AppStore.isTeachable`), so a fixture built on concepts that are
+    /// not in the shipped content file must say so here — otherwise the store is
+    /// correctly of the view that the app cannot teach them.
+    nonisolated static func syntheticContent(for conceptIds: [String],
+                                             itemsEach: Int = 3) -> (Date) -> [GapItem] {
+        let skills = conceptIds.map { cid in
+            FoundationSkillContent(id: cid, category: GapCategory.grammar.rawValue,
+                                   items: (0..<itemsEach).map { i in
+                                       FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                                             ex: "x \(cid)-w\(i) y", exEn: "t", blank: "\(cid)-w\(i)")
+                                   })
+        }
+        let file = FoundationContentFile(version: 2, skills: skills)
+        return { when in FoundationContentLoader.gaps(from: file, now: when) }
+    }
+
+    /// Synthetic content SHAPED like the shipped `FoundationContent.json`: every
+    /// authored concept, `itemsEach` items (the shipped file has 12–15 per skill),
+    /// the shipped easy/okay/hard mix (≈ 41 / 47 / 12 %) and the taxonomy's category.
+    /// Tokens, not French. The headless runs seed from this through the REAL
+    /// placement, first-run slice, probe and bridge paths, so the curriculum they
+    /// measure is the one the app delivers (engine-10-4).
+    nonisolated static func shippedShapeContent(itemsEach: Int = 12) -> (Date) -> [GapItem] {
+        let categories = Dictionary(ConceptTaxonomy.seed().map { ($0.id, $0.category) }, uniquingKeysWith: { a, _ in a })
+        let skills = authoredConceptIds.sorted().map { cid in
+            FoundationSkillContent(id: cid, category: (categories[cid] ?? .grammar).rawValue,
+                                   items: (0..<itemsEach).map { i in
+                                       let diff: GapDifficulty = [0, 2, 5].contains(i % 8) ? .easy : (i % 8 == 7 ? .hard : .okay)
+                                       return FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                                                    ex: "x \(cid)-w\(i) y", exEn: "t", diff: diff.rawValue,
+                                                                    blank: "\(cid)-w\(i)")
+                                   })
+        }
+        let file = FoundationContentFile(version: 2, skills: skills)
+        return { when in FoundationContentLoader.gaps(from: file, now: when) }
+    }
+
+    /// Taxonomy concepts with no authored content yet.
+    nonisolated static let unauthoredConceptIds: Set<String> =
+        ConceptTaxonomy.ids.subtracting(authoredConceptIds)
+
+    /// The concepts a fixture builds content for: the authored taxonomy concepts,
+    /// plus anything outside the taxonomy (a synthetic graph names its own).
+    nonisolated static func authoredConcepts(_ concepts: [Concept]) -> [Concept] {
+        concepts.filter { !unauthoredConceptIds.contains($0.id) }
+    }
+
+    /// Three synthetic content-v2 probes per concept (tokens, not French): the
+    /// prompt, the answer and three distractors, exactly the shape the loader yields.
+    /// A concept in an unauthored band has none, exactly as in the shipped file.
+    nonisolated static func syntheticProbes(for conceptId: String) -> [FoundationProbeContent] {
+        guard !unauthoredConceptIds.contains(conceptId) else { return [] }
+        return (0..<3).map { i in
+            FoundationProbeContent(fr: "\(conceptId)-probe-\(i)-fr", en: "\(conceptId)-probe-\(i)-answer",
+                                   ex: "\(conceptId)-probe-\(i)-ex", exEn: "\(conceptId)-probe-\(i)-exEn",
+                                   options: ["\(conceptId)-d1", "\(conceptId)-d2", "\(conceptId)-d3"])
+        }
+    }
+
+    /// The seeding rule for a placement, stated independently of the engine: a
+    /// concept is seeded as provisional mastery when it was asked the full
+    /// `Tuning.placementProbesPerConcept` budget with no miss AND its taxonomy band is
+    /// at or below the band its category cleared (firstrun-10-1: the seeds used to be
+    /// the A1 base set only, so an A2 learner whose budget never reached band 1 was
+    /// seeded nothing). Grammar and vocabulary only.
+    nonisolated static func expectedPlacementSeeds(_ result: PlacementResult) -> Set<String> {
+        let byId = Dictionary(ConceptTaxonomy.seed().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return result.fullyProbedConceptIds.filter { cid in
+            guard let concept = byId[cid] else { return false }
+            let band = AssessmentService.bandForLevel(concept.cefrLevel)
+            switch concept.category {
+            case .vocabulary: return band <= result.vocabBand
+            case .grammar: return band <= result.grammarBand
+            default: return false
+            }
+        }
     }
 
     // MARK: Concepts
@@ -40,9 +153,11 @@ enum EngineFixtures {
                         beta: Double = 1,
                         lastTaughtSession: Int? = nil,
                         newlyUnlocked: Bool = false) -> Concept {
+        // Raw observations mirror the decode migration: the undecayed evidence
+        // above the (1, 1) prior.
         Concept(id: id, name: "Concept \(id)", category: category, cefrLevel: level,
                 prerequisites: prerequisites, description: "Synthetic concept \(id).",
-                alpha: alpha, beta: beta, lastTestedAt: nil,
+                alpha: alpha, beta: beta, lastTestedAt: nil, observationCount: max(0, alpha + beta - 2),
                 lastTaughtSession: lastTaughtSession, newlyUnlocked: newlyUnlocked)
     }
 
@@ -106,11 +221,10 @@ enum EngineFixtures {
         )
     }
 
-    /// An FSRS memory state as the Foundation loader creates it (fresh card, due now).
+    /// An FSRS memory state as the Foundation loader creates it (fresh, never-answered
+    /// card: due now, zero lapses — see `FSRS.makeUnseenState`).
     static func freshFsrs(at when: Date = now) -> FsrsState {
-        var state = FSRS.makeInitialState(grade: .again, now: when)
-        state.dueAt = when
-        return state
+        FSRS.makeUnseenState(now: when)
     }
 
     /// Foundation-shaped gaps for a taxonomy: `perConcept` fresh, due-now cards per
@@ -121,6 +235,13 @@ enum EngineFixtures {
             for i in 0..<perConcept {
                 var g = gap("\(concept.id)-item-\(i)", concept: concept.id, category: concept.category,
                             level: concept.cefrLevel, due: when)
+                // A card carries the IRT difficulty of its band, as the shipped
+                // Foundation loader gives it. With every card at b = 0 the ability
+                // model read A1 drilling as evidence of B1 ability (the evidence
+                // ceiling is `item.irtDifficulty + Tuning.thetaEvidenceCeiling`), so
+                // a declared beginner registered as B1 inside a week and the
+                // simulation could not see level-fit go wrong at all (engine-8-1).
+                g.irtDifficulty = Tuning.irtDifficulty(for: concept.cefrLevel)
                 g.fsrs = freshFsrs(at: when)
                 result.append(g)
             }

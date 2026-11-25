@@ -3,20 +3,59 @@
 //  FluentFrenchIOS
 //
 //  Expandable gap card with the FSRS "Memory" detail, mirroring the Expo
-//  deck card + MemoryCard component.
+//  deck card + MemoryCard component. The mastery streak reads
+//  `Tuning.gapMasteryStreak` (Package C); fonts are relative and the card is
+//  one accessible element with a value.
 //
 
+import Foundation
 import SwiftUI
 
 struct GapCardView: View {
     let gap: GapItem
+    @Environment(AppStore.self) private var store
     @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var streakColor: Color {
-        gap.consecutiveCorrect >= 3 ? Theme.success : (gap.consecutiveCorrect >= 1 ? Theme.warning : Theme.border)
+    /// The meaning is empty until a pending capture is translated; the card shows
+    /// a "Translation pending" pill instead of a blank line (Package G).
+    private var isAwaitingTranslation: Bool {
+        gap.needsTranslation || gap.englishTranslation.isEmpty
     }
 
+    /// What VoiceOver reads for the card as a whole.
+    private var summaryLabel: String {
+        isAwaitingTranslation
+            ? "\(gap.frenchWord), translation pending"
+            : "\(gap.frenchWord), \(gap.englishTranslation)"
+    }
+
+    /// Green only at mastery (`Tuning.gapMasteryStreak`, the target the bar beside it
+    /// reads): a hard-coded 3 turned "3/5" green two answers early (lesson-10-8).
+    private var streakColor: Color {
+        if gap.consecutiveCorrect >= streakTarget { return Theme.success }
+        return gap.consecutiveCorrect > 0 ? Theme.warning : Theme.border
+    }
+
+    /// The card's due chip, under the SAME rule as every count and every lesson
+    /// (firstrun-8-2). A Foundation item whose concept is still waiting on its
+    /// prerequisites is excluded from `store.dueNow` and rejected by
+    /// `ConceptSelector.isPracticable`, so no button can offer it — stamping it
+    /// "7d overdue" in red would point the learner at work the app will not give
+    /// them. It says what is actually true instead: it is waiting on earlier
+    /// skills.
+    ///
+    /// A word saved without a meaning is excluded by the same rule: `makeCapturedGap`
+    /// seeds its schedule at capture, so it is instantly "due", but `dueNow` skips it
+    /// and no lesson can ask it until `resolvePendingTranslations` fills it in — so
+    /// "3d overdue" in red sat next to a header reading 0 due (read-9-2).
     private var urgency: (text: String, color: Color)? {
+        if store.isPrerequisiteBlocked(gap) {
+            return ("Waiting on earlier skills", Theme.textMuted)
+        }
+        // The "Translation pending" pill above already says this; a second chip
+        // would repeat it on screen and in `statusValue` (read-9-2).
+        if gap.needsTranslation { return nil }
         let now = Date()
         if gap.nextReviewAt < now.addingTimeInterval(-86_400) {
             let days = Int(now.timeIntervalSince(gap.nextReviewAt) / 86_400)
@@ -27,53 +66,98 @@ struct GapCardView: View {
         return nil
     }
 
+    /// Consecutive correct answers that earn the mastery badge (`Tuning.gapMasteryStreak`).
+    private var streakTarget: Int { Tuning.gapMasteryStreak }
+    private var streakShown: Int { min(gap.consecutiveCorrect, streakTarget) }
+
+    /// The card is one VoiceOver element (a button), so the status the eye reads
+    /// from the chips — where it came from, whether it is due, how far the
+    /// mastery streak has come — is spoken as the element's value.
+    private var statusValue: String {
+        var parts = ["from \(gap.sourceType.label)"]
+        if let urgency { parts.append(urgency.text) }
+        parts.append("mastery streak \(streakShown) of \(streakTarget)")
+        return parts.joined(separator: ", ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } } label: {
+            Button {
+                withAnimation(Theme.motion(.easeInOut(duration: 0.2), reduceMotion: reduceMotion)) {
+                    expanded.toggle()
+                }
+            } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        Circle().fill(gap.category.color).frame(width: 8, height: 8)
-                        Text(gap.frenchWord).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.primary)
+                        Circle().fill(gap.category.color).frame(width: 8, height: 8).accessibilityHidden(true)
+                        Text(gap.frenchWord).font(.body.weight(.semibold)).foregroundStyle(Theme.primaryText)
                         Spacer()
                         SpeakButton(text: gap.frenchWord)
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.footnote).foregroundStyle(Theme.textSecondary)
+                            .accessibilityHidden(true)
                     }
-                    Text(gap.englishTranslation).font(.system(size: 14)).foregroundStyle(Theme.text).padding(.leading, 18)
+                    if isAwaitingTranslation {
+                        Pill(text: "Translation pending", color: Theme.warning)
+                            .padding(.leading, 18)
+                    } else {
+                        Text(gap.englishTranslation).font(.subheadline).foregroundStyle(Theme.text).padding(.leading, 18)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(gap.exampleSentence)
-                            .font(.system(size: 13)).italic().foregroundStyle(Theme.textSecondary)
-                            .lineLimit(expanded ? nil : 2)
-                        Spacer()
-                        Image(systemName: "speaker.wave.2").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                    if !gap.exampleSentence.isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(gap.exampleSentence)
+                                .font(.footnote).italic().foregroundStyle(Theme.textSecondary)
+                                .lineLimit(expanded ? nil : 2)
+                            Spacer()
+                            Image(systemName: "quote.closing").font(.caption).foregroundStyle(Theme.textMuted)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(10)
+                        .background(Theme.background)
+                        .clipShape(.rect(cornerRadius: 8))
                     }
-                    .padding(10)
-                    .background(Theme.background)
-                    .clipShape(.rect(cornerRadius: 8))
 
                     HStack {
                         HStack(spacing: 4) {
-                            Image(systemName: gap.sourceType.systemImage).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
-                            Text(gap.sourceType.label).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                            Image(systemName: gap.sourceType.systemImage).font(.caption2).foregroundStyle(Theme.textMuted)
+                                .accessibilityHidden(true)
+                            Text(gap.sourceType.label).font(.caption2).foregroundStyle(Theme.textMuted)
                         }
                         if let urgency {
                             HStack(spacing: 4) {
-                                Circle().fill(urgency.color).frame(width: 5, height: 5)
-                                Text(urgency.text).font(.system(size: 10, weight: .semibold)).foregroundStyle(urgency.color)
+                                Circle().fill(urgency.color).frame(width: 5, height: 5).accessibilityHidden(true)
+                                Text(urgency.text).font(.caption2.weight(.semibold)).foregroundStyle(urgency.color)
                             }
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(urgency.color.opacity(0.12)).clipShape(.rect(cornerRadius: 6))
                         }
                         Spacer()
-                        ThinProgressBar(progress: Double(gap.consecutiveCorrect) / 5, tint: streakColor)
-                        Text("\(gap.consecutiveCorrect)/5").font(.system(size: 11, weight: .semibold)).foregroundStyle(streakColor)
+                        HStack(spacing: 6) {
+                            ThinProgressBar(progress: Double(streakShown) / Double(max(1, streakTarget)), tint: streakColor)
+                            Text("\(streakShown)/\(streakTarget)").font(.caption2.weight(.semibold)).foregroundStyle(streakColor)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Mastery streak")
+                        .accessibilityValue("\(streakShown) of \(streakTarget)")
                     }
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(summaryLabel)
+            .accessibilityValue(statusValue)
+            .accessibilityHint(expanded ? "Collapses the memory detail" : "Expands the memory detail")
+            .accessibilityAction(named: "Listen") { NaturalVoice.shared.speak(gap.frenchWord) }
 
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
+                    // The memory panel below reads "overdue" from the raw schedule;
+                    // for a blocked item that date is not a promise the app keeps,
+                    // so the card says why before it shows the numbers (firstrun-8-2).
+                    if store.isPrerequisiteBlocked(gap) {
+                        infoBox(label: "Waiting on earlier skills",
+                                text: "This belongs to a skill that builds on ones you're still learning. Your lessons bring it back once those are solid.")
+                    }
                     if !gap.exampleTranslation.isEmpty {
                         infoBox(label: "Translation", text: gap.exampleTranslation)
                     }
@@ -82,7 +166,14 @@ struct GapCardView: View {
                     }
                     memoryCard
                     if let ctx = gap.originalContext {
-                        infoBox(label: "Seen in the wild", text: "“\(ctx.sentence)”", tint: Theme.accentLight)
+                        if ctx.isLearnerAuthored {
+                            // The learner's own line. Never presented as French
+                            // encountered in the wild — it is the thing the
+                            // headword corrects, so it is shown as the contrast.
+                            infoBox(label: "You said", text: learnerContextText(ctx), tint: Theme.background)
+                        } else {
+                            infoBox(label: "Seen in the wild", text: "“\(ctx.sentence)”", tint: Theme.accentLight)
+                        }
                     }
                 }
                 .padding(.top, 10)
@@ -91,29 +182,53 @@ struct GapCardView: View {
         .cardStyle(padding: 14)
     }
 
+    /// The learner's own line next to the version that replaced it, so the card
+    /// never quotes the slip on its own.
+    private func learnerContextText(_ ctx: OriginalContext) -> String {
+        let said = ctx.sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fixed = gap.frenchWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.isEmpty else { return "“\(fixed)”" }
+        guard said.caseInsensitiveCompare(fixed) != .orderedSame else { return "“\(said)”" }
+        return "“\(said)” → “\(fixed)”"
+    }
+
     private func infoBox(label: String, text: String, tint: Color = Theme.background) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased()).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textMuted).tracking(0.3)
-            Text(text).font(.system(size: 13)).foregroundStyle(Theme.text)
+            Text(label.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(Theme.textSecondary).tracking(0.3)
+            Text(text).font(.footnote).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(tint)
         .clipShape(.rect(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
     }
 
     private var memoryCard: some View {
         let r = Int((gap.retrievability * 100).rounded())
         let stability = gap.fsrs?.stability ?? 1
         return VStack(alignment: .leading, spacing: 8) {
-            Text("MEMORY").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary).tracking(0.3)
-            HStack(spacing: 16) {
-                memoryStat("\(r)%", "recall now")
-                memoryStat(String(format: "%.1fd", stability), "stability")
-                memoryStat(relativeDue(gap.nextReviewAt), "next review")
+            Text("MEMORY").font(.caption2.weight(.semibold)).foregroundStyle(Theme.secondary).tracking(0.3)
+                .accessibilityAddTraits(.isHeader)
+            if gap.isNew {
+                // No review evidence yet: quoting a recall percentage here would
+                // be inventing one.
+                Text("Not practiced yet — your memory of this word is measured after the first review.")
+                    .font(.footnote).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    memoryStat("\(r)%", "recall now", spoken: "\(r) percent")
+                    memoryStat(String(format: "%.1fd", stability), "memory strength",
+                               spoken: String(format: "%.1f days", stability))
+                    memoryStat(relativeDue(gap.nextReviewAt), "next review",
+                               spoken: relativeDueSpoken(gap.nextReviewAt))
+                }
+                ForgettingCurve(stability: stability, retrievability: gap.retrievability)
+                    .frame(height: 42)
+                    .accessibilityHidden(true)
             }
-            ForgettingCurve(stability: stability, retrievability: gap.retrievability)
-                .frame(height: 42)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -121,11 +236,18 @@ struct GapCardView: View {
         .clipShape(.rect(cornerRadius: 8))
     }
 
-    private func memoryStat(_ value: String, _ label: String) -> some View {
+    /// One memory number with its plain-English label. `spoken` replaces the
+    /// on-screen shorthand ("7.4d") with something VoiceOver can read.
+    private func memoryStat(_ value: String, _ label: String, spoken: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.text)
-            Text(label).font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
+                .minimumScaleFactor(0.8)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(spoken ?? value)
     }
 
     private func relativeDue(_ date: Date) -> String {
@@ -134,6 +256,15 @@ struct GapCardView: View {
         if days < 0.5 { return "today" }
         if days < 1.5 { return "tomorrow" }
         return "in \(Int(days.rounded()))d"
+    }
+
+    /// The same answer spelled out, so VoiceOver says "in 4 days", not "in 4 d".
+    private func relativeDueSpoken(_ date: Date) -> String {
+        let days = date.timeIntervalSinceNow / 86_400
+        if days < -0.5 { return "overdue" }
+        if days < 0.5 { return "today" }
+        if days < 1.5 { return "tomorrow" }
+        return "in \(Int(days.rounded())) days"
     }
 }
 

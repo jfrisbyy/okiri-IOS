@@ -6,6 +6,7 @@
 //  built-in collection of stories, dialogues and articles used in Library view.
 //
 
+import Foundation
 import SwiftUI
 
 nonisolated enum ReadDifficulty: String, CaseIterable, Identifiable {
@@ -32,13 +33,16 @@ nonisolated enum ReadDifficulty: String, CaseIterable, Identifiable {
 }
 
 nonisolated enum ReadRegion: String, CaseIterable, Identifiable {
-    case france, senegal, morocco, quebec, haiti, martinique, ivoryCoast, belgium, switzerland
+    // `tunisia` files "Histoire de Carthage" where Carthage stood, not under
+    // France and the Europe filter (read-10-9).
+    case france, senegal, morocco, tunisia, quebec, haiti, martinique, ivoryCoast, belgium, switzerland
     var id: String { rawValue }
     var label: String {
         switch self {
         case .france: return "France"
         case .senegal: return "Senegal"
         case .morocco: return "Morocco"
+        case .tunisia: return "Tunisia"
         case .quebec: return "Quebec"
         case .haiti: return "Haiti"
         case .martinique: return "Martinique"
@@ -52,6 +56,7 @@ nonisolated enum ReadRegion: String, CaseIterable, Identifiable {
         case .france: return "🇫🇷"
         case .senegal: return "🇸🇳"
         case .morocco: return "🇲🇦"
+        case .tunisia: return "🇹🇳"
         case .quebec: return "🇨🇦"
         case .haiti: return "🇭🇹"
         case .martinique, .ivoryCoast: return "🌍"
@@ -62,7 +67,7 @@ nonisolated enum ReadRegion: String, CaseIterable, Identifiable {
     var group: ReadRegionGroup {
         switch self {
         case .france, .belgium, .switzerland: return .europe
-        case .senegal, .morocco, .ivoryCoast: return .africa
+        case .senegal, .morocco, .tunisia, .ivoryCoast: return .africa
         case .haiti, .martinique: return .caribbean
         case .quebec: return .canada
         }
@@ -82,6 +87,66 @@ nonisolated enum ReadRegionGroup: String, CaseIterable, Identifiable {
         case .canada: return "🇨🇦"
         }
     }
+
+    /// The region a live news item belongs to, read off its outlet's name and web
+    /// address: an explicit region word first ("RFI Afrique", "Radio-Canada"), then
+    /// the country top-level domain, then a known European masthead. Returns nil
+    /// when neither says — a story is filed under a region only when the app can
+    /// justify it, never "Europe by default", because a wrong flag on the card and
+    /// a region filter that hides the story are both worse than no region at all.
+    static func forSource(name: String?, url: String?) -> ReadRegionGroup? {
+        let host = hostOf(url)
+        // Padded so a short masthead key (" rfi ") can be written as a whole word.
+        let haystack = " " + (name ?? "").lowercased().replacingOccurrences(of: "\u{2019}", with: "'") + " " + host + " "
+        for (needle, group) in regionWords where haystack.contains(needle) { return group }
+        for (suffix, group) in hostSuffixes where host.hasSuffix(suffix) { return group }
+        for masthead in europeanMastheads where haystack.contains(masthead) { return .europe }
+        return nil
+    }
+
+    /// The lowercased host of a URL, without a leading "www." ("" when there is none).
+    private static func hostOf(_ url: String?) -> String {
+        guard let url, let host = URLComponents(string: url)?.host?.lowercased() else { return "" }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    /// Region words that settle it wherever they appear (outlet name or host).
+    private static let regionWords: [(String, ReadRegionGroup)] = [
+        ("afrique", .africa), ("africa", .africa), ("african", .africa),
+        ("sénégal", .africa), ("senegal", .africa), ("dakar", .africa),
+        ("maroc", .africa), ("morocco", .africa), ("algér", .africa), ("alger", .africa),
+        ("tunisie", .africa), ("abidjan", .africa), ("ivoir", .africa),
+        ("cameroun", .africa), ("congo", .africa), ("bamako", .africa), ("burkina", .africa),
+        ("québec", .canada), ("quebec", .canada), ("canada", .canada), ("canadien", .canada),
+        ("montréal", .canada), ("montreal", .canada), ("le devoir", .canada), ("ledevoir", .canada),
+        ("la presse", .canada), ("lapresse", .canada),
+        ("haïti", .caribbean), ("haiti", .caribbean), ("antilles", .caribbean),
+        ("martinique", .caribbean), ("guadeloupe", .caribbean), ("guyane", .caribbean),
+        ("caraïbe", .caribbean), ("caribbean", .caribbean),
+    ]
+
+    /// Country top-level domains, checked after the region words so "rfi.fr"
+    /// covering Africa is still filed by what its name says.
+    private static let hostSuffixes: [(String, ReadRegionGroup)] = [
+        (".sn", .africa), (".ci", .africa), (".ml", .africa), (".bf", .africa),
+        (".cm", .africa), (".cd", .africa), (".tg", .africa), (".bj", .africa),
+        (".mg", .africa), (".ma", .africa), (".dz", .africa), (".tn", .africa),
+        (".ca", .canada), (".ht", .caribbean),
+        (".fr", .europe), (".be", .europe), (".ch", .europe), (".lu", .europe), (".mc", .europe),
+    ]
+
+    /// French-language European mastheads that publish on a generic domain. Short
+    /// names are written with their surrounding spaces so a source called "Sports"
+    /// is not read as the Swiss broadcaster RTS.
+    private static let europeanMastheads: [String] = [
+        "le monde", "lemonde", "figaro", "libération", "liberation", "france 24", "france24",
+        "franceinfo", "france info", "france culture", " bfm", "les échos", "lesechos",
+        "l'équipe", "lequipe", "20 minutes", "20minutes", "ouest-france", "ouestfrance",
+        "le parisien", "leparisien", "la croix", "lacroix", "mediapart", "nouvel obs",
+        "nouvelobs", "l'obs", "sud ouest", "sudouest", "rtbf", "le soir", "lesoir",
+        "le temps", "letemps", " rts ", "rts.ch", "euronews", " rfi ", "rfi.fr",
+        "sciences et avenir",
+    ]
 }
 
 nonisolated enum ReadCategory: String, CaseIterable, Identifiable {
@@ -103,6 +168,82 @@ nonisolated struct ReadingPiece: Identifiable, Hashable {
     var tint: Color { difficulty.color }
 }
 
+// MARK: - Level-aware shelf (E20 / D5)
+
+/// Which curated pieces a learner sees, and in what order, given the reading
+/// gate and their level. Pure so the harness tests it; the Library view only
+/// renders what this returns.
+nonisolated enum ReadingShelf {
+    /// How a piece relates to the learner's level, for honest labelling.
+    enum Fit: Equatable {
+        case atLevel        // within `Tuning.readingLevelWindow` bands
+        case stretch        // above the window
+        case easy           // below the window
+    }
+
+    /// The pieces the learner may open. In the bridge (`.foundation`) state only
+    /// short curated pieces at or below `Tuning.readingBridgeMaxLevel` are shown,
+    /// easiest first; when reading is unlocked every piece is shown, closest to
+    /// the learner's level first (ties: shorter first). A locked gate shows nothing.
+    static func pieces(for learnerLevel: CEFRLevel, readiness: ModalityReadiness,
+                       from library: [ReadingPiece] = ReadingLibrary.pieces) -> [ReadingPiece] {
+        switch readiness {
+        case .locked:
+            return []
+        case .foundation:
+            return library
+                .filter { rank($0.level) <= rank(Tuning.readingBridgeMaxLevel) }
+                .sorted { a, b in
+                    if a.level != b.level { return rank(a.level) < rank(b.level) }
+                    return a.minutes < b.minutes
+                }
+        case .unlocked:
+            return library.sorted { a, b in
+                let da = abs(rank(a.level) - rank(learnerLevel)), db = abs(rank(b.level) - rank(learnerLevel))
+                if da != db { return da < db }
+                if a.level != b.level { return rank(a.level) < rank(b.level) }
+                return a.minutes < b.minutes
+            }
+        }
+    }
+
+    // MARK: Filter options that can actually match
+
+    /// The levels present on a shelf, in canonical order. The library builds its
+    /// Level menu from this rather than from `ReadDifficulty.allCases`: in the
+    /// bridge state the shelf holds three short pieces, so offering "University"
+    /// only leads to "No short pieces match these filters yet".
+    static func availableDifficulties(in pieces: [ReadingPiece]) -> [ReadDifficulty] {
+        let present = Set(pieces.map(\.difficulty))
+        return ReadDifficulty.allCases.filter { present.contains($0) }
+    }
+
+    /// The piece types present on a shelf, in canonical order (no curated piece
+    /// is a "News" item, so that option is never offered).
+    static func availableCategories(in pieces: [ReadingPiece]) -> [ReadCategory] {
+        let present = Set(pieces.map(\.category))
+        return ReadCategory.allCases.filter { present.contains($0) }
+    }
+
+    /// The region groups present on a shelf, `.all` first — the region pills a
+    /// library can offer.
+    static func availableRegionGroups(in pieces: [ReadingPiece]) -> [ReadRegionGroup] {
+        let present = Set(pieces.map(\.region.group))
+        return ReadRegionGroup.allCases.filter { $0 == .all || present.contains($0) }
+    }
+
+    /// Where a piece sits relative to the learner.
+    static func fit(of level: CEFRLevel, for learnerLevel: CEFRLevel) -> Fit {
+        let delta = rank(level) - rank(learnerLevel)
+        if abs(delta) <= Tuning.readingLevelWindow { return .atLevel }
+        return delta > 0 ? .stretch : .easy
+    }
+
+    static func rank(_ level: CEFRLevel) -> Int {
+        CEFRLevel.allCases.firstIndex(of: level) ?? 0
+    }
+}
+
 nonisolated enum ReadingLibrary {
     static let pieces: [ReadingPiece] = [
         ReadingPiece(id: "r1", title: "Un café à Montmartre", subtitle: "A morning in Paris", category: .story, region: .france, difficulty: .easy, minutes: 4, level: .A2,
@@ -117,9 +258,7 @@ nonisolated enum ReadingLibrary {
                      body: "— Allô, bonjour, je voudrais parler à Marie. — C'est de la part de qui ? — De la part de Paul. — Un instant, je vous la passe. — Merci beaucoup. — Je vous en prie, bonne journée !"),
         ReadingPiece(id: "r6", title: "L'hiver à Québec", subtitle: "A Canadian winter", category: .culture, region: .quebec, difficulty: .medium, minutes: 6, level: .B1,
                      body: "À Québec, l'hiver n'est pas une saison qu'on subit : c'est une fête. Les gens patinent sur les rivières gelées, dégustent de la tire d'érable sur la neige, et le Carnaval illumine la ville. Malgré le froid, l'ambiance est toujours chaleureuse."),
-        ReadingPiece(id: "r7", title: "Le petit prince", subtitle: "Literary classic", category: .literature, region: .france, difficulty: .hard, minutes: 7, level: .B2,
-                     body: "On ne voit bien qu'avec le cœur. L'essentiel est invisible pour les yeux. C'est le temps que tu as perdu pour ta rose qui fait ta rose si importante. Les hommes ont oublié cette vérité, mais tu ne dois pas l'oublier."),
-        ReadingPiece(id: "r8", title: "Histoire de Carthage", subtitle: "Ancient history", category: .history, region: .france, difficulty: .university, minutes: 8, level: .C1,
+        ReadingPiece(id: "r8", title: "Histoire de Carthage", subtitle: "Ancient history", category: .history, region: .tunisia, difficulty: .university, minutes: 8, level: .C1,
                      body: "Fondée au IXe siècle avant notre ère, Carthage devint l'une des plus grandes puissances de la Méditerranée. Sa rivalité avec Rome aboutit aux guerres puniques, dont l'issue détermina le destin du monde antique pour des siècles."),
         ReadingPiece(id: "r9", title: "Une journée à Bruxelles", subtitle: "City guide", category: .travel, region: .belgium, difficulty: .easy, minutes: 4, level: .A2,
                      body: "À Bruxelles, on commence par une gaufre chaude sur la Grand-Place. Ensuite, on visite les musées, on admire l'Atomium, et on termine la journée avec des frites et du chocolat. La ville mélange les langues et les cultures avec élégance."),

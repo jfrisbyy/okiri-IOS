@@ -6,21 +6,35 @@
 //  category chips, and the audio "speak" button.
 //
 
+import Foundation
 import SwiftUI
+import UIKit
 
 // MARK: - Gradient header
 
-struct GradientHeader<Trailing: View>: View {
+struct GradientHeader<Trailing: View, Bottom: View>: View {
     let gradient: LinearGradient
     let title: String
     let subtitle: String
     var trailing: Trailing
+    /// Optional content laid out UNDER the title block, inside the header's own
+    /// stack. Anything a screen wants at the foot of the header (a stat pill row,
+    /// say) belongs here: an `.overlay(alignment: .bottomLeading)` on the header
+    /// frame would be drawn on top of the bottom-anchored title and subtitle.
+    var bottom: Bottom
 
-    init(gradient: LinearGradient, title: String, subtitle: String, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
+    init(
+        gradient: LinearGradient,
+        title: String,
+        subtitle: String,
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() },
+        @ViewBuilder bottom: () -> Bottom = { EmptyView() }
+    ) {
         self.gradient = gradient
         self.title = title
         self.subtitle = subtitle
         self.trailing = trailing()
+        self.bottom = bottom()
     }
 
     var body: some View {
@@ -30,19 +44,22 @@ struct GradientHeader<Trailing: View>: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 120, height: 120)
                 .offset(x: -36, y: 40)
-            VStack(alignment: .leading, spacing: 4) {
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(title)
-                            .font(.serifDisplay(32, weight: .bold))
+                            .scaledSerifDisplay(32, weight: .bold)
                             .foregroundStyle(.white)
+                            .accessibilityAddTraits(.isHeader)
                         Text(subtitle)
-                            .font(.system(size: 15))
+                            .scaledFont(15)
                             .foregroundStyle(.white.opacity(0.88))
                     }
                     Spacer()
                     trailing
                 }
+                bottom
             }
             .padding(.horizontal, 24)
             .padding(.top, 8)
@@ -64,6 +81,10 @@ struct ResourceHeader<Trailing: View>: View {
     let subtitle: String
     var onBack: () -> Void
     var trailing: Trailing
+
+    /// The circular back-button chrome grows with the learner's text size so the
+    /// chevron never spills out of it (1 pt scaled = the current type ratio).
+    @ScaledMetric(relativeTo: .headline) private var typeScale: CGFloat = 1
 
     init(
         gradient: LinearGradient,
@@ -94,18 +115,22 @@ struct ResourceHeader<Trailing: View>: View {
                 HStack {
                     Button { Haptics.tap(); onBack() } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
+                            .scaledFont(16, weight: .semibold, relativeTo: .headline).foregroundStyle(.white)
+                            .frame(width: 36 * Theme.chromeScale(typeScale), height: 36 * Theme.chromeScale(typeScale))
                             .background(.white.opacity(0.16), in: Circle())
                             .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 0.5))
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
+                    .accessibilityHint("Returns to the previous screen")
                     Spacer()
                     trailing
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.serifDisplay(28, weight: .bold)).foregroundStyle(.white)
-                    Text(subtitle).font(.system(size: 14)).foregroundStyle(.white.opacity(0.82))
+                    Text(title).scaledSerifDisplay(28, weight: .bold).foregroundStyle(.white)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(subtitle).scaledFont(14).foregroundStyle(.white.opacity(0.82))
                 }
             }
             .padding(.horizontal, 22).padding(.top, 54).padding(.bottom, 18)
@@ -123,13 +148,16 @@ struct HeaderStat: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 15))
+                .scaledFont(15)
                 .foregroundStyle(.white)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: -2) {
-                Text(value).font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                Text(label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.75))
+                Text(value).scaledFont(18, weight: .bold).foregroundStyle(.white)
+                Text(label).scaledFont(11).foregroundStyle(.white.opacity(0.75))
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
     }
 }
 
@@ -141,13 +169,14 @@ struct SectionHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
-                .font(.serifDisplay(20, weight: .semibold))
+                .scaledSerifDisplay(20, weight: .semibold)
                 .foregroundStyle(Theme.text)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textMuted)
+                    .scaledFont(13, weight: .medium)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }
@@ -161,8 +190,10 @@ struct Pill: View {
     var filled: Bool = false
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(filled ? .white : color)
+            .scaledFont(11, weight: .semibold)
+            // Unfilled, the label sits on a 12% wash of its own hue, where a
+            // bright brand colour can fall to ~2:1. Darken it until it reads.
+            .foregroundStyle(filled ? .white : Theme.readableOnTint(color))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(filled ? color : color.opacity(0.12))
@@ -175,18 +206,37 @@ struct Pill: View {
 struct SpeakButton: View {
     let text: String
     var size: CGFloat = 28
+    /// The circular chrome grows with the type ratio so the glyph keeps its
+    /// proportions at large text sizes.
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
+    /// Identifies this button's own utterance among all the speak buttons on screen.
+    @State private var identity = UUID()
+
+    /// True while this button's own audio is loading or sounding, so a second tap
+    /// silences it instead of restarting a long passage from the top. Both reads
+    /// are on the observable `NaturalVoice`, so the glyph and the accessibility
+    /// label follow the audio — including when another surface stops it.
+    private var isPlaying: Bool { NaturalVoice.shared.owner == identity && NaturalVoice.shared.isBusy }
+
     var body: some View {
         Button {
-            NaturalVoice.shared.speak(text)
+            if isPlaying {
+                NaturalVoice.shared.stop()
+            } else {
+                NaturalVoice.shared.speak(text, owner: identity)
+            }
         } label: {
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: size * 0.5))
+            Image(systemName: isPlaying ? "stop.fill" : "speaker.wave.2.fill")
+                .scaledFont(size * 0.5, relativeTo: .body)
                 .foregroundStyle(Theme.primary)
-                .frame(width: size, height: size)
+                .frame(width: size * Theme.chromeScale(typeScale), height: size * Theme.chromeScale(typeScale))
                 .background(Theme.primaryLight)
                 .clipShape(.circle)
+                .minimumHitTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(isPlaying ? "Stop" : "Listen")
+        .accessibilityHint(isPlaying ? "Stops the audio" : "Reads the French aloud")
     }
 }
 
@@ -198,7 +248,7 @@ struct GrammarChip: View {
     var accent: Color = Theme.primary
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .semibold))
+            .scaledFont(12, weight: .semibold)
             .foregroundStyle(accent)
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(accent.opacity(0.12), in: Capsule())
@@ -212,10 +262,11 @@ struct PhoneticLine: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 14, weight: .regular))
-            .foregroundStyle(Theme.textMuted)
+            .scaledFont(14, weight: .regular)
+            .foregroundStyle(Theme.textSecondary)
             .tracking(0.3)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("Pronounced \(text)")
     }
 }
 
@@ -234,7 +285,7 @@ struct GlossRichDetail: View {
         VStack(alignment: .leading, spacing: 16) {
             if !gloss.explanation.isEmpty {
                 Text(gloss.explanation)
-                    .font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                    .scaledFont(14).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if gloss.hasGrammar { grammarSection }
@@ -244,7 +295,8 @@ struct GlossRichDetail: View {
                         ForEach(gloss.otherMeanings, id: \.self) { meaning in
                             HStack(alignment: .firstTextBaseline, spacing: 7) {
                                 Circle().fill(accent.opacity(0.6)).frame(width: 4, height: 4)
-                                Text(meaning).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                                    .accessibilityHidden(true)
+                                Text(meaning).scaledFont(14).foregroundStyle(Theme.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -270,8 +322,11 @@ struct GlossRichDetail: View {
                 if let onTermTap {
                     Button { Haptics.tap(); onTermTap(term) } label: {
                         chipLabel(term, tappable: true)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(term)
+                    .accessibilityHint("Opens a card for this word")
                 } else {
                     chipLabel(term, tappable: false)
                 }
@@ -282,12 +337,13 @@ struct GlossRichDetail: View {
     private func chipLabel(_ term: String, tappable: Bool) -> some View {
         HStack(spacing: 4) {
             Text(term)
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(accent)
             if tappable {
                 Image(systemName: "arrow.up.right")
-                    .font(.system(size: 9, weight: .bold))
+                    .scaledFont(9, weight: .bold)
                     .foregroundStyle(accent.opacity(0.7))
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 5)
@@ -305,14 +361,15 @@ struct GlossRichDetail: View {
                     if !gloss.register.isEmpty { GrammarChip(text: gloss.register, accent: accent) }
                 }
                 if !gloss.baseForm.isEmpty {
-                    HStack(spacing: 5) {
-                        Text("Base form:").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textMuted)
-                        Text(gloss.baseForm).font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.text)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("Base form:").scaledFont(13, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                        Text(gloss.baseForm).scaledFont(13, weight: .bold).foregroundStyle(Theme.text)
                         if !gloss.baseFormNote.isEmpty {
-                            Text("· \(gloss.baseFormNote)").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                            Text("· \(gloss.baseFormNote)").scaledFont(13).foregroundStyle(Theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -320,7 +377,8 @@ struct GlossRichDetail: View {
 
     private func section<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
+            Text(label).scaledFont(11, weight: .bold).foregroundStyle(Theme.textSecondary)
+                .accessibilityAddTraits(.isHeader)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -341,6 +399,8 @@ struct WordRoute: Hashable {
 /// word, renders the rich detail (with its own tappable chips so you can keep
 /// drilling in), an example, and a Save-to-deck button. Pushed inside a
 /// NavigationStack so the system back button steps through the card history.
+/// Every lookup outcome is explicit: loading (bounded), a gloss, or a named
+/// failure with a retry — and a failed lookup can still be saved for later.
 struct TranslationCardView: View {
     let route: WordRoute
     var accent: Color = Theme.primary
@@ -348,97 +408,114 @@ struct TranslationCardView: View {
     let sourceTab: String
     /// Push a deeper card onto the host navigation stack.
     let onPush: (WordRoute) -> Void
+    /// The level of the material the word came from (nil → the learner's level).
+    var sourceLevel: CEFRLevel? = nil
 
     @Environment(AppStore.self) private var store
-    @State private var gloss: WordGloss? = nil
-    @State private var isLoading = true
-    @State private var saved = false
+    @State private var lookup: LookupState = .loading
+    @State private var attempt = 0
+    /// Circular listen buttons grow with the learner's text size.
+    @ScaledMetric(relativeTo: .body) private var typeScale: CGFloat = 1
 
     private var alreadySaved: Bool {
-        let key = route.term.lowercased()
-        return saved || store.gaps.contains { $0.frenchWord.lowercased() == key }
+        store.hasGap(forWord: route.term)
+    }
+
+    private var draft: CaptureDraft? {
+        switch lookup {
+        case .loading: return nil
+        case .loaded(let g):
+            return CaptureDraft(gloss: g, sourceType: sourceType, sourceTab: sourceTab,
+                                contextSentence: route.context, sourceLevel: sourceLevel)
+        case .failed:
+            return CaptureDraft(untranslated: route.term, sourceType: sourceType, sourceTab: sourceTab,
+                                contextSentence: route.context, sourceLevel: sourceLevel)
+        }
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if isLoading {
-                    loadingState
-                } else if let g = gloss {
+                switch lookup {
+                case .loading:
+                    LookupLoadingView(accent: accent)
+                case .loaded(let g):
                     GlossRichDetail(gloss: g, accent: accent, onTermTap: { onPush(WordRoute(term: $0, context: "")) })
                     if !g.example.isEmpty { exampleBlock(g) }
+                case .failed(let failure):
+                    LookupUnavailableView(failure: failure, accent: accent, onRetry: { attempt += 1 })
                 }
-                saveButton
+                SaveToDeckButton(draft: draft, accent: accent, alreadySaved: alreadySaved, isBusy: lookup == .loading)
             }
             .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 28)
         }
         .background(Theme.background)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            gloss = await TranslationService.gloss(for: route.term, context: route.context)
-            isLoading = false
+        .task(id: attempt) {
+            lookup = .loading
+            let result = await TranslationService.lookup(term: route.term, context: route.context)
+            lookup = LookupState(result)
+            if case .gloss = result, !store.pendingTranslations.isEmpty {
+                await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:))
+            }
         }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(route.term).font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
-                if let g = gloss, !g.pronunciation.isEmpty {
-                    PhoneticLine(text: g.pronunciation)
-                }
-                if let g = gloss, !g.translation.isEmpty {
-                    Text(g.translation).font(.system(size: 15, weight: .medium)).foregroundStyle(accent)
+                Text(route.term).scaledSerifDisplay(26, weight: .bold).foregroundStyle(Theme.text)
+                    .accessibilityAddTraits(.isHeader)
+                if case .loaded(let g) = lookup {
+                    if !g.pronunciation.isEmpty { PhoneticLine(text: g.pronunciation) }
+                    Text(g.translation).scaledFont(15, weight: .medium).foregroundStyle(accent)
                 }
             }
             Spacer()
             HStack(spacing: 8) {
                 Button { Haptics.tap(); NaturalVoice.shared.speak(route.term, rate: 0.6) } label: {
-                    Image(systemName: "tortoise.fill").font(.system(size: 14)).foregroundStyle(accent)
-                        .frame(width: 38, height: 38).background(accent.opacity(0.10)).clipShape(.circle)
+                    Image(systemName: "tortoise.fill").scaledFont(14, relativeTo: .body).foregroundStyle(accent)
+                        .frame(width: 44 * Theme.chromeScale(typeScale), height: 44 * Theme.chromeScale(typeScale))
+                        .background(accent.opacity(0.10)).clipShape(.circle)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen slowly")
+                .accessibilityHint("Reads the word aloud at a slower pace")
                 Button { Haptics.tap(); NaturalVoice.shared.speak(route.term) } label: {
-                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 18)).foregroundStyle(accent)
-                        .frame(width: 46, height: 46).background(accent.opacity(0.12)).clipShape(.circle)
+                    Image(systemName: "speaker.wave.2.fill").scaledFont(18, relativeTo: .body).foregroundStyle(accent)
+                        .frame(width: 46 * Theme.chromeScale(typeScale), height: 46 * Theme.chromeScale(typeScale))
+                        .background(accent.opacity(0.12)).clipShape(.circle)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen")
+                .accessibilityHint("Reads the word aloud")
             }
         }
-    }
-
-    private var loadingState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SkeletonBlock(width: 180, height: 16)
-            SkeletonBlock(height: 14)
-            SkeletonBlock(width: 140, height: 14)
-            HStack(spacing: 8) {
-                ProgressView().tint(accent).scaleEffect(0.8)
-                Text("Looking it up…").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-            }
-            .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func exampleBlock(_ g: WordGloss) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("Example").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
+                Text("Example").scaledFont(11, weight: .bold).foregroundStyle(Theme.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
                 Button { Haptics.tap(); NaturalVoice.shared.speak(g.example) } label: {
-                    Image(systemName: "speaker.wave.2").font(.system(size: 13)).foregroundStyle(accent)
+                    Image(systemName: "speaker.wave.2").scaledFont(13).foregroundStyle(accent)
+                        .minimumHitTarget()
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen to the example")
                 Button { Haptics.tap(); NaturalVoice.shared.speak(g.example, rate: 0.6) } label: {
-                    Image(systemName: "tortoise.fill").font(.system(size: 12)).foregroundStyle(accent.opacity(0.8))
+                    Image(systemName: "tortoise.fill").scaledFont(12).foregroundStyle(accent.opacity(0.8))
+                        .minimumHitTarget()
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Listen to the example slowly")
             }
-            Text(g.example).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+            Text(g.example).scaledFont(15, weight: .semibold).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             if !g.exampleTranslation.isEmpty {
-                Text(g.exampleTranslation).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                Text(g.exampleTranslation).scaledFont(13).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -447,59 +524,293 @@ struct TranslationCardView: View {
         .background(accent.opacity(0.07)).clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(accent.opacity(0.18), lineWidth: 1))
     }
+}
 
-    private var saveButton: some View {
-        Button {
-            guard let g = gloss, !alreadySaved else { return }
-            save(g)
-        } label: {
-            Label(alreadySaved ? "Saved to Deck" : "Save to Deck",
-                  systemImage: alreadySaved ? "checkmark.circle.fill" : "plus.circle.fill")
-                .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                .background(alreadySaved ? Theme.success : accent).clipShape(.rect(cornerRadius: Radius.chip))
+// MARK: - Lookup states (shared by every translation surface — E26)
+
+/// The three explicit states of a word lookup. No surface shows a spinner
+/// without a bound, and no failure is silent.
+enum LookupState: Equatable {
+    case loading
+    case loaded(WordGloss)
+    case failed(TranslationFailure)
+
+    init(_ result: GlossLookup) {
+        switch result {
+        case .gloss(let g): self = .loaded(g)
+        case .unavailable(let f): self = .failed(f)
         }
-        .buttonStyle(.plain)
-        .disabled(isLoading || alreadySaved)
-        .opacity(isLoading ? 0.6 : 1)
     }
 
-    private func save(_ g: WordGloss) {
-        let now = Date()
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: g.term,
-            englishTranslation: g.translation,
-            explanation: g.explanation,
-            exampleSentence: g.example.isEmpty ? route.context : g.example,
-            exampleTranslation: g.exampleTranslation,
-            pronunciation: g.pronunciation.isEmpty ? nil : g.pronunciation,
-            sourceType: sourceType,
-            category: g.isPhrase ? .phrasing : .vocabulary,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: .A2,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: route.context, translation: nil, sourceTab: sourceTab, capturedAt: now, reExposureCount: 0),
-            confusionLinks: [],
-            partOfSpeech: g.partOfSpeech.isEmpty ? nil : g.partOfSpeech,
-            gender: g.gender.isEmpty ? nil : g.gender,
-            article: g.article.isEmpty ? nil : g.article,
-            baseForm: g.baseForm.isEmpty ? nil : g.baseForm,
-            register: g.register.isEmpty ? nil : g.register,
-            relatedWords: g.relatedWords.isEmpty ? nil : g.relatedWords
-        )
-        store.addGap(gap)
-        saved = true
-        Haptics.success()
+    var gloss: WordGloss? {
+        if case .loaded(let g) = self { return g }
+        return nil
+    }
+}
+
+/// Skeleton + "Looking it up…" shown while a lookup is in flight. The request
+/// itself is bounded by `Tuning.glossTimeoutSeconds`, so this never runs forever.
+struct LookupLoadingView: View {
+    var accent: Color = Theme.primary
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SkeletonBlock(width: 180, height: 16)
+            SkeletonBlock(height: 14)
+            SkeletonBlock(width: 140, height: 14)
+            HStack(spacing: 8) {
+                ProgressView().tint(accent).scaleEffect(0.8)
+                Text("Looking it up…").font(.footnote).foregroundStyle(Theme.textMuted)
+            }
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Looking it up")
+    }
+}
+
+/// An explicit, learner-facing failure card: what went wrong, what to do, and a
+/// retry when a retry could help (a missing key never gets one).
+struct LookupUnavailableView: View {
+    let failure: TranslationFailure
+    var accent: Color = Theme.primary
+    var onRetry: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.subheadline.weight(.bold)).foregroundStyle(Theme.warning)
+                    .accessibilityHidden(true)
+                Text(failure.title).font(.subheadline.weight(.bold)).foregroundStyle(Theme.text)
+            }
+            Text(failure.message).font(.footnote).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if failure.isRetryable, let onRetry {
+                Button { Haptics.tap(); onRetry() } label: {
+                    Label("Try again", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(accent)
+                        .minimumHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Try again")
+                .accessibilityHint("Looks the word up again")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.warningLight)
+        .clipShape(.rect(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.warning.opacity(0.25), lineWidth: 1))
+    }
+
+    private var icon: String {
+        switch failure {
+        case .notConfigured: return "key.slash"
+        case .offline: return "wifi.slash"
+        case .serviceError: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+// MARK: - Save to deck (the ONE capture affordance — E4 / E6 / E25)
+
+/// The save button every capture surface uses. It is disabled until there is
+/// something real to save (`draft == nil` while a lookup is in flight), offers
+/// "Save now, translate later" when the draft has no meaning yet, and reports
+/// "Saved" / "Already in My words" from the store's own outcome — the store,
+/// not the view, dedupes and builds the gap.
+struct SaveToDeckButton: View {
+    let draft: CaptureDraft?
+    var accent: Color = Theme.primary
+    var alreadySaved: Bool = false
+    var isBusy: Bool = false
+    var onSaved: ((CaptureOutcome) -> Void)? = nil
+
+    @Environment(AppStore.self) private var store
+    @State private var outcome: CaptureOutcome? = nil
+
+    private var isDone: Bool {
+        if alreadySaved { return true }
+        switch outcome {
+        case .saved?, .duplicate?: return true
+        default: return false
+        }
+    }
+
+    /// A draft the store would refuse (no letters, longer than
+    /// `Tuning.maxCardWords` words, or stopping in the middle of a sentence): the
+    /// button says so and stays disabled rather than silently doing nothing.
+    private var isTooLong: Bool {
+        guard let draft, !isDone else { return false }
+        return !draft.isCapturable
+    }
+
+    /// A draft whose meaning IS its headword ("restaurant" → "restaurant"): the
+    /// store refuses it, so the button says why rather than offering a save that
+    /// would only ever ask the learner to translate a word into itself (read-8-2).
+    private var isSelfGlossed: Bool {
+        guard let draft, !isDone, !isTooLong else { return false }
+        return draft.isSelfGlossed
+    }
+
+    private var title: String {
+        if case .duplicate? = outcome { return HomeCopy.alreadyInMyWords }
+        if isDone { return HomeCopy.savedToMyWords }
+        if isBusy || draft == nil { return HomeCopy.saveToMyWords }
+        if isTooLong { return "Too long to save as a card" }
+        if isSelfGlossed { return "Same word in English" }
+        if draft?.needsTranslation == true { return "Save now, translate later" }
+        return HomeCopy.saveToMyWords
+    }
+
+    private var symbol: String {
+        if isDone { return "checkmark.circle.fill" }
+        if isTooLong { return "exclamationmark.circle.fill" }
+        if isSelfGlossed { return "equal.circle.fill" }
+        if draft?.needsTranslation == true { return "clock.badge.checkmark" }
+        return "plus.circle.fill"
+    }
+
+    private var isDisabled: Bool { isDone || isBusy || draft == nil || isTooLong || isSelfGlossed }
+
+    /// Says what the button will do — or why it cannot yet be used.
+    private var hint: String {
+        if isDone { return HomeCopy.itemAlreadyInMyWords("This word") }
+        if isBusy || draft == nil { return "Available once the lookup finishes" }
+        if isTooLong {
+            return "A card holds up to \(Tuning.maxCardWords) words, and never stops in the middle of a sentence"
+        }
+        if isSelfGlossed {
+            return "This word is spelled the same in English, so a card could only ask you to translate it into itself"
+        }
+        if draft?.needsTranslation == true {
+            return "Saves the word without a meaning; it is translated once translation is available"
+        }
+        return HomeCopy.addsToMyWords("word")
+    }
+
+    var body: some View {
+        Button {
+            guard let draft, !isDisabled else { return }
+            let result = store.capture(draft)
+            outcome = result
+            if case .saved = result { Haptics.success() } else { Haptics.tap() }
+            onSaved?(result)
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.body.weight(.bold)).foregroundStyle(.white)
+                .frame(maxWidth: .infinity).frame(minHeight: 50)
+                .background(isDone ? Theme.success : accent)
+                .clipShape(.rect(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled && !isDone ? 0.55 : 1)
+        .accessibilityLabel(title)
+        .accessibilityHint(hint)
+    }
+}
+
+/// A small capture card for reference content whose meaning is already known
+/// (idioms, tenses, accent words — E25): shows the French, the meaning, the
+/// example and a note field, then saves through `SaveToDeckButton`.
+struct CaptureSheet: View {
+    let draft: CaptureDraft
+    var accent: Color = Theme.primary
+
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.sizeCategory) private var sizeCategory
+    @State private var note = ""
+
+    private var draftWithNote: CaptureDraft {
+        var d = draft
+        d.note = note
+        return d
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(draft.frenchWord)
+                            .font(Theme.scaledFontValue(
+                                draft.frenchWord.count > 22 ? 22 : 28,
+                                weight: .bold, design: .serif, for: sizeCategory
+                            ))
+                            .foregroundStyle(accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        if let p = draft.pronunciation, !p.isEmpty { PhoneticLine(text: p) }
+                    }
+                    Spacer()
+                    SpeakButton(text: draft.frenchWord, size: 38)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MEANING").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
+                    if draft.needsTranslation {
+                        Pill(text: "Translation pending", color: Theme.warning)
+                    } else {
+                        Text(draft.englishTranslation).font(.headline).foregroundStyle(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                if !draft.explanation.isEmpty {
+                    Text(draft.explanation).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !draft.exampleSentence.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Text("Example").font(.caption.weight(.bold)).foregroundStyle(accent)
+                            SpeakButton(text: draft.exampleSentence, size: 28)
+                        }
+                        Text(draft.exampleSentence).font(.body.weight(.medium)).italic().foregroundStyle(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !draft.exampleTranslation.isEmpty {
+                            Text(draft.exampleTranslation).font(.subheadline).foregroundStyle(Theme.textMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Space.lg)
+                    .background(accent.opacity(0.07))
+                    .clipShape(.rect(cornerRadius: Radius.card))
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PERSONAL NOTE").font(.caption.weight(.bold)).foregroundStyle(Theme.textMuted)
+                    TextField("Add a memory hook (optional)", text: $note, axis: .vertical)
+                        .font(.body)
+                        .lineLimit(1...3)
+                        .padding(12)
+                        .background(Theme.card)
+                        .clipShape(.rect(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.border, lineWidth: 1))
+                }
+                Color.clear.frame(height: 8)
+            }
+            .padding(Space.xl)
+            .padding(.top, 8)
+        }
+        .background(Theme.background)
+        .safeAreaInset(edge: .bottom) {
+            // A draft that may merge is never "already saved": the headword is in
+            // the deck, but this reading of it is not, and the store folds it in
+            // (read-4-2).
+            SaveToDeckButton(draft: draftWithNote, accent: accent,
+                             alreadySaved: !draft.mergeIntoExisting && store.hasGap(forWord: draft.frenchWord)) { outcome in
+                if case .saved = outcome {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
+                }
+            }
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
@@ -509,11 +820,20 @@ struct ThinProgressBar: View {
     let progress: Double
     var tint: Color = Theme.primary
     var width: CGFloat = 40
+    /// What the bar measures, for VoiceOver. Hosts that already describe the bar
+    /// in a combined element can leave this alone.
+    var label: String = "Progress"
+
+    private var clamped: Double { min(1, max(0, progress.isFinite ? progress : 0)) }
+
     var body: some View {
         ZStack(alignment: .leading) {
             Capsule().fill(Theme.border).frame(width: width, height: 4)
-            Capsule().fill(tint).frame(width: width * min(1, max(0, progress)), height: 4)
+            Capsule().fill(tint).frame(width: width * clamped, height: 4)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue("\(Int((clamped * 100).rounded())) percent")
     }
 }
 
@@ -522,11 +842,12 @@ struct ThinProgressBar: View {
 struct PressableCard: ViewModifier {
     var scale: CGFloat = 0.97
     @State private var pressed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         content
-            .scaleEffect(pressed ? scale : 1)
+            .scaleEffect(pressed && !reduceMotion ? scale : 1)
             .opacity(pressed ? 0.96 : 1)
-            .animation(.spring(response: 0.32, dampingFraction: 0.65), value: pressed)
+            .reducedMotionAnimation(.spring(response: 0.32, dampingFraction: 0.65), value: pressed)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in pressed = true }
@@ -545,6 +866,7 @@ extension View {
 struct Shimmer: ViewModifier {
     @State private var phase: CGFloat = -1
     var tint: Color = .white
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         content
             .overlay {
@@ -559,6 +881,9 @@ struct Shimmer: ViewModifier {
                 }
             }
             .onAppear {
+                // A forever-repeating sweep is exactly what Reduce Motion asks us
+                // to drop: the placeholder simply sits still instead.
+                guard !reduceMotion else { return }
                 withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
                     phase = 1
                 }
@@ -582,6 +907,7 @@ struct SkeletonBlock: View {
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
             .shimmer(tint: dark ? .white.opacity(0.12) : .white)
+            .accessibilityHidden(true)
     }
 }
 
@@ -604,5 +930,11 @@ enum Haptics {
     static func success() {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+    }
+
+    /// Error notification for a wrong answer / failed action.
+    static func error() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.error)
     }
 }

@@ -3,28 +3,47 @@
 //  FluentFrenchIOS
 //
 //  French verb-tense reference: pick a tense, read when to use it, and browse
-//  full conjugation tables for common verbs with a listen button.
+//  full conjugation tables for common verbs with a listen button and a
+//  save-this-form button on every row.
 //
 
+import Foundation
 import SwiftUI
 
 struct TensesView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 at the default text size; the round listen buttons grow with it so the
+    /// glyph inside keeps its padding.
+    @ScaledMetric private var typeScale: CGFloat = 1
+
+    /// The pronoun column keeps the conjugation table aligned, so it grows with
+    /// the text size but stops before it crowds out the verb form (the pronoun
+    /// wraps instead).
+    private var columnScale: CGFloat { min(max(typeScale, 1), 1.6) }
     @State private var selectedTense: String = "Present"
+    /// The conjugated form being saved to the deck (E25).
+    @State private var captureDraft: CaptureDraft? = nil
 
     private var currentTense: FrenchTense? {
         TensesData.tenses.first { $0.name == selectedTense }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // What the deck already holds, read ONCE per render. Every row and every
+        // save hint asks "is this form saved, as this tense?", and asking that
+        // through `store.existingGap(forWord:)` re-scanned the whole deck about a
+        // hundred times per body evaluation (read-9-4).
+        let saved = store.savedHeadwordMeanings()
+        return VStack(spacing: 0) {
             header
             tenseChips
             ScrollView {
                 VStack(spacing: 16) {
                     if let currentTense { infoCard(currentTense) }
                     ForEach(TensesData.verbs) { verb in
-                        verbCard(verb)
+                        verbCard(verb, saved: saved)
                     }
                 }
                 .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 44)
@@ -33,6 +52,90 @@ struct TensesView: View {
         }
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
+        .sheet(item: $captureDraft) { draft in
+            CaptureSheet(draft: draft, accent: Theme.indigo)
+        }
+    }
+
+    /// What saving a conjugation row stores: ONE form per card (E25).
+    ///
+    /// A card built from the whole table ("être — Imparfait" meaning "to be —
+    /// imparfait") is unanswerable: the only question a non-testable card can
+    /// produce is "What does “être — Imparfait” mean?", whose answer is spelled
+    /// out in the prompt, and the six forms are never asked about at all. One
+    /// card per form asks something real instead — recognition ("What does
+    /// “étions” mean?" against the sibling forms) and, once there is evidence,
+    /// production ("nous _____" → étions), filed under the tense's grammar
+    /// concept so a right answer is genuine evidence for it.
+    private func draft(for verb: FrenchVerb, in tense: FrenchTense,
+                       pronoun: String, form: String) -> CaptureDraft? {
+        let word = form.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return nil }
+        let phrase = verbPhrase(pronoun: pronoun, form: word)
+        // French paradigms repeat one form across pronouns (être/imparfait is
+        // "étais" for both je and tu), and the deck keys cards by headword — so
+        // one card has to stand for every pronoun that shares the form. Name
+        // them all in the meaning and accept any of them, or "tu étais" would
+        // be marked wrong on a card the learner saved from the "tu" row.
+        let shared = (verb.tenses[tense.name]?.forms() ?? [])
+            .filter { $0.form.trimmingCharacters(in: .whitespacesAndNewlines) == word }
+            .map { $0.pronoun }
+        let pronouns = shared.isEmpty ? [pronoun] : shared
+        var answers: [String] = []
+        for p in pronouns {
+            let candidate = verbPhrase(pronoun: p, form: word)
+            if !answers.contains(candidate) { answers.append(candidate) }
+        }
+        if !answers.contains(phrase) { answers.insert(phrase, at: 0) }
+        // "suis allé(e)" also accepts "suis allée", bare and with "je" (read-10-2).
+        answers = ConjugationCard.acceptedAnswers(form: word, phrases: answers)
+        let meaning = ConjugationCard.meaning(verbMeaning: verb.meaning, pronouns: pronouns,
+                                              tense: tense.name)
+        return CaptureDraft(
+            frenchWord: word,
+            englishTranslation: meaning,
+            explanation: "\(tense.frenchName) of \(verb.infinitive) (\(verb.meaning)). \(tense.detail).",
+            exampleSentence: phrase,
+            // The example IS the form with its pronoun, so the recall question is
+            // "j'_____" — and the hint under it is the example's reading. Without
+            // one, nothing on screen names the verb or the tense and the card is
+            // unanswerable the second time it comes up (read-6-2).
+            exampleTranslation: meaning,
+            sourceType: .reading,
+            sourceTab: "tenses",
+            sourceLevel: Self.level(for: tense, verb: verb),
+            category: .grammar,
+            partOfSpeech: "verb",
+            conceptId: Self.conceptId(for: tense, verb: verb),
+            acceptedAnswers: answers,
+            // Paradigms also repeat a form ACROSS tenses (parler's "parlions" is
+            // imparfait and subjonctif), so saving it from a second tense adds
+            // that reading to the one card instead of being refused (read-4-2).
+            mergeIntoExisting: true
+        )
+    }
+
+    /// Whether the deck already holds this form AS the tense on screen. A form two
+    /// tenses spell alike is one card, so "saved" has to mean the card covers this
+    /// tense — not merely that the spelling is somewhere in the deck (read-4-2).
+    /// `saved` is the deck index built once per render by `body`.
+    private func isSaved(_ form: String, in tense: FrenchTense, saved: [String: String]) -> Bool {
+        let word = form.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let meaning = saved[AppStore.captureKey(word)] else { return false }
+        return ConjugationCard.covers(tense: tense.name, meaning: meaning)
+    }
+
+    /// The taxonomy concept a tense/verb pair is evidence of (nil when none fits).
+    /// The rule lives in `ConjugationCard`, view-free (read-11-6).
+    private static func conceptId(for tense: FrenchTense, verb: FrenchVerb) -> String? {
+        ConjugationCard.conceptId(tense: tense.name, verbGroup: verb.group,
+                                  passeComposeJe: verb.tenses["Passé Composé"]?.je)
+    }
+
+    /// The level a saved form is filed at: its concept's level (read-11-6).
+    private static func level(for tense: FrenchTense, verb: FrenchVerb) -> CEFRLevel {
+        ConjugationCard.level(tense: tense.name, verbGroup: verb.group,
+                              passeComposeJe: verb.tenses["Passé Composé"]?.je)
     }
 
     private var header: some View {
@@ -49,15 +152,22 @@ struct TensesView: View {
             HStack(spacing: 8) {
                 ForEach(TensesData.tenses) { tense in
                     let active = tense.name == selectedTense
-                    Button { Haptics.tap(); withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { selectedTense = tense.name } } label: {
-                        Text(tense.name).font(.system(size: 13, weight: .medium))
+                    Button {
+                        Haptics.tap()
+                        withAnimation(Theme.motion(.spring(response: 0.3, dampingFraction: 0.8), reduceMotion: reduceMotion)) {
+                            selectedTense = tense.name
+                        }
+                    } label: {
+                        Text(tense.name).scaledFont(13, weight: .medium)
                             .foregroundStyle(active ? .white : Theme.text)
-                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .padding(.horizontal, 14).frame(minHeight: Theme.minimumHitTarget)
                             .background(active ? Theme.indigo : Theme.card)
                             .clipShape(.capsule)
                             .overlay(Capsule().stroke(active ? Color.clear : Theme.border.opacity(0.7), lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Shows this tense for every verb below")
+                    .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
         }
@@ -69,16 +179,22 @@ struct TensesView: View {
     private func infoCard(_ tense: FrenchTense) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(tense.frenchName).font(.serifDisplay(22, weight: .bold)).foregroundStyle(Theme.indigo)
-                Text(tense.detail).font(.system(size: 15)).foregroundStyle(Theme.text)
+                Text(tense.frenchName).scaledSerifDisplay(22, weight: .bold).foregroundStyle(Theme.indigo)
+                    .accessibilityAddTraits(.isHeader)
+                Text(tense.detail).scaledFont(15).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text("WHEN TO USE").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textMuted).tracking(0.8)
-                Text(tense.usage).font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                Text("WHEN TO USE").scaledFont(10, weight: .bold).foregroundStyle(Theme.textSecondary).tracking(0.8)
+                Text(tense.usage).scaledFont(14).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .accessibilityElement(children: .combine)
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "text.quote").font(.system(size: 13)).foregroundStyle(Theme.indigo.opacity(0.7))
-                Text(tense.example).font(.system(size: 14, weight: .medium)).italic().foregroundStyle(Theme.text)
+                Image(systemName: "text.quote").scaledFont(13).foregroundStyle(Theme.indigo)
+                    .accessibilityHidden(true)
+                Text(tense.example).scaledFont(14, weight: .medium).italic().foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
             }
             .padding(12)
@@ -94,14 +210,16 @@ struct TensesView: View {
         .softLift(radius: 14, y: 5, strength: 0.85)
     }
 
-    private func verbCard(_ verb: FrenchVerb) -> some View {
+    private func verbCard(_ verb: FrenchVerb, saved: [String: String]) -> some View {
         let conj = verb.tenses[selectedTense]
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verb.infinitive).font(.serifDisplay(19, weight: .bold)).foregroundStyle(Theme.text)
-                    Text(verb.meaning).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
+                    Text(verb.infinitive).scaledSerifDisplay(19, weight: .bold).foregroundStyle(Theme.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(verb.meaning).scaledFont(13).foregroundStyle(Theme.textSecondary)
                 }
+                .accessibilityElement(children: .combine)
                 Spacer()
                 Pill(text: "-\(verb.group)", color: Theme.indigo)
             }
@@ -109,22 +227,31 @@ struct TensesView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(conj.forms().enumerated()), id: \.offset) { i, item in
                         HStack {
-                            Text(item.pronoun).font(.system(size: 14)).foregroundStyle(Theme.textMuted)
-                                .frame(width: 92, alignment: .leading)
-                            Text(item.form).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                            Text(item.pronoun).scaledFont(14).foregroundStyle(Theme.textSecondary)
+                                .frame(width: 92 * columnScale, alignment: .leading)
+                            Text(item.form).scaledFont(15, weight: .semibold).foregroundStyle(Theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Button { NaturalVoice.shared.speak(verbPhrase(pronoun: item.pronoun, form: item.form)) } label: {
-                                Image(systemName: "speaker.wave.2.fill").font(.system(size: 12)).foregroundStyle(Theme.indigo)
-                                    .frame(width: 28, height: 28).background(Theme.indigo.opacity(0.1)).clipShape(.circle)
+                                Image(systemName: "speaker.wave.2.fill").scaledFont(12).foregroundStyle(Theme.indigo)
+                                    .frame(width: 28 * Theme.chromeScale(typeScale), height: 28 * Theme.chromeScale(typeScale))
+                                    .background(Theme.indigo.opacity(0.1)).clipShape(.circle)
+                                    .minimumHitTarget()
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Listen to \(item.pronoun) \(item.form)")
+                            .accessibilityHint("Reads the French aloud")
+                            if let tense = currentTense {
+                                saveButton(for: verb, in: tense, pronoun: item.pronoun, form: item.form, saved: saved)
+                            }
                         }
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 2)
                         if i < conj.forms().count - 1 {
                             Rectangle().fill(Theme.borderLight).frame(height: 1)
                         }
                     }
                 }
+                if let tense = currentTense { saveHint(for: verb, in: tense, forms: conj.forms(), saved: saved) }
             }
         }
         .padding(18)
@@ -135,9 +262,62 @@ struct TensesView: View {
         .softLift(radius: 14, y: 5, strength: 0.85)
     }
 
-    /// Build a natural spoken phrase, picking the first pronoun variant.
+    /// Save-to-deck affordance (E25) for ONE conjugated form.
+    private func saveButton(for verb: FrenchVerb, in tense: FrenchTense,
+                            pronoun: String, form: String, saved: [String: String]) -> some View {
+        let alreadySaved = isSaved(form, in: tense, saved: saved)
+        return Button {
+            guard !alreadySaved, let draft = draft(for: verb, in: tense, pronoun: pronoun, form: form) else { return }
+            Haptics.tap()
+            captureDraft = draft
+        } label: {
+            Image(systemName: alreadySaved ? "checkmark.circle.fill" : "plus.circle")
+                .scaledFont(13)
+                .foregroundStyle(alreadySaved ? Theme.success : Theme.indigo)
+                .frame(width: 28 * Theme.chromeScale(typeScale), height: 28 * Theme.chromeScale(typeScale))
+                .background(alreadySaved ? Theme.successLight : Theme.indigo.opacity(0.1)).clipShape(.circle)
+                .minimumHitTarget()
+        }
+        .buttonStyle(.plain)
+        .disabled(alreadySaved)
+        .accessibilityLabel(alreadySaved ? HomeCopy.itemAlreadyInMyWords("\(pronoun) \(form)")
+                                         : HomeCopy.saveItemToMyWords("\(pronoun) \(form)"))
+        .accessibilityHint(alreadySaved ? "" : HomeCopy.addsToMyWords("form"))
+    }
+
+    /// How much of this table is already in the deck, and how to add the rest.
+    private func saveHint(for verb: FrenchVerb, in tense: FrenchTense,
+                          forms: [(pronoun: String, form: String)],
+                          saved: [String: String]) -> some View {
+        // Count DISTINCT forms: the deck keys cards by headword, so the repeated
+        // rows of a paradigm (être/imparfait "étais" for je and tu) are one card,
+        // and counting rows would jump to "2 of 6" after a single save. A card
+        // only counts when it covers THIS tense (read-4-2).
+        let unique = Set(forms.map { $0.form.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let savedCount = unique.filter { isSaved($0, in: tense, saved: saved) }.count
+        let text: String
+        if savedCount == 0 {
+            text = "Tap + on a form to save it to \(HomeCopy.myWordsTitle)"
+        } else if savedCount >= unique.count {
+            text = "Every form of \(verb.infinitive) in the \(tense.name.lowercased()) is in \(HomeCopy.myWordsTitle)"
+        } else {
+            text = "\(savedCount) of \(unique.count) forms in \(HomeCopy.myWordsTitle)"
+        }
+        return Text(text)
+            .font(.footnote)
+            .foregroundStyle(savedCount >= unique.count ? Theme.successText : Theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Build a natural spoken phrase, picking the first pronoun variant and
+    /// eliding "je" before a vowel ("j'ai", "j'étais").
     private func verbPhrase(pronoun: String, form: String) -> String {
         let p = pronoun.split(separator: "/").first.map(String.init) ?? pronoun
+        if p == "je", let first = form.lowercased().unicodeScalars.first,
+           "aeiouyàâäéèêëîïôöùûüh".unicodeScalars.contains(first) {
+            return "j'\(form)"
+        }
         return "\(p) \(form)"
     }
 }

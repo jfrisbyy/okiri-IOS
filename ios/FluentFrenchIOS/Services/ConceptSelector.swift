@@ -46,6 +46,11 @@ nonisolated struct ConceptBlock: Identifiable {
     var explanation: String          // plain-language teaching summary
     let example: GapItem?            // a real worked example from the learner's gaps
     let reason: String?              // the "why you're seeing this" line
+    /// Content v2 skill card (rule, examples, contrast, common mistake) when the
+    /// content has one; nil falls back to `explanation`.
+    var teaching: FoundationTeachingContent? = nil
+    /// The concept has stalled (B15): the lesson shows this card again before practice.
+    var isStalled: Bool = false
 }
 
 // MARK: - Selector
@@ -56,32 +61,218 @@ struct ConceptSelector {
     var weights: ConceptSelectionWeights = .tuning
     var config: LessonAssemblyConfig = .tuning
 
+    /// How many concepts list each concept as a prerequisite, and the busiest count.
+    /// Built once per selector rather than per `leverageScore` call: `dependents(of:)`
+    /// is an O(n) filter, so recomputing the maximum inside the scorer made ranking
+    /// O(n^3) — about 6 million operations per selection once the taxonomy grew from
+    /// 49 concepts to the full A1-C1 map (D6.1). One pass over the prerequisite lists
+    /// gives the same numbers.
+    private let dependentCounts: [String: Int]
+    private let maxDependents: Int
+
     init(store: AppStore, weights: ConceptSelectionWeights = .tuning, config: LessonAssemblyConfig = .tuning) {
         self.store = store
         self.weights = weights
         self.config = config
+        // Only prerequisite ids that name a real concept, matching the filter the
+        // previous per-call computation walked: a dangling id in a synthetic graph
+        // must not be able to raise the maximum this score normalizes against.
+        let known = Set(store.concepts.map { $0.id })
+        var counts: [String: Int] = [:]
+        for concept in store.concepts {
+            for prerequisiteId in concept.prerequisites where known.contains(prerequisiteId) {
+                counts[prerequisiteId, default: 0] += 1
+            }
+        }
+        self.dependentCounts = counts
+        self.maxDependents = counts.values.max() ?? 0
+    }
+
+    /// The weights the ranker actually uses. While the retention governor is active
+    /// (Pass 3 F6) the frontier weight is 0 and urgency counts
+    /// `Tuning.governorUrgencyMultiplier`× — consolidate, don't expand.
+    var effectiveWeights: ConceptSelectionWeights {
+        guard store.isGovernorActive else { return weights }
+        var w = weights
+        w.frontier = 0
+        w.urgency *= Tuning.governorUrgencyMultiplier
+        return w
     }
 
     // MARK: Eligibility — concept level
 
-    /// Learning concepts, plus frontier concepts (never-observed with all
-    /// prerequisites mastered). A never-observed concept with unmet prereqs is
-    /// never eligible.
-    func eligibleConcepts() -> [Concept] {
-        store.concepts.filter { concept in
+    /// Learning concepts the app has material for, plus frontier concepts
+    /// (never-observed with all prerequisites mastered) that have something to teach:
+    /// at least one practicable gap, or being this session's blind-spot probe (B12). A
+    /// never-observed concept with unmet prereqs is never eligible; mastered
+    /// concepts come back only through check-ins.
+    func eligibleConcepts(now: Date = Date()) -> [Concept] {
+        let probe = probeConcept()?.id
+        return store.concepts.filter { concept in
             switch concept.state {
             case .learning:
-                return true
+                // Being `.learning` is not enough: concept-level evidence from Speak
+                // or Converse can put a concept with no items and no content into that
+                // state, and ranking it targets a lesson that can never be assembled —
+                // the app diagnosing a skill it cannot teach (store-6-3). It becomes
+                // eligible the moment it has material: a card of its own, or content.
+                return store.hasTeachableMaterial(concept.id, now: now)
             case .neverObserved:
-                return store.arePrerequisitesMet(concept)
+                guard store.arePrerequisitesMet(concept) else { return false }
+                return concept.id == probe || hasPracticableGap(concept, now: now)
             case .mastered:
                 return false
             }
         }
     }
 
+    /// At least one non-probe gap of the concept can be practiced right now. Uses
+    /// the selector's own eligibility (E4: a gap still waiting for its meaning can
+    /// never carry a lesson), not the bare item schedule — otherwise a concept
+    /// could become eligible on gaps no lesson is allowed to ask.
+    func hasPracticableGap(_ concept: Concept, now: Date) -> Bool {
+        store.gaps(forConcept: concept.id).contains { !$0.isProbe && isPracticable($0, at: now) }
+    }
+
     func isFrontier(_ concept: Concept) -> Bool {
         concept.state == .neverObserved && store.arePrerequisitesMet(concept)
+    }
+
+    // MARK: Check-ins (Pass 3 F4/F6)
+
+    /// One eligible check-in: a mastered concept the schedule wants re-tested, the
+    /// item that will carry it, and how overdue it is (for ranking).
+    nonisolated struct CheckInCandidate {
+        let concept: Concept
+        /// The gap to show. A concept with no gaps of its own is checked with a
+        /// content probe (materialised by the assembler).
+        let gapId: String
+        let isProbeVehicle: Bool
+        /// Days since the concept last produced any evidence (∞ when it never has).
+        let daysSinceTested: Double
+        let overdueDays: Double
+        let lowestRecall: Double
+    }
+
+    /// Whether a mastered concept is due for a check-in (FSRS-driven, Pass 3 F4):
+    /// any REVIEWED non-probe gap is due on its own schedule or has recall below
+    /// `Tuning.checkInRetrievability`, or the concept's adaptive interval has elapsed
+    /// (a mastered concept never scheduled counts as due). Never-answered gaps carry
+    /// no recall evidence and never trigger one.
+    func isCheckInDue(_ concept: Concept, now: Date) -> Bool {
+        guard concept.state == .mastered else { return false }
+        if let next = concept.nextCheckInAt {
+            if next <= now { return true }
+        } else {
+            return true
+        }
+        return reviewedGaps(of: concept).contains {
+            $0.nextReviewAt <= now || $0.retrievability(at: now) < Tuning.checkInRetrievability
+        }
+    }
+
+    /// The concept's reviewed, non-probe gaps — the ones with recall evidence.
+    private func reviewedGaps(of concept: Concept) -> [GapItem] {
+        store.gaps(forConcept: concept.id).filter { !$0.isProbe && !$0.isNew }
+    }
+
+    /// Lowest recall among the concept's reviewed, non-probe gaps (nil with none).
+    private func lowestReviewedRecall(_ concept: Concept, now: Date) -> Double? {
+        reviewedGaps(of: concept).map { $0.retrievability(at: now) }.min()
+    }
+
+    /// How overdue the check-in is, in days: the later of the adaptive date and the
+    /// most overdue reviewed gap (0 when nothing is past due yet).
+    func checkInOverdueDays(_ concept: Concept, now: Date) -> Double {
+        let ladder = concept.nextCheckInAt.map { max(0, now.timeIntervalSince($0) / 86_400) } ?? 0
+        let schedule = reviewedGaps(of: concept).map { max(0, now.timeIntervalSince($0.nextReviewAt) / 86_400) }.max() ?? 0
+        return max(ladder, schedule)
+    }
+
+    /// The item a check-in rides on: the weakest reviewed gap, else the weakest
+    /// gap of any kind, else a fresh content probe when the concept has probe content.
+    /// A gap still waiting for its meaning (E4) can carry nothing — its answer is the
+    /// empty string — so it is never a vehicle either.
+    ///
+    /// A PROVISIONAL seed is verified on a different item each pass (engine-11-2):
+    /// never-answered items first, then the least recently reviewed. Its other
+    /// Foundation items are kept out of review (`isReviewEligible`) and a mastered
+    /// concept is never a target, so after the first check-in the item it rode on was
+    /// the seed's only reviewed gap and carried every later pass — the
+    /// `Tuning.seedVerificationPasses` meant to prove the skill were one word asked
+    /// three times, with feedback after the first.
+    func checkInVehicle(for concept: Concept, now: Date, excluding chosen: Set<String> = []) -> (gapId: String, isProbe: Bool)? {
+        let gaps = store.gaps(forConcept: concept.id).filter { !chosen.contains($0.id) && !$0.needsTranslation }
+        if concept.isProvisional {
+            let cards = gaps.filter { !$0.isProbe }
+            if let fresh = cards.filter({ $0.isNew }).sorted(by: Self.weakestFirst(now: now)).first {
+                return (fresh.id, false)
+            }
+            if let stalest = cards.sorted(by: Self.leastRecentlyReviewedFirst).first {
+                return (stalest.id, false)
+            }
+        }
+        let reviewed = gaps.filter { !$0.isProbe && !$0.isNew }.sorted(by: Self.weakestFirst(now: now))
+        if let gap = reviewed.first { return (gap.id, false) }
+        let any = gaps.filter { !$0.isProbe }.sorted(by: Self.weakestFirst(now: now))
+        if let gap = any.first { return (gap.id, false) }
+        let probes = gaps.filter { $0.isProbe }.sorted(by: Self.weakestFirst(now: now))
+        if let gap = probes.first { return (gap.id, true) }
+        guard store.hasProbeContent(for: concept.id) else { return nil }
+        return (Self.probeGapId(for: concept, session: store.sessionIndex), true)
+    }
+
+    /// Every mastered concept due for a check-in that has an item to carry it.
+    /// Provisional seeds (never verified) come first — they are the riskiest
+    /// claims the engine holds — then the concept that has gone longest without
+    /// producing any evidence, so slots rotate fairly across mastered concepts
+    /// (ties: most overdue, lowest recall, then id).
+    func checkInCandidates(now: Date = Date()) -> [CheckInCandidate] {
+        store.concepts
+            .filter { isCheckInDue($0, now: now) }
+            .compactMap { concept -> CheckInCandidate? in
+                guard let vehicle = checkInVehicle(for: concept, now: now) else { return nil }
+                let sinceTested = concept.lastTestedAt.map { now.timeIntervalSince($0) / 86_400 } ?? .infinity
+                return CheckInCandidate(concept: concept, gapId: vehicle.gapId, isProbeVehicle: vehicle.isProbe,
+                                        daysSinceTested: sinceTested,
+                                        overdueDays: checkInOverdueDays(concept, now: now),
+                                        lowestRecall: lowestReviewedRecall(concept, now: now) ?? 1)
+            }
+            .sorted { a, b in
+                if a.concept.isProvisional != b.concept.isProvisional { return a.concept.isProvisional }
+                if a.daysSinceTested != b.daysSinceTested { return a.daysSinceTested > b.daysSinceTested }
+                if a.overdueDays != b.overdueDays { return a.overdueDays > b.overdueDays }
+                if a.lowestRecall != b.lowestRecall { return a.lowestRecall < b.lowestRecall }
+                return a.concept.id < b.concept.id
+            }
+    }
+
+    /// Gaps of a mastered concept come back only through check-ins, never through
+    /// the review pool — that is what keeps mastered material from crowding the day.
+    func belongsToMasteredConcept(_ gap: GapItem) -> Bool {
+        guard let cid = gap.conceptId, let concept = store.concept(cid) else { return false }
+        return concept.state == .mastered
+    }
+
+    /// Whether the interleaved-review pool (and the step-4 filler) may take this gap.
+    /// Mastery is judged per CONCEPT from a handful of observations, but a concept owns
+    /// many ITEMS: words the learner captured while reading, and curriculum items no
+    /// lesson has reached yet. Holding every gap of a mastered concept back left those
+    /// unreachable — a captured word tagged to a known skill was counted as "due now"
+    /// and never asked, because the check-in vehicle always prefers an already-reviewed
+    /// gap (engine-4-1). So a NEVER-ANSWERED gap of a mastered concept is review-eligible:
+    /// it carries no recall evidence to protect and it is new material to teach.
+    /// Practised gaps still return only as check-ins.
+    ///
+    /// The one exception is a provisional placement seed's own Foundation items: those
+    /// exist to VERIFY a claim the learner made ("I know this"), and teaching them would
+    /// re-teach exactly what placement said they know. They open up the moment the seed
+    /// fails its check-ins and the concept drops out of mastery (B7/B9).
+    func isReviewEligible(_ gap: GapItem) -> Bool {
+        guard belongsToMasteredConcept(gap) else { return true }
+        guard gap.isNew else { return false }
+        if gap.sourceType == .foundation, store.concept(gap.conceptId)?.isProvisional == true { return false }
+        return true
     }
 
     /// Never observed AND its prerequisites are not all mastered: material the
@@ -92,89 +283,239 @@ struct ConceptSelector {
 
     // MARK: Eligibility — item level
 
-    /// A gap may be practiced when it is active and is not evidence of a
-    /// prerequisite-blocked concept. Gaps of mastered concepts stay practicable
+    /// A gap may be practiced when its own schedule offers it (`GapItem.isPracticable`:
+    /// unmastered, or mastered and due for a check — B3) and it is not evidence of
+    /// a prerequisite-blocked concept. Gaps of mastered concepts stay practicable
     /// when FSRS says they are due (item schedule ≠ concept mastery); untagged
-    /// gaps carry no prerequisite chain and stay practicable.
-    func isPracticable(_ gap: GapItem) -> Bool {
-        guard !gap.isMastered else { return false }
-        guard let cid = gap.conceptId, let concept = store.concept(cid) else { return true }
-        return !isPrerequisiteBlocked(concept)
+    /// gaps carry no prerequisite chain and stay practicable. A gap the LEARNER
+    /// captured (reading, listening, speaking — anything but Foundation content)
+    /// is never prerequisite-blocked either (E2): they met the word, so it is
+    /// theirs to practice even when the heuristic tagger filed it under a concept
+    /// they are not "ready" for. A gap captured WITHOUT a meaning yet
+    /// (`needsTranslation`, E4) waits until `resolvePendingTranslations` fills it
+    /// in — it keeps its schedule, but a blank meaning can never become a lesson
+    /// option or a match pair. The blocked rule itself lives on the store
+    /// (`AppStore.isPrerequisiteBlocked(_:)`) so the "due now" counts the learner
+    /// sees and the gaps the selector will actually offer can never disagree.
+    func isPracticable(_ gap: GapItem, at now: Date = Date()) -> Bool {
+        guard gap.isPracticable(at: now) else { return false }
+        if gap.needsTranslation { return false }
+        return !store.isPrerequisiteBlocked(gap)
     }
 
     // MARK: Scoring
 
+    /// Rank a concept on the four axes. The pool the urgency and confusion terms
+    /// read is the material a lesson could ACTUALLY ask for this concept: the same
+    /// filter every selection path applies (`practicableSpine`, the review pool, the
+    /// step-4 filler, `hasPracticableGap`), not the bare item schedule.
+    ///
+    /// Blind-spot probes are the reason this matters (engine-9-1). A probe is a
+    /// one-shot diagnostic: it is asked once, FSRS reschedules it like any item, and
+    /// no lesson will ever offer it again. Scoring it left every probed concept
+    /// permanently overdue — `urgencyScore` saturates after a week — so from seven
+    /// days after each probe that concept sat at a flat +1.0 on the heaviest weight
+    /// in the ranker, for ever, on a question the app refuses to ask. Ranking on the
+    /// same material the lesson can offer keeps the score honest.
     func score(_ concept: Concept, now: Date = Date()) -> Double {
-        let conceptGaps = store.gaps(forConcept: concept.id).filter { !$0.isMastered }
+        let conceptGaps = store.gaps(forConcept: concept.id).filter { !$0.isProbe && isPracticable($0, at: now) }
+        let w = effectiveWeights
+        let level = learnerLevel()
 
-        let urgency = urgencyScore(conceptGaps, now: now)
+        let urgency = urgencyScore(conceptGaps, now: now) * aboveLevelUrgencyFit(concept, level: level)
         let leverage = leverageScore(concept)
-        let frontierFit = frontierScore(concept)
+        let frontierFit = frontierScore(concept, abilityLevel: level)
         let confusion = confusionScore(conceptGaps)
         let recent = recentlyTaughtPenalty(concept)
 
-        return weights.urgency * urgency
-            + weights.leverage * leverage
-            + weights.frontier * frontierFit
-            + weights.confusion * confusion
-            - weights.repeatDamp * recent
+        return w.urgency * urgency
+            + w.leverage * leverage
+            + w.frontier * frontierFit
+            + w.confusion * confusion
+            - w.repeatDamp * recent
+            + stallPrerequisiteBonus(concept)
+            + unfinishedConceptBonus(concept, now: now)
     }
 
-    /// Max overdue-ness across this concept's gaps (0 if none due), normalized.
+    /// Come back to unfinished work (engine-8-3). A LEARNING concept the ranker has
+    /// already invested in gets a bonus until it is mastered or stalls:
+    ///   • a lapse — mastery earned through practice that later answers took away
+    ///     (`Concept.lapsedAt`) — gets `Tuning.lapsedConceptBonus` at once;
+    ///   • a concept that has been a lesson target and never reached mastery gets
+    ///     `Tuning.unfinishedConceptBonus` once `Tuning.unfinishedReturnDays` have
+    ///     passed with no evidence on it at all.
+    ///
+    /// Nothing else in the score brings the ranker back to either. Urgency reads a
+    /// concept's OVERDUE items, and the lesson that just practised them rescheduled
+    /// each one into the future, while on a curriculum larger than the day's
+    /// throughput every other concept carries overdue items; and a concept at or
+    /// below the learner's band has low frontier fit. Sixty-day runs on the
+    /// 82-concept curriculum ended with 10-12 concepts the learner truly held
+    /// (truth 0.75-0.94, P(correct) 0.80-0.95) left below the mastery line and
+    /// untouched for one to four weeks, so the engine's mastered count sat 10-12
+    /// below the truth at its own standard. Most had been knocked out of mastery by
+    /// one double-weight check-in miss (`Tuning.checkInMissWeight`) and never asked
+    /// again; the rest were dropped after a lesson or two while the estimate still
+    /// carried the misses made before the learner caught up.
+    ///
+    /// The return delay keeps this from turning into depth-first drilling: with no
+    /// delay the ranker held a fast learner on one concept for a whole day while the
+    /// estimate trailed far behind, and early-day calibration broke its ceiling.
+    /// The stall rule bounds both: a concept `Tuning.stallAttempts` target lessons
+    /// leave in the same state loses the daily bonus, and stall remediation (B15) turns to
+    /// its prerequisites instead, so a skill the learner cannot get yet never holds
+    /// the target slot. A concept only probed, or seeded by placement, was never a
+    /// target and earns nothing; a failed seed is not a lapse (`AppStore.recordConceptAnswer`).
+    ///
+    /// Two holes in that rule left skills the learner holds untouched for one to four
+    /// weeks (engine-12-1, found by splitting the sixty-day mastered-count drift):
+    ///   • "invested in" meant "has been a lesson TARGET". A concept whose curriculum
+    ///     was worked through by review, bridge or first-run slots — every item
+    ///     answered, `Tuning.minObservations` of tested evidence — was never a target,
+    ///     so it earned nothing; all twelve of its items sat overdue for weeks
+    ///     (greetings-politeness, common-verbs, present-ir-re-verbs). Tested evidence
+    ///     at the mastery floor now counts as investment too. A placement seed's
+    ///     inferred weight still does not (`Concept.testedObservations`).
+    ///   • a STALLED concept lost the bonus for good. Stalling means the last
+    ///     `Tuning.stallAttempts` target lessons did not move it, which is the moment
+    ///     to stop drilling it — not to abandon it: the learner often catches up
+    ///     later through its prerequisites and review, and nothing ever asked again
+    ///     (imparfait, stressed-pronouns, formal-register). A stalled concept now
+    ///     comes back with the ordinary bonus once `Tuning.stalledReturnDays` pass
+    ///     with no evidence, so it is re-checked weekly instead of drilled daily.
+    func unfinishedConceptBonus(_ concept: Concept, now: Date) -> Double {
+        guard concept.state == .learning else { return 0 }
+        let idleDays = concept.lastTestedAt.map { now.timeIntervalSince($0) / 86_400 }
+        if concept.isStalled {
+            guard let idleDays, idleDays >= Tuning.stalledReturnDays else { return 0 }
+            return Tuning.unfinishedConceptBonus
+        }
+        if concept.lapsedAt != nil { return Tuning.lapsedConceptBonus }
+        let investedIn = concept.lastTaughtSession != nil
+            || concept.testedObservations >= Tuning.minObservations
+        guard investedIn, let idleDays, idleDays >= Tuning.unfinishedReturnDays else { return 0 }
+        return Tuning.unfinishedConceptBonus
+    }
+
+    /// How much of a concept's overdue-ness counts, given where it sits relative to
+    /// the learner (engine-9-2). Level fit used to be purely ADDITIVE and capped at
+    /// `weights.frontier` (0.8) while urgency is capped at 1.0 and saturates after a
+    /// week, so overdue-ness simply overrode level fit: a skill the learner is
+    /// working through has its items rescheduled by FSRS and decays toward urgency 0,
+    /// while a skill a band or two above them — seeded by a blind-spot probe, say —
+    /// keeps urgency 1.0 for ever and outranks it. A declared beginner was taught B1
+    /// grammar weeks before reading unlocked.
+    ///
+    /// So urgency is GATED by fit above the learner's band: material at or below the
+    /// learner keeps its full urgency (that is exactly what review is for), and
+    /// material above it counts only in proportion to its frontier fit, which reaches
+    /// zero `Tuning.frontierLevelSpanAbove` bands up. Rotting cannot promote a skill
+    /// the learner is not ready for; it can still be reviewed through the review
+    /// pool, it just cannot become the lesson's target.
+    private func aboveLevelUrgencyFit(_ concept: Concept, level: CEFRLevel) -> Double {
+        guard concept.cefrLevel.order > level.order else { return 1 }
+        return frontierScore(concept, abilityLevel: level)
+    }
+
+    /// Stall remediation (B15): when a concept has stalled, its UNMASTERED
+    /// prerequisites get `Tuning.stallPrerequisiteBonus` so the next lesson shores
+    /// up what the stalled skill rests on.
+    func stallPrerequisiteBonus(_ concept: Concept) -> Double {
+        guard concept.state != .mastered else { return 0 }
+        let stalledDependents = store.dependents(of: concept.id).filter { $0.isStalled }
+        return stalledDependents.isEmpty ? 0 : Tuning.stallPrerequisiteBonus
+    }
+
+    /// Ids of stalled concepts (`Concept.isStalled`).
+    func stalledConceptIds() -> [String] {
+        store.concepts.filter { $0.isStalled }.map { $0.id }
+    }
+
+    /// Max overdue-ness across this concept's gaps (0 if none due), normalized: it
+    /// saturates at `Tuning.urgencySaturationDays` overdue.
     private func urgencyScore(_ gaps: [GapItem], now: Date) -> Double {
         let maxOverdueDays = gaps
             .map { now.timeIntervalSince($0.nextReviewAt) / 86_400 }
             .filter { $0 > 0 }
             .max() ?? 0
-        return min(1, maxOverdueDays / 7)
+        return min(1, maxOverdueDays / Tuning.urgencySaturationDays)   // engine-11-6
     }
 
     /// How many other concepts list this as a prerequisite, normalized by the
     /// busiest concept in the taxonomy.
     private func leverageScore(_ concept: Concept) -> Double {
-        let dependents = store.dependents(of: concept.id).count
-        let maxDependents = store.concepts
-            .map { store.dependents(of: $0.id).count }
-            .max() ?? 0
         guard maxDependents > 0 else { return 0 }
-        return Double(dependents) / Double(maxDependents)
+        return Double(dependentCounts[concept.id] ?? 0) / Double(maxDependents)
     }
 
-    /// 1.0 for frontier concepts; for learning concepts, tapers toward 0 the
-    /// further the concept sits below the learner's current ability.
-    private func frontierScore(_ concept: Concept) -> Double {
-        if isFrontier(concept) { return 1.0 }
-        let abilityLevel = learnerLevel().order
-        let conceptLevel = concept.cefrLevel.order
-        let below = Double(max(0, abilityLevel - conceptLevel))
-        return max(0, 1 - below / 3.0)
+    /// Fit to the EDGE of current ability: 1.0 at the learner's own CEFR band,
+    /// tapering to 0 over `Tuning.frontierLevelSpanBelow` bands downward and the
+    /// steeper `Tuning.frontierLevelSpanAbove` bands upward.
+    ///
+    /// The taper used to be one-sided: a flat 1.0 for EVERY frontier concept and a
+    /// discount only for material below the learner. That made an A1 and a C1
+    /// frontier skill indistinguishable on the one axis that is supposed to order
+    /// them, and it actively preferred the highest-level eligible concept as ability
+    /// rose — a declared beginner was taught B1 grammar in week two while a third of
+    /// the core A1 skills were never a lesson target in sixty days (engine-8-1).
+    /// Penalising distance in BOTH directions, and harder upward (above-level
+    /// material is material the learner cannot answer yet, not merely easy material
+    /// they have outgrown), makes an at-level skill outrank one a band above it
+    /// whether or not either has been observed.
+    private func frontierScore(_ concept: Concept, abilityLevel: CEFRLevel) -> Double {
+        let delta = concept.cefrLevel.order - abilityLevel.order
+        let span = delta > 0 ? Tuning.frontierLevelSpanAbove : Tuning.frontierLevelSpanBelow
+        return max(0, 1 - Double(abs(delta)) / span)
     }
 
+    /// Pressure from the mix-ups the learner has not yet put behind them. A retired
+    /// link (`GapItem.activeConfusionLinks`) no longer ranks the concept: a single
+    /// mix-up used to boost it for ever (engine-10-3).
     private func confusionScore(_ gaps: [GapItem]) -> Double {
-        let total = gaps.flatMap { $0.confusionLinks }.map { $0.strength }.reduce(0, +)
+        let total = gaps.flatMap { $0.activeConfusionLinks }.map { $0.strength }.reduce(0, +)
         return min(1, total)
     }
 
     private func recentlyTaughtPenalty(_ concept: Concept) -> Double {
         guard let taught = concept.lastTaughtSession else { return 0 }
         let delta = store.sessionIndex - taught
-        if delta <= 0 { return 1.0 }
-        if delta == 1 { return 0.5 }
+        if delta <= 0 { return Tuning.repeatDampSameSessionPenalty }        // engine-11-6
+        if delta == 1 { return Tuning.repeatDampPreviousSessionPenalty }
         return 0
     }
 
     /// The learner's IRT ability mapped to an approximate CEFR band. This is the
     /// one notion of "level" the engine has: frontier fit uses it, and surfaces
-    /// that gate by level (e.g. conversation scenarios) read it from here.
+    /// that gate by level (e.g. conversation scenarios) read it from here. It is the
+    /// store's LATCHED band, so the ranker and the badge can never disagree and
+    /// neither flips on θ noise around a band edge (engine-10-2).
     func learnerLevel() -> CEFRLevel {
-        switch store.abilityTheta {
-        case ..<(-0.4): return .A1
-        case ..<0.4: return .A2
-        case ..<1.2: return .B1
-        case ..<2.0: return .B2
-        case ..<2.6: return .C1
-        default: return .C2
-        }
+        store.learnerLevel
+    }
+
+    /// The band an ability maps to, with no selector to build. The mapping reads
+    /// nothing but θ, while constructing a selector indexes the whole taxonomy —
+    /// work that `AppStore.learnerLevel` was paying on every read, including once
+    /// per row in list bodies, and which made every level badge re-render on any
+    /// concept mutation (store-8-4).
+    /// The edges live in Tuning (`levelThetaFloor`), not here (engine-10-2).
+    nonisolated static func level(forTheta theta: Double) -> CEFRLevel {
+        CEFRLevel.allCases.last { theta >= Tuning.levelThetaFloor(for: $0) } ?? .A1
+    }
+
+    /// The band to REPORT for θ given the band last reported: it moves only once θ
+    /// clears the new band's edge by `Tuning.levelHysteresis`. θ for a learner of
+    /// steady ability settles close to a band edge — the per-item evidence ceiling
+    /// sits right on it — and a bare threshold flipped the badge, the ranking and
+    /// every level-gated surface between A2 and B1 every few days (engine-10-2).
+    /// With no previous band this is the bare mapping.
+    nonisolated static func level(forTheta theta: Double, previous: CEFRLevel?) -> CEFRLevel {
+        guard let previous else { return level(forTheta: theta) }
+        let up = level(forTheta: theta - Tuning.levelHysteresis)
+        if up.order > previous.order { return up }
+        let down = level(forTheta: theta + Tuning.levelHysteresis)
+        if down.order < previous.order { return down }
+        return previous
     }
 
     // MARK: Ranking
@@ -183,7 +524,7 @@ struct ConceptSelector {
     /// a selection is reproducible. Shared by every mode and by the daily plan
     /// (one brain, two views).
     func rankedEligible(now: Date = Date()) -> [ScoredConcept] {
-        eligibleConcepts()
+        eligibleConcepts(now: now)
             .map { ScoredConcept(concept: $0, score: score($0, now: now), isFrontier: isFrontier($0)) }
             .sorted { a, b in
                 if a.score != b.score { return a.score > b.score }
@@ -208,10 +549,34 @@ struct ConceptSelector {
 
     // MARK: Smart mode
 
+    /// A concept's practicable, non-probe gaps, weakest first — the spine it would
+    /// get as the target. Probes are one-shot diagnostics (B13): their prompt is a
+    /// question and their "translation" the answer, so they never ride in a lesson
+    /// as spine, review or filler.
+    private func practicableSpine(of concept: Concept, now: Date) -> [GapItem] {
+        store.gaps(forConcept: concept.id)
+            .filter { !$0.isProbe && isPracticable($0, at: now) }
+            .sorted(by: Self.weakestFirst(now: now))
+    }
+
     private func selectSmart(_ request: SelectionRequest, ranked: [ScoredConcept], level: CEFRLevel) -> SelectionOutput {
         let now = request.now
         let size = max(Tuning.minLessonSize, request.lessonSize)
-        let target = ranked.first?.concept
+
+        // The target is the top-ranked concept that has something to teach RIGHT NOW
+        // (B12): a learning concept whose gaps are all mastered and resting would
+        // otherwise headline "Today: X" with an empty spine and stall forever. With
+        // no such concept the lesson is a consolidation session (target nil).
+        var target: Concept? = nil
+        var spine: [GapItem] = []
+        for scored in ranked {
+            let candidate = practicableSpine(of: scored.concept, now: now)
+            if !candidate.isEmpty {
+                target = scored.concept
+                spine = candidate
+                break
+            }
+        }
 
         func isTargetGap(_ gap: GapItem) -> Bool {
             guard let target, let cid = gap.conceptId else { return false }
@@ -227,35 +592,83 @@ struct ConceptSelector {
                                       reason: smartReason(for: gap, role: role, target: target, now: now)))
         }
 
-        // 1. Spine — the target concept's active gaps, weakest first.
-        var spine: [GapItem] = []
-        if let target {
-            spine = store.gaps(forConcept: target.id)
-                .filter { !$0.isMastered }
-                .sorted(by: Self.weakestFirst(now: now))
-            let spineCount = max(1, Int((Double(size) * config.targetRatio).rounded()))
+        // 1. Spine — the target concept's practicable gaps, weakest first. The
+        //    spine takes `config.targetRatio` of the lesson but never the slots
+        //    reserved for check-ins and interleaved review: at full size those
+        //    three together used to add up to exactly `size`, so steps 3 and 4
+        //    never ran and a steady-state lesson was blocked practice on one
+        //    concept while hundreds of other gaps stayed overdue.
+        if target != nil {
+            let reserved = Tuning.checkInsPerLesson + config.reviewSlots
+            let byRatio = Int((Double(size) * config.targetRatio).rounded())
+            let spineCount = max(1, min(byRatio, size - reserved))
             for gap in spine.prefix(spineCount) { take(gap, role: .target) }
         }
 
-        // 2. Interleaved review — most-overdue PRACTICABLE gaps from other concepts,
-        //    due within the window. Eligibility applies here too: prerequisite-
-        //    blocked material never rides in through the review pool (audit §5.7).
+        // 2. Check-ins (Pass 3 F4/F6): up to `Tuning.checkInsPerLesson` MASTERED
+        //    concepts the schedule wants re-tested, most overdue first — one item
+        //    each. PRACTISED mastered material comes back through here and only here;
+        //    a miss weighs double and feeds the retention governor. With nothing left
+        //    to teach (no target) the lesson is a consolidation session and check-ins
+        //    may fill it — but never past the slots step 3 reserves for review while
+        //    anything is actually due, or the whole session is material the engine
+        //    already believes the learner knows while overdue items rot (engine-4-2).
         let dueBy = now.addingTimeInterval(config.dueWindowDays * 86_400)
-        let review = store.activeGaps
-            .filter { !chosen.contains($0.id) && !isTargetGap($0) }
-            .filter { isPracticable($0) && $0.nextReviewAt <= dueBy }
+        func isReviewCandidate(_ gap: GapItem) -> Bool {
+            !gap.isProbe && !chosen.contains(gap.id) && !isTargetGap(gap) && isReviewEligible(gap)
+                && isPracticable(gap, at: now) && gap.nextReviewAt <= dueBy
+        }
+        let checkInBudget: Int
+        if target != nil {
+            checkInBudget = Tuning.checkInsPerLesson
+        } else if store.schedulableGaps(at: now).contains(where: isReviewCandidate) {
+            checkInBudget = max(1, size - config.reviewSlots)
+        } else {
+            checkInBudget = size
+        }
+        var checkIns = 0
+        for candidate in checkInCandidates(now: now) {
+            if checkIns >= checkInBudget { break }
+            guard !chosen.contains(candidate.gapId) else { continue }
+            chosen.insert(candidate.gapId)
+            checkIns += 1
+            items.append(SelectedItem(gapId: candidate.gapId, conceptId: candidate.concept.id, role: .checkIn,
+                                      reason: checkInReason(for: candidate.concept)))
+        }
+
+        // 3. Interleaved review — most-overdue PRACTICABLE gaps of other concepts,
+        //    due within the window, that `isReviewEligible` allows (practised material
+        //    of a mastered concept returns only as a check-in; its never-answered
+        //    items are still teachable). Eligibility applies here too: prerequisite-
+        //    blocked material never rides in through the review pool (audit §5.7).
+        let review = store.schedulableGaps(at: now)
+            .filter(isReviewCandidate)
             .sorted(by: Self.mostOverdueFirst(now: now))
+        //    The reserved review slots go FIRST to never-answered items of mastered
+        //    concepts (engine-4-1). Review is the only path such an item has: a mastered
+        //    concept is never a target, and its check-in rides on a practised gap. Under
+        //    plain oldest-first it waited behind every older due item, and once the
+        //    curriculum outgrew review capacity — the A2 bridge releases
+        //    `Tuning.foundationSeedBatch` items a day against a few review slots per
+        //    lesson — that queue never drained: a concept mastered on its first few
+        //    items kept the rest unasked for the whole run. Capped at `reviewSlots`, so
+        //    any further slot is still oldest-first review.
+        let unasked = review.filter { $0.isNew && belongsToMasteredConcept($0) }
+        for gap in unasked.prefix(config.reviewSlots) {
+            if items.count >= size { break }
+            take(gap, role: .review)
+        }
         for gap in review {
             if items.count >= size { break }
             take(gap, role: .review)
         }
 
-        // 3. Top up if short: the rest of the spine, then other practicable gaps,
-        //    weakest first. Never anything prerequisite-blocked.
+        // 4. Top up if short: the rest of the spine, then other review-eligible
+        //    practicable gaps, weakest first. Never anything prerequisite-blocked.
         if items.count < size {
             let rest = spine.filter { !chosen.contains($0.id) }
-            let others = store.activeGaps
-                .filter { !chosen.contains($0.id) && !isTargetGap($0) && isPracticable($0) }
+            let others = store.schedulableGaps(at: now)
+                .filter { !$0.isProbe && !chosen.contains($0.id) && !isTargetGap($0) && isReviewEligible($0) && isPracticable($0, at: now) }
                 .sorted(by: Self.weakestFirst(now: now))
             for gap in rest + others {
                 if items.count >= size { break }
@@ -263,38 +676,109 @@ struct ConceptSelector {
             }
         }
 
-        // 4. Blind-spot probe (rare): ONE never-observed frontier concept the
-        //    learner has no gap for yet. Materialised by the assembler.
-        if let probe = probeConcept() {
+        // 5. Blind-spot probe (rare): ONE never-observed frontier concept the
+        //    learner has no gap for yet, carried by a real content probe (B13).
+        //    Materialised by the assembler.
+        let probe = probeConcept()
+        if let probe {
             items.append(SelectedItem(gapId: Self.probeGapId(for: probe, session: store.sessionIndex),
                                       conceptId: probe.id, role: .probe,
                                       reason: "Quick check on a skill you haven't met yet: \(probe.name)."))
         }
 
+        // The headline describes the LESSON, so it counts the lesson's own items: the
+        // probe is a one-item diagnostic appended after the fact, and letting it into
+        // the count turned every third consolidation session into "Today: review" and
+        // described a never-met skill as review (engine-4-6).
+        let coreCount = items.count - (probe == nil ? 0 : 1)
         let headline: String
         if let target {
-            headline = smartHeadline(for: target)
+            headline = smartHeadline(for: target, now: now)
         } else if items.isEmpty {
             headline = "Nothing to practice right now."
+        } else if coreCount == 0, let probe {
+            headline = "Today: a quick check on \(probe.name) — a skill you haven't met yet."
+        } else if checkIns > 0 && coreCount == checkIns {
+            headline = LessonCopy.quickCheckHeadline
         } else {
             headline = "Today: review — keeping what you've learned fresh."
         }
 
+        // Stalled concepts in this lesson (target or any item) get their skill card again.
+        let present = Set(items.compactMap { $0.conceptId } + [target?.id].compactMap { $0 })
+        let stalled = stalledConceptIds().filter { present.contains($0) }
+
         return SelectionOutput(request: request, targetConceptId: target?.id, items: items,
-                               headline: headline, rankedConcepts: ranked, learnerLevel: level)
+                               headline: headline, rankedConcepts: ranked, learnerLevel: level,
+                               stalledConceptIds: stalled, governorActive: store.isGovernorActive)
     }
 
-    /// Every N sessions, the lowest-level frontier concept with no gap yet.
+    /// Every N sessions, the lowest-level frontier concept with no gap yet — and
+    /// with probe content to carry it (a concept without probes is skipped, B13).
+    ///
+    /// While reading is still locked, only concepts at or below
+    /// `Tuning.foundationProbeMaxLevel` (A1) may be probed (engine-10-1). A probe
+    /// answer seeds the probed skill's whole curriculum, due now, so probing the B1
+    /// skills whose prerequisites are A1 basics (the subjunctive, savoir/connaître,
+    /// idioms) taught B1 grammar inside Foundation, pushed θ into B1 on that material
+    /// while most of the basics were unverified, and spent the lessons that open
+    /// reading — contrary to FoundationSeeder's "nothing above A1 before reading
+    /// opens". A2 skills arrive with the bridge slice at unlock; higher ones by probe
+    /// after it.
+    ///
+    /// "No gap yet" also covers a concept whose cards are short of its CURRICULUM
+    /// (`AppStore.holdsCurriculum`), not only one with no card at all:
+    /// a word captured while reading, or the one item a placement miss seeds, used to
+    /// shut this door too, and with the seeding door shut on the same card the
+    /// skill's other authored items were never reached (engine-11-1). Within a band a
+    /// concept with no card at all is still probed first: one with a card is already
+    /// reachable through that card's own first answer.
     func probeConcept() -> Concept? {
         guard config.probeEveryNSessions > 0,
               store.sessionIndex % config.probeEveryNSessions == 0 else { return nil }
+        let maxOrder = store.isInFoundation ? Tuning.foundationProbeMaxLevel.order : Int.max
         return store.concepts
-            .filter { isFrontier($0) && store.gaps(forConcept: $0.id).isEmpty }
-            .sorted { a, b in
-                if a.cefrLevel.order != b.cefrLevel.order { return a.cefrLevel.order < b.cefrLevel.order }
-                return a.id < b.id
+            .filter { $0.cefrLevel.order <= maxOrder }
+            .map { (concept: $0, hasCard: store.gaps(forConcept: $0.id).contains { !$0.isProbe },
+                    hasAnyGap: !store.gaps(forConcept: $0.id).isEmpty) }
+            .filter { c in
+                isFrontier(c.concept) && store.hasProbeContent(for: c.concept.id)
+                    && (!c.hasAnyGap || !store.holdsCurriculum(c.concept.id))
             }
-            .first
+            .sorted { a, b in
+                if a.concept.cefrLevel.order != b.concept.cefrLevel.order {
+                    return a.concept.cefrLevel.order < b.concept.cefrLevel.order
+                }
+                if a.hasCard != b.hasCard { return !a.hasCard }
+                return a.concept.id < b.concept.id
+            }
+            .first?.concept
+    }
+
+    /// Whether a lesson can put this concept in front of the learner NOW, not merely
+    /// some day (engine-11-3, follow-up to engine-10-5): it has a card of its own, or
+    /// a blind-spot probe may open it. While reading is locked a probe opens nothing
+    /// above `Tuning.foundationProbeMaxLevel`, and A2 skills arrive only with the
+    /// bridge slice at unlock — so a declared beginner whose latched band reached A2
+    /// inside Foundation was told eight A2 skills were "unlocked" on day four, two
+    /// weeks before any lesson could hold one. "New skills unlocked" and "This
+    /// unlocks X" both read this, so neither promises a skill the selector cannot offer.
+    func canOfferNow(_ concept: Concept) -> Bool {
+        Self.canOfferNow(level: concept.cefrLevel,
+                         hasOwnCard: store.gaps(forConcept: concept.id).contains { !$0.isProbe },
+                         isInFoundation: store.isInFoundation)
+    }
+
+    /// `canOfferNow` on plain values, for the store's frontier pass (engine-11-3).
+    nonisolated static func canOfferNow(level: CEFRLevel, hasOwnCard: Bool, isInFoundation: Bool) -> Bool {
+        hasOwnCard || !isInFoundation || level.order <= Tuning.foundationProbeMaxLevel.order
+    }
+
+    private func checkInReason(for concept: Concept) -> String {
+        if concept.isProvisional {
+            return LessonCopy.placementCheckReason(conceptName: concept.name)
+        }
+        return LessonCopy.quickCheckReason(conceptName: concept.name)
     }
 
     nonisolated static func probeGapId(for concept: Concept, session: Int) -> String {
@@ -322,7 +806,7 @@ struct ConceptSelector {
         }
 
         let chosen = candidates
-            .filter { isPracticable($0) }
+            .filter { isPracticable($0, at: now) }
             .sorted(by: Self.weakestFirst(now: now))
             .prefix(size)
 
@@ -359,9 +843,14 @@ struct ConceptSelector {
 
         // Per concept: practicable gaps touched inside the recency window, most
         // recent first; if none were, fall back to any practicable gap of the
-        // concept so an early learner still gets a capstone.
+        // concept so an early learner still gets a capstone. Probes are excluded
+        // here as they are everywhere else (engine-9-4): a blind-spot probe is a
+        // one-shot diagnostic whose prompt is a question and whose "translation" is
+        // the answer, and the scheduler drops one that reaches a lesson — so letting
+        // it take a capstone slot only made the milestone quiz come up short and
+        // count a skill it never tested.
         var queues: [[GapItem]] = capstoneRanked.map { scored in
-            let gaps = store.gaps(forConcept: scored.concept.id).filter { isPracticable($0) }
+            let gaps = store.gaps(forConcept: scored.concept.id).filter { !$0.isProbe && isPracticable($0, at: now) }
             let recent = gaps.filter { ($0.lastReviewedAt ?? .distantPast) >= recentSince }
             return (recent.isEmpty ? gaps : recent).sorted(by: Self.mostRecentlyReviewedFirst)
         }
@@ -395,7 +884,8 @@ struct ConceptSelector {
 
     /// The shared score plus the capstone tiers: learning concepts outrank mastered
     /// ones, and learning-but-trending-mastered outrank both. The tier weights are
-    /// sized above the ranker's maximum so tiers hold; the score orders within a tier.
+    /// sized above the shared score's full spread (including `stallPrerequisiteBonus`
+    /// and the governor's urgency multiplier) so tiers hold; the score orders within a tier.
     func capstoneScore(_ concept: Concept, now: Date = Date()) -> Double {
         var total = score(concept, now: now)
         if concept.state == .learning {
@@ -429,6 +919,13 @@ struct ConceptSelector {
         }
     }
 
+    /// Least recently reviewed first (never reviewed first of all); ties by id.
+    nonisolated static func leastRecentlyReviewedFirst(_ a: GapItem, _ b: GapItem) -> Bool {
+        let la = a.lastReviewedAt ?? .distantPast, lb = b.lastReviewedAt ?? .distantPast
+        if la != lb { return la < lb }
+        return a.id < b.id
+    }
+
     /// Most recently reviewed first; ties by id.
     nonisolated static func mostRecentlyReviewedFirst(_ a: GapItem, _ b: GapItem) -> Bool {
         let la = a.lastReviewedAt ?? .distantPast, lb = b.lastReviewedAt ?? .distantPast
@@ -438,22 +935,45 @@ struct ConceptSelector {
 
     // MARK: Reasons (legibility)
 
-    private func strongestConfusionPartner(of gap: GapItem) -> GapItem? {
-        guard let link = gap.confusionLinks.max(by: { $0.strength < $1.strength }) else { return nil }
-        return store.gaps.first { $0.id == link.partnerGapId }
+    /// The partner of the strongest mix-up the learner has not yet put behind them
+    /// (engine-10-3: a retired link names no one), and the copy that fits it: only
+    /// a repeated mix-up is "keep confusing" — one wrong pick is not a pattern.
+    private func confusionReason(for gap: GapItem) -> String? {
+        guard let link = gap.activeConfusionLinks.max(by: { $0.strength < $1.strength }),
+              let partner = store.gaps.first(where: { $0.id == link.partnerGapId }) else { return nil }
+        return link.isRepeated
+            ? "You keep confusing this with “\(partner.frenchWord)”."
+            : "You've mixed this up with “\(partner.frenchWord)” before."
     }
 
+    /// Times the learner actually got this wrong. `GapItem.reviewCount` counts EVERY
+    /// answer, right or wrong, so any copy that says "missed" must read the FSRS
+    /// lapse count instead — otherwise a perfect record reads as a pile of misses.
+    private func missCount(of gap: GapItem) -> Int { gap.fsrs?.lapses ?? 0 }
+
     private func smartReason(for gap: GapItem, role: SelectedItemRole, target: Concept?, now: Date) -> String {
-        if let partner = strongestConfusionPartner(of: gap) {
-            return "You keep confusing this with “\(partner.frenchWord)”."
+        if let confusion = confusionReason(for: gap) {
+            return confusion
         }
         if let target, role == .target, target.newlyUnlocked {
             return "New skill you're ready for: \(target.name)."
         }
-        if gap.reviewCount >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
-            return "You've missed this \(gap.reviewCount)× — time to lock it in."
+        let misses = missCount(of: gap)
+        if misses >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
+            return "You've missed this \(misses)× — time to lock it in."
         }
-        if let cid = gap.conceptId, let dep = store.dependents(of: cid).first {
+        // Only a dependent the learner has NOT mastered is still "unlocked" by this
+        // item (engine-5-3) — late in a run nearly every dependent is already
+        // mastered, and promising to unlock a finished skill reads as noise.
+        // ...and only a dependent the app can actually teach. The map reaches C1
+        // while content stops at B1, so most dependents of a frontier concept have
+        // no items behind them, and promising one is a reward that never arrives
+        // (engine-6-1). ...and only one a lesson could offer now: inside Foundation an
+        // A2 dependent has nothing behind it until reading opens (engine-11-3).
+        if let cid = gap.conceptId,
+           let dep = store.dependents(of: cid).first(where: {
+               !$0.isMastered && store.isTeachable($0.id) && canOfferNow($0)
+           }) {
             return "This unlocks \(dep.name)."
         }
         if let target, role == .target {
@@ -465,11 +985,12 @@ struct ConceptSelector {
     /// Reasons for a scoped lesson — no target concept, so lean on confusion,
     /// miss-count, due-ness and concept membership.
     private func scopedReason(for gap: GapItem, now: Date) -> String {
-        if let partner = strongestConfusionPartner(of: gap) {
-            return "You keep confusing this with “\(partner.frenchWord)”."
+        if let confusion = confusionReason(for: gap) {
+            return confusion
         }
-        if gap.reviewCount >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
-            return "You've missed this \(gap.reviewCount)× — time to lock it in."
+        let misses = missCount(of: gap)
+        if misses >= Tuning.repeatedMissReasonFloor && gap.nextReviewAt < now {
+            return "You've missed this \(misses)× — time to lock it in."
         }
         if gap.nextReviewAt <= now {
             return "Due for review."
@@ -487,9 +1008,9 @@ struct ConceptSelector {
         return "Capstone check."
     }
 
-    private func smartHeadline(for target: Concept) -> String {
-        let conceptGaps = store.gaps(forConcept: target.id).filter { !$0.isMastered }
-        let missed = conceptGaps.map { $0.reviewCount }.reduce(0, +)
+    private func smartHeadline(for target: Concept, now: Date) -> String {
+        let conceptGaps = practicableSpine(of: target, now: now)
+        let missed = conceptGaps.map { missCount(of: $0) }.reduce(0, +)
         if target.newlyUnlocked {
             return "Today: \(target.name) — you're ready for this new skill."
         }

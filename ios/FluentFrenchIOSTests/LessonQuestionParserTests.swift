@@ -1,0 +1,500 @@
+//
+//  LessonQuestionParserTests.swift
+//  FluentFrenchIOSTests
+//
+//  Package C part 1 — parsing the AI question writer's reply (C7 / C8) with
+//  fixture strings: fences and chatter, "vrai", a missing wordIndex, mixed-case
+//  options, trimming that keeps the correct option, and per-gap coverage.
+//
+
+import Foundation
+import Testing
+@testable import FluentFrenchIOS
+
+@MainActor
+struct LessonQuestionParserTests {
+
+    private func gap(_ id: String, reviewCount: Int = 0, consecutiveCorrect: Int = 0) -> GapItem {
+        EngineFixtures.gap(id, concept: "c", category: .vocabulary, consecutiveCorrect: consecutiveCorrect, reviewCount: reviewCount)
+    }
+
+    private let chattyReply = """
+    Sure! Here are your questions:
+    ```json
+    {"questions":[
+      {"wordIndex":0,"kind":"multipleChoice","prompt":"What does “x-fr” mean?","answer":"X-EN","options":["x-en","y-en","z-en","w-en","v-en"],"explanation":"note"},
+      {"wordIndex":"0","kind":"trueFalse","statement":"“x-fr” means “x-en”.","answer":"vrai"},
+      {"kind":"multipleChoice","answer":"y-en","options":["y-en","x-en","z-en"]},
+      {"wordIndex":1,"kind":"trueFalse","statement":"“y-fr” means “x-en”.","answer":"maybe"},
+      {"wordIndex":1,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"y-fr"},
+      {"wordIndex":1,"kind":"translation","statement":"I am here","answer":"y-fr"},
+      {"wordIndex":9,"kind":"multipleChoice","answer":"a","options":["a","b","c"]},
+      {"wordIndex":0,"kind":"arrange","answer":"x-fr ici"}
+    ]}
+    ```
+    Let me know if you want more!
+    """
+
+    @Test func chattyReplyIsParsedAndValidated() throws {
+        let gaps = [gap("x"), gap("y")]
+        let batch = LessonQuestionParser.parse(chattyReply, gaps: gaps, optionCount: 4, seed: 1)
+
+        #expect(batch.rejected == 4, "missing wordIndex, 'maybe', out-of-range index, arrange")
+        #expect(batch.countsByGap == ["x": 2, "y": 2])
+        #expect(batch.covers(gaps, target: Tuning.masteryTarget))
+        #expect(batch.questions.allSatisfy { $0.source == .ai })
+
+        let mc = try #require(batch.questions.first { $0.gap.id == "x" && $0.kind == .multipleChoice })
+        #expect(mc.correctAnswer == "x-en", "the option's own spelling wins over the answer's case")
+        #expect(mc.options.count == 4 && mc.options.contains("x-en"), "trimmed to optionCount, correct kept")
+        #expect(Set(mc.options).isSubset(of: ["x-en", "y-en", "z-en", "w-en", "v-en"]))
+        #expect(mc.explanation == "note" && mc.prompt == "What does “x-fr” mean?")
+
+        let tf = try #require(batch.questions.first { $0.gap.id == "x" && $0.kind == .trueFalse })
+        #expect(tf.correctAnswer == "True" && tf.statement == "“x-fr” means “x-en”.")
+        #expect(tf.explanation == "“x-fr” means “x-en”.")
+
+        let fill = try #require(batch.questions.first { $0.gap.id == "y" && $0.kind == .fillBlank })
+        #expect(fill.prompt == "Je _____ ici." && fill.correctAnswer == "y-fr")
+        #expect(fill.explanation == "Je y-fr ici.")
+
+        // The model's "I am here" is not y-fr's gloss: only y-fr is accepted, so
+        // asking for the sentence would grade correct French wrong. The content's
+        // gloss is asked instead (lesson-11-4); this assertion used to expect the
+        // model's sentence.
+        let tr = try #require(batch.questions.first { $0.gap.id == "y" && $0.kind == .translation })
+        #expect(tr.statement == "y-en" && tr.correctAnswer == "y-fr" && tr.hint == nil)
+        #expect(tr.explanation == "y-fr — y-en")
+    }
+
+    /// An AI translation asks for the gap's OWN meaning: a model sentence or a
+    /// broader English word is replaced by the content's gloss, so the feedback never
+    /// pairs the answer with English it does not mean. A statement that IS the gloss,
+    /// or one side of an "a / b" gloss, is kept (lesson-11-4).
+    @Test func aiTranslationAsksForTheGapsOwnMeaning() throws {
+        var suis = gap("suis")
+        suis.frenchWord = "je suis"
+        suis.englishTranslation = "I am"
+        var salut = gap("salut")
+        salut.frenchWord = "salut"
+        salut.englishTranslation = "hi / bye (informal)"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"translation","statement":"I am at home","answer":"je suis"},
+          {"wordIndex":1,"kind":"translation","statement":"hello","answer":"salut"},
+          {"wordIndex":1,"kind":"translation","statement":"hi","answer":"salut"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [suis, salut], optionCount: 4, seed: 1)
+        let trs = batch.questions.filter { $0.kind == .translation }
+        #expect(trs.count == 3)
+        let home = try #require(trs.first { $0.gap.id == "suis" })
+        #expect(home.statement == "I am" && home.explanation == "je suis — I am",
+                "the sentence is not what je suis means")
+        #expect(trs.filter { $0.gap.id == "salut" }.map { $0.statement } == ["hi / bye (informal)", "hi"],
+                "a broader word is replaced; one side of the gloss is kept")
+    }
+
+    /// The model writes questions, never the truth: an answer that is not the
+    /// gap's own meaning (or one of its own French forms) is rejected, and the
+    /// gap keeps its validated local question.
+    @Test func answersThatDoNotMatchTheGapAreRejected() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","answer":"a completely different meaning","options":["a completely different meaning","x-en","a","b"]},
+          {"wordIndex":0,"kind":"translation","statement":"x-en","answer":"invente"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"invente"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","a","b"]}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [gap("x")], optionCount: 4, seed: 5)
+        #expect(batch.rejected == 3, "the invented gloss, the invented French, the invented blank answer")
+        #expect(batch.countsByGap == ["x": 2])
+        #expect(batch.questions.allSatisfy { $0.correctAnswer == "x-en" || $0.correctAnswer == "x-fr" })
+
+        #expect(LessonQuestionParser.matchesGloss("X-EN", of: gap("x")))
+        #expect(!LessonQuestionParser.matchesGloss("something else", of: gap("x")))
+        #expect(!LessonQuestionParser.matchesGloss("", of: gap("x")))
+        #expect(LessonQuestionParser.isContentForm("x-fr", of: gap("x"), kind: .translation))
+        #expect(!LessonQuestionParser.isContentForm("x-fr ici", of: gap("x"), kind: .translation))
+    }
+
+    /// A tagged gloss is only the answer with its tag: the model cannot turn
+    /// "the (masculine singular)" into a question whose answer is any "the".
+    @Test func taggedGlossesMustMatchWithTheirTag() throws {
+        var article = gap("le")
+        article.frenchWord = "le"
+        article.englishTranslation = "the (masculine singular)"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","answer":"the","options":["the","a","b"]},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"the (masculine singular)","options":["the (masculine singular)","the (feminine singular)","the (plural)"]}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [article], optionCount: 4, seed: 6)
+        #expect(batch.rejected == 1 && batch.questions.count == 1)
+        let q = try #require(batch.questions.first)
+        #expect(q.correctAnswer == "the (masculine singular)")
+        #expect(q.options.contains("the (feminine singular)"), "a tagged sibling stays a distractor")
+        #expect(q.options.filter { LessonSession.grade(.option($0), for: q).correct }.count == 1)
+    }
+
+    @Test func trueFalseWhitelist() {
+        #expect(LessonQuestionParser.trueFalseValue("True") == true)
+        #expect(LessonQuestionParser.trueFalseValue(" FALSE ") == false)
+        #expect(LessonQuestionParser.trueFalseValue("Vrai") == true)
+        #expect(LessonQuestionParser.trueFalseValue("faux.") == false)
+        #expect(LessonQuestionParser.trueFalseValue("yes") == nil)
+        #expect(LessonQuestionParser.trueFalseValue("t") == nil)
+        #expect(LessonQuestionParser.trueFalseValue("") == nil)
+        #expect(LessonQuestionParser.trueFalseValue("true or false") == nil)
+    }
+
+    @Test func trimmingAlwaysKeepsTheCorrectOption() throws {
+        let raw = """
+        {"questions":[{"wordIndex":0,"kind":"multipleChoice","answer":"x-en",
+          "options":["a","b","c","d","e","X-en"]}]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [gap("x")], optionCount: 3, seed: 2)
+        let q = try #require(batch.questions.first)
+        #expect(q.options.count == 3 && q.options.contains("X-en") && q.correctAnswer == "X-en")
+        #expect(Set(q.options).isSubset(of: ["a", "b", "X-en"]), "the first distractors survive, the answer always does")
+    }
+
+    @Test func missingAnswerOptionIsAddedAndShortListsArePadded() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["b","c","d"]},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en"]},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","X-EN","x-en "]}
+        ]}
+        """
+        let gaps = [gap("x"), gap("y"), gap("z")]
+        let batch = LessonQuestionParser.parse(raw, gaps: gaps, optionCount: 4, seed: 3)
+        #expect(batch.questions.count == 3 && batch.rejected == 0)
+        let added = batch.questions[0]
+        #expect(added.options.count == 4 && added.options.contains("x-en"), "the answer is appended when missing")
+        let padded = batch.questions[1]
+        #expect(padded.options.count == Tuning.minMultipleChoiceOptions && padded.options.contains("x-en"))
+        #expect(padded.options.contains("y-en") && padded.options.contains("z-en"), "padded from the lesson's own gaps")
+        let deduped = batch.questions[2]
+        #expect(deduped.options.count == Tuning.minMultipleChoiceOptions && deduped.options.filter { $0.lowercased().trimmingCharacters(in: .whitespaces) == "x-en" }.count == 1,
+                "case duplicates collapse, then the list is padded")
+    }
+
+    @Test func fillBlankWithoutAMarkerFallsBackToTheContentBlankOrIsRejected() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"No marker here.","answer":"x-fr"},
+          {"wordIndex":1,"kind":"fillBlank","prompt":"No marker here.","answer":"y-fr"},
+          {"wordIndex":2,"kind":"translation","statement":"Rule label","answer":"z-fr"}
+        ]}
+        """
+        var ambiguous = gap("y")
+        ambiguous.exampleSentence = "y-fr y-fr"
+        var label = gap("z")
+        label.isTestable = false
+        let batch = LessonQuestionParser.parse(raw, gaps: [gap("x"), ambiguous, label], optionCount: 4, seed: 4)
+        #expect(batch.questions.count == 1 && batch.rejected == 2)
+        let q = try #require(batch.questions.first)
+        #expect(q.gap.id == "x" && q.prompt == "_____ example" && q.correctAnswer == "x-fr")
+        #expect(batch.gapsShort(of: 1, in: [gap("x"), ambiguous, label]).map { $0.id } == ["y", "z"])
+    }
+
+    @Test func probesAndGarbageAreRejected() {
+        var probe = gap("p")
+        probe.isProbe = true
+        let raw = """
+        {"questions":[{"wordIndex":0,"kind":"multipleChoice","answer":"p-en","options":["p-en","a","b"]}]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [probe], optionCount: 4)
+        #expect(batch.questions.isEmpty && batch.rejected == 1, "probes are always local")
+
+        #expect(LessonQuestionParser.parse("I cannot help with that.", gaps: [gap("x")], optionCount: 4).questions.isEmpty)
+        #expect(LessonQuestionParser.parse("{\"questions\": \"nope\"}", gaps: [gap("x")], optionCount: 4).questions.isEmpty)
+        #expect(LessonQuestionParser.parse("{\"questions\":[{\"wordIndex\":0,\"kind\":\"multipleChoice\"}, 42]}", gaps: [gap("x")], optionCount: 4).questions.count == 1,
+                "a malformed element is dropped, the rest survives")
+    }
+
+    @Test func extractJSONPrefersTheFencedBlock() {
+        let raw = "Notes {not json}\n```json\n{\"questions\":[]}\n```\ntrailing {x}"
+        #expect(LessonQuestionParser.extractJSON(from: raw) == "{\"questions\":[]}")
+        #expect(LessonQuestionParser.extractJSON(from: "abc {\"a\":1} def") == "{\"a\":1}")
+        #expect(LessonQuestionParser.extractJSON(from: "no braces") == nil)
+    }
+
+    @Test func coverageIsPerGap() {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","a","b"]},
+          {"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","c","d"]},
+          {"wordIndex":1,"kind":"multipleChoice","answer":"y-en","options":["y-en","a","b"]}
+        ]}
+        """
+        let gaps = [gap("x"), gap("y")]
+        let batch = LessonQuestionParser.parse(raw, gaps: gaps, optionCount: 4)
+        #expect(!batch.covers(gaps, target: 2))
+        #expect(batch.gapsShort(of: 2, in: gaps).map { $0.id } == ["y"])
+        #expect(batch.covers([gaps[0]], target: 2))
+    }
+
+    // MARK: The hint under a typed field (lesson-3-4, lesson-10-3)
+
+    /// `exampleTranslation` is the English of the CONTENT's example sentence. When
+    /// the model writes its OWN sentence, that translation belongs to a different
+    /// sentence, and printing it under the field captions the prompt with the
+    /// translation of something else. Only the local fallback — where the prompt IS
+    /// the content example — may show it.
+    ///
+    /// But an AI fill-blank with NO hint is a bare frame ("Elle porte une _____
+    /// rouge.") that admits several French words while only the gap's own forms are
+    /// accepted (lesson-10-3). Its hint is the gap's own meaning, which belongs to no
+    /// sentence. (This test pinned `hint == nil` before; that was the defect.)
+    @Test func anAIWrittenFillBlankIsCaptionedWithTheGapsOwnMeaning() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Il y a beaucoup d'_____ ici.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"no blank in this one","answer":"x-fr"}
+        ]}
+        """
+        let g = gap("x")
+        #expect(g.exampleTranslation == "x-en example")
+        let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4, seed: 3)
+        let ai = try #require(batch.questions.first { $0.prompt.contains("beaucoup") })
+        #expect(ai.hint == g.englishTranslation, "the gap's meaning names the word the hole wants")
+        #expect(ai.hint != g.exampleTranslation, "the model's sentence is not the content example")
+        let local = try #require(batch.questions.first { $0.prompt == "_____ example" })
+        #expect(local.hint == "x-en example", "here the prompt IS the content example")
+    }
+
+    /// A gloss that spells the answer is no hint (lesson-9-1): the AI question is
+    /// refused and the gap keeps its local question (lesson-10-3).
+    @Test func anAIWrittenFillBlankWhoseGlossSpellsTheAnswerIsRefused() {
+        var g = gap("r")
+        g.frenchWord = "le restaurant"
+        g.englishTranslation = "restaurant"
+        g.blankForm = "restaurant"
+        g.exampleSentence = "On dîne au restaurant ce soir."
+        g.exampleTranslation = "We are having dinner at the restaurant tonight."
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Le _____ est fermé.","answer":"restaurant"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4, seed: 3)
+        #expect(batch.questions.isEmpty && batch.rejected == 1)
+    }
+
+    // MARK: True/false is content-verified too (lesson-3-5)
+
+    /// The model never writes the truth — true/false included. Only a MEANING claim
+    /// the content can settle is accepted, the verdict is computed here, and the
+    /// model's own answer has to agree with it.
+    @Test func trueFalseIsAcceptedOnlyAsAContentVerifiedMeaningClaim() throws {
+        var pain = gap("x")
+        pain.frenchWord = "le pain"
+        pain.englishTranslation = "bread"
+        var eau = gap("y")
+        eau.frenchWord = "l'eau"
+        eau.englishTranslation = "water"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"trueFalse","statement":"“le pain” means “water”.","answer":"False"},
+          {"wordIndex":0,"kind":"trueFalse","statement":"“le pain” means “bread”.","answer":"False"},
+          {"wordIndex":1,"kind":"trueFalse","statement":"“l'eau” is a feminine noun.","answer":"True"},
+          {"wordIndex":1,"kind":"trueFalse","statement":"“le pain” means “bread”.","answer":"True"},
+          {"wordIndex":1,"kind":"trueFalse","statement":"“l'eau” is the opposite of “water”.","answer":"True"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [pain, eau], optionCount: 4, seed: 2)
+        #expect(batch.countsByGap == ["x": 1], "only the verifiable false claim survives")
+        #expect(batch.rejected == 4, "mislabelled, a gender claim, another word's claim, a non-meaning connector")
+
+        let tf = try #require(batch.questions.first)
+        #expect(tf.correctAnswer == "False" && tf.statement == "“le pain” means “water”.")
+        #expect(tf.explanation == "“le pain” means “bread”. It does not mean “water”.",
+                "the feedback answers the statement that was asked")
+    }
+
+    /// A claim that restates the gap's own meaning in other words is not something
+    /// the content can call false: "the bread" against the gloss "bread" is rejected
+    /// rather than taught as wrong.
+    @Test func aRestatedMeaningIsNeverGradedFalse() {
+        var g = gap("m")
+        g.frenchWord = "le pain"
+        g.englishTranslation = "bread"
+        let raw = """
+        {"questions":[{"wordIndex":0,"kind":"trueFalse","statement":"“le pain” means “the bread”.","answer":"False"}]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [g], optionCount: 4)
+        #expect(batch.questions.isEmpty && batch.rejected == 1)
+        #expect(!LessonQuestionParser.isClearlyDifferentMeaning("the bread", from: "bread"))
+        #expect(!LessonQuestionParser.isClearlyDifferentMeaning("bread roll", from: "bread"))
+        #expect(LessonQuestionParser.isClearlyDifferentMeaning("water", from: "bread"))
+    }
+
+    @Test func meaningClaimParsesOnlyMeaningClaims() {
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” means “bread”.")?.french == "le pain")
+        #expect(LessonQuestionParser.meaningClaim(in: "« l'eau » veut dire « water »")?.english == "water")
+        #expect(LessonQuestionParser.meaningClaim(in: "\"le pain\" = \"bread\"")?.english == "bread")
+        #expect(LessonQuestionParser.meaningClaim(in: "l'eau is feminine") == nil,
+                "an elision apostrophe is not a quote")
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” is the opposite of “bread”") == nil)
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” has the opposite meaning of “bread”") == nil,
+                "a connector that merely contains \"mean\" is not a meaning claim")
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” is “masculine”") == nil,
+                "a gender claim is not a meaning claim")
+        #expect(LessonQuestionParser.meaningClaim(in: "“le pain” means bread") == nil)
+    }
+
+    // MARK: lesson-4-1 — an AI fill-blank answer has to fit the blank
+
+    /// The writer is given the dictionary headword, and for 155 of the shipped
+    /// items the blank needs a different surface form ("ne... pas" → "ne parle
+    /// pas", "je suis" → "suis"). An answer that cannot stand in its own blank is
+    /// rejected, so the gap keeps the scheduler's own fill-blank; the headword is
+    /// still accepted when it IS the blank form modulo its article.
+    @Test func aiFillBlankAnswersMustFitTheBlank() throws {
+        var negation = gap("neg")
+        negation.frenchWord = "ne... pas"
+        negation.englishTranslation = "not"
+        negation.blankForm = "ne parle pas"
+        negation.exampleSentence = "Je ne parle pas anglais."
+        negation.acceptedAnswers = ["ne parles pas"]
+
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ anglais.","answer":"ne... pas"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Tu _____ anglais.","answer":"ne parles pas"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ anglais.","answer":"ne parle pas"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [negation], optionCount: 4, seed: 7)
+        #expect(batch.rejected == 1, "the headword cannot stand in the blank")
+        #expect(batch.questions.count == 2)
+        #expect(batch.questions.allSatisfy { $0.correctAnswer != "ne... pas" })
+        let filled = try #require(batch.questions.first { $0.correctAnswer == "ne parle pas" })
+        #expect(filled.explanation == "Je ne parle pas anglais.")
+        #expect(!LessonQuestionParser.isContentForm("ne... pas", of: negation, kind: .fillBlank))
+        #expect(LessonQuestionParser.isContentForm("ne... pas", of: negation, kind: .translation),
+                "the headword is still the answer to a translation")
+
+        // lesson-6-2: the blank is the headword without its article ("J'aime le
+        // _____."), so the article-carrying headword does not fit it either.
+        var pain = gap("pain")
+        pain.frenchWord = "le pain"
+        pain.englishTranslation = "bread"
+        pain.exampleSentence = "J'aime le pain."
+        #expect(!LessonQuestionParser.isContentForm("le pain", of: pain, kind: .fillBlank),
+                "the sentence around the blank already carries the article")
+        #expect(LessonQuestionParser.isContentForm("le pain", of: pain, kind: .translation),
+                "the headword is still the answer to a translation")
+        #expect(LessonQuestionParser.isContentForm("pain", of: pain, kind: .fillBlank))
+        #expect(!LessonQuestionParser.isContentForm("pains", of: pain, kind: .fillBlank))
+    }
+
+    /// lesson-8-1: the blank form runs the other way too. "mains" fills the hole in
+    /// "Lave-toi les _____.", but it is not an answer to "Translate to French: hand",
+    /// and an item built on it would state the plural and explain it as "mains — hand".
+    @Test func aiTranslationAnswersMustBeTheHeadwordNotTheBlankForm() throws {
+        var hand = gap("h")
+        hand.frenchWord = "la main"
+        hand.englishTranslation = "hand"
+        hand.exampleSentence = "Lave-toi les mains."
+        hand.blankForm = "mains"
+        hand.acceptedAnswers = ["mains"]
+
+        #expect(!LessonQuestionParser.isContentForm("mains", of: hand, kind: .translation),
+                "the sentence's plural is not the translation of the headword")
+        #expect(LessonQuestionParser.isContentForm("la main", of: hand, kind: .translation))
+        #expect(LessonQuestionParser.isContentForm("mains", of: hand, kind: .fillBlank),
+                "it is still the answer to its own blank")
+
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"translation","statement":"hand","answer":"mains"},
+          {"wordIndex":0,"kind":"translation","statement":"hand","answer":"la main"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [hand], optionCount: 4, seed: 5)
+        #expect(batch.rejected == 1)
+        let q = try #require(batch.questions.first)
+        #expect(q.correctAnswer == "la main" && q.explanation == "la main — hand")
+
+        // The blank form that IS the headword modulo its article is untouched.
+        var bread = gap("b")
+        bread.frenchWord = "le pain"
+        bread.englishTranslation = "bread"
+        bread.exampleSentence = "J'aime le pain."
+        #expect(LessonQuestionParser.isContentForm("pain", of: bread, kind: .translation))
+    }
+
+    /// lesson-8-3: the typed screen offers ONE text field and the explanation fills
+    /// every hole with the one answer, so a model sentence with two blanks is not a
+    /// question — the gap keeps the content's own blanked prompt instead.
+    @Test func aiFillBlankPromptsMustShowExactlyOneBlank() throws {
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"fillBlank","prompt":"_____ parle et _____ écoute.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je ___ ici.","answer":"x-fr"},
+          {"wordIndex":0,"kind":"fillBlank","prompt":"Je ______ ici.","answer":"x-fr"}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [gap("x")], optionCount: 4, seed: 6)
+        #expect(batch.questions.allSatisfy { $0.prompt == "_____ example" },
+                "each falls back to the content's own single-blank prompt")
+        #expect(batch.questions.allSatisfy { AnswerGrader.hasSingleBlank($0.prompt) })
+        #expect(batch.questions.allSatisfy { !AnswerGrader.isCloze(LessonSpeech.spokenAnswer(for: $0) ?? "") },
+                "nothing read back with a hole still in it")
+
+        // One blank, spelled the app's way, is still accepted as the model wrote it.
+        let ok = LessonQuestionParser.parse("""
+        {"questions":[{"wordIndex":0,"kind":"fillBlank","prompt":"Je _____ ici.","answer":"x-fr"}]}
+        """, gaps: [gap("x")], optionCount: 4, seed: 6)
+        let q = try #require(ok.questions.first)
+        #expect(q.prompt == "Je _____ ici." && q.explanation == "Je x-fr ici.")
+    }
+
+    // MARK: lesson-9-2 — the model may not offer a second correct meaning
+
+    /// The gap's gloss has two sides ("I like / I love") and the model may answer with
+    /// either; an option that is the OTHER side is a second correct answer. Offering
+    /// it grades a right answer wrong — a heart, an error-log row and an FSRS lapse —
+    /// so it is dropped, exactly as `smartDistractors` already drops it locally.
+    @Test func anOptionThatIsTheGapsOtherMeaningIsDropped() throws {
+        var aime = gap("aime")
+        aime.frenchWord = "j'aime"
+        aime.englishTranslation = "I like / I love"
+        let raw = """
+        {"questions":[
+          {"wordIndex":0,"kind":"multipleChoice","prompt":"What does “j’aime” mean?","answer":"I like","options":["I like","I love","I hate","I run","I sleep"]}
+        ]}
+        """
+        let batch = LessonQuestionParser.parse(raw, gaps: [aime], optionCount: 4, seed: 3)
+        let mc = try #require(batch.questions.first { $0.kind == .multipleChoice })
+        #expect(mc.correctAnswer == "I like")
+        #expect(!mc.options.contains { AnswerGrader.normalize($0) == "i love" },
+                "“I love” is also correct for “j'aime”: \(mc.options)")
+        #expect(mc.options.count == 4 && mc.options.contains("I like"))
+        #expect(mc.options.allSatisfy { option in
+            AnswerGrader.optionMatches(option, mc.correctAnswer)
+                || LessonScheduler.distractorSides(of: option)
+                    .isDisjoint(with: LessonScheduler.distractorSides(of: aime.englishTranslation))
+        })
+
+        // The whole gloss offered as a distractor goes the same way, and a single-sided
+        // gloss is untouched.
+        let both = LessonQuestionParser.parse("""
+        {"questions":[{"wordIndex":0,"kind":"multipleChoice","answer":"I love","options":["I love","I like / I love","I hate","I run"]}]}
+        """, gaps: [aime], optionCount: 4, seed: 3)
+        let q = try #require(both.questions.first)
+        #expect(q.correctAnswer == "I love")
+        #expect(!q.options.contains("I like / I love"))
+        let plain = LessonQuestionParser.parse("""
+        {"questions":[{"wordIndex":0,"kind":"multipleChoice","answer":"x-en","options":["x-en","y-en","z-en","w-en"]}]}
+        """, gaps: [gap("x")], optionCount: 4, seed: 3)
+        let plainQ = try #require(plain.questions.first)
+        #expect(plainQ.options.count == 4)
+    }
+}

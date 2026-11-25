@@ -2,37 +2,61 @@
 //  TranslatorView.swift
 //  FluentFrenchIOS
 //
-//  Two-way English↔French translator powered by the live AI translation
-//  service. Type or (on device) speak, hear results read aloud, and copy.
+//  Two-way English↔French translator on the live translation service. Every
+//  outcome is explicit — idle, translating (bounded by
+//  `Tuning.translateTimeoutSeconds`), a translation, or a named failure with a
+//  retry — and a build without a translation key says so up front (E26).
 //
 
+import Foundation
 import SwiftUI
+import UIKit
 
 struct TranslatorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 at the default text size — the round icon buttons grow with it so a
+    /// scaled glyph never spills out of its circle.
+    @ScaledMetric private var typeScale: CGFloat = 1
 
-    enum Mode: String, CaseIterable { case type = "Type", listen = "Listen" }
+    /// The translator's explicit states.
+    private enum Phase: Equatable {
+        case idle
+        case translating
+        case translated(String)
+        case failed(TranslationFailure)
+    }
 
-    @State private var mode: Mode = .type
     @State private var source: TranslationLanguage = .english
     @State private var inputText: String = ""
-    @State private var outputText: String = ""
-    @State private var isTranslating = false
+    @State private var phase: Phase = .idle
     @State private var didCopy = false
     @FocusState private var inputFocused: Bool
 
     private var target: TranslationLanguage { source.opposite }
+    private var isTranslating: Bool { phase == .translating }
+    private var outputText: String? {
+        if case .translated(let t) = phase { return t }
+        return nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollView {
                 VStack(spacing: 16) {
-                    modeSelector
+                    if !TranslationService.hasKey { LookupUnavailableView(failure: .notConfigured, accent: Theme.secondary) }
                     languageSelector
                     inputCard
                     translateButton
-                    if !outputText.isEmpty { outputCard }
+                    switch phase {
+                    case .idle, .translating:
+                        EmptyView()
+                    case .translated(let text):
+                        outputCard(text)
+                    case .failed(let failure):
+                        LookupUnavailableView(failure: failure, accent: Theme.secondary, onRetry: { Task { await translate() } })
+                    }
                 }
                 .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 48)
             }
@@ -41,37 +65,25 @@ struct TranslatorView: View {
         }
         .background(Theme.background)
         .ignoresSafeArea(edges: .top)
+        // A translation belongs to the text it was asked for. Once that text is
+        // edited it is not this box's translation: shown on, it was read, copied
+        // or swapped back as if it were (read-11-8). A swap rewrites the input
+        // after setting `.idle`, so it never trips this.
+        .onChange(of: inputText) { old, new in
+            guard case .translated = phase,
+                  old.trimmingCharacters(in: .whitespacesAndNewlines)
+                    != new.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            phase = .idle
+        }
     }
 
     private var header: some View {
         ResourceHeader(
             gradient: Theme.tealGradient,
             title: "Translator",
-            subtitle: "Instant English ↔ French",
+            subtitle: "English ↔ French",
             onBack: { dismiss() }
         )
-    }
-
-    private var modeSelector: some View {
-        HStack(spacing: 4) {
-            ForEach(Mode.allCases, id: \.self) { m in
-                Button { Haptics.tap(); withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { mode = m } } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: m == .type ? "keyboard" : "headphones").font(.system(size: 15))
-                        Text(m.rawValue).font(.system(size: 14, weight: .semibold))
-                    }
-                    .foregroundStyle(mode == m ? .white : Theme.textSecondary)
-                    .frame(maxWidth: .infinity).padding(.vertical, 11)
-                    .background(mode == m ? Theme.secondary : Color.clear)
-                    .clipShape(.rect(cornerRadius: 8))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .background(Theme.card)
-        .clipShape(.rect(cornerRadius: Radius.chip))
-        .overlay(RoundedRectangle(cornerRadius: Radius.chip).stroke(Theme.border, lineWidth: 0.5))
     }
 
     private var languageSelector: some View {
@@ -79,27 +91,35 @@ struct TranslatorView: View {
             languageBox(source.displayName)
             Button {
                 Haptics.tap()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                withAnimation(Theme.motion(.spring(response: 0.35, dampingFraction: 0.8), reduceMotion: reduceMotion)) {
                     source = source.opposite
-                    let oldInput = inputText
-                    inputText = outputText
-                    outputText = oldInput
+                    // Swapping direction carries the translation back into the input.
+                    if let outputText {
+                        inputText = outputText
+                    }
+                    phase = .idle
                 }
             } label: {
                 Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.secondary)
-                    .frame(width: 44, height: 44)
+                    .scaledFont(17, weight: .semibold).foregroundStyle(Theme.secondary)
+                    .frame(width: Theme.minimumHitTarget * typeScale, height: Theme.minimumHitTarget * typeScale)
                     .background(Theme.secondaryLight).clipShape(.circle)
                     .overlay(Circle().stroke(Theme.secondary.opacity(0.15), lineWidth: 0.5))
             }
             .buttonStyle(.plain)
+            // No swap while a request is out: its answer is in the OLD target
+            // language and would land under the new label (read-10-8).
+            .disabled(isTranslating)
+            .accessibilityLabel("Swap languages")
+            .accessibilityValue("\(source.displayName) to \(target.displayName)")
+            .accessibilityHint("Translates in the other direction")
             languageBox(target.displayName)
         }
     }
 
     private func languageBox(_ name: String) -> some View {
         Text(name)
-            .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+            .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
             .frame(maxWidth: .infinity).padding(.vertical, 14)
             .background(Theme.card)
             .clipShape(.rect(cornerRadius: Radius.chip))
@@ -110,32 +130,34 @@ struct TranslatorView: View {
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(source.displayName).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                Text(source.displayName).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textSecondary)
                 Spacer()
                 if !inputText.isEmpty {
                     Button { NaturalVoice.shared.speak(inputText, fallbackLanguage: source.bcp47) } label: {
-                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 14)).foregroundStyle(Theme.secondary)
-                            .frame(width: 30, height: 30).background(Theme.secondaryLight).clipShape(.circle)
+                        Image(systemName: "speaker.wave.2.fill").scaledFont(14).foregroundStyle(Theme.secondary)
+                            .frame(width: 30 * Theme.chromeScale(typeScale), height: 30 * Theme.chromeScale(typeScale))
+                            .background(Theme.secondaryLight).clipShape(.circle)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Listen to your text")
+                    .accessibilityHint("Reads what you typed aloud")
                 }
             }
 
-            if mode == .type {
-                ZStack(alignment: .topLeading) {
-                    if inputText.isEmpty {
-                        Text("Type in \(source.displayName)…")
-                            .font(.system(size: 16)).foregroundStyle(Theme.textMuted)
-                            .padding(.top, 8).padding(.leading, 4)
-                    }
-                    TextEditor(text: $inputText)
-                        .font(.system(size: 16)).foregroundStyle(Theme.text)
-                        .frame(minHeight: 110)
-                        .scrollContentBackground(.hidden)
-                        .focused($inputFocused)
+            ZStack(alignment: .topLeading) {
+                if inputText.isEmpty {
+                    Text("Type in \(source.displayName)…")
+                        .font(.body).foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 8).padding(.leading, 4)
+                        .accessibilityHidden(true)
                 }
-            } else {
-                listenPlaceholder
+                TextEditor(text: $inputText)
+                    .font(.body).foregroundStyle(Theme.text)
+                    .frame(minHeight: 110)
+                    .scrollContentBackground(.hidden)
+                    .focused($inputFocused)
+                    .accessibilityLabel("Text to translate")
             }
         }
         .padding(16)
@@ -146,15 +168,8 @@ struct TranslatorView: View {
         .softLift()
     }
 
-    private var listenPlaceholder: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "mic.fill").font(.system(size: 30)).foregroundStyle(.white)
-                .frame(width: 80, height: 80).background(Theme.secondary).clipShape(.circle)
-            Text("Install this app on your device via the Rork App to speak.")
-                .font(.system(size: 14)).foregroundStyle(Theme.textMuted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity).padding(.vertical, 10)
+    private var canTranslate: Bool {
+        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isTranslating
     }
 
     private var translateButton: some View {
@@ -165,63 +180,90 @@ struct TranslatorView: View {
         } label: {
             ZStack {
                 if isTranslating {
-                    ProgressView().tint(.white)
+                    HStack(spacing: 8) {
+                        ProgressView().tint(.white)
+                        Text("Translating…").font(.body.weight(.semibold)).foregroundStyle(.white)
+                    }
                 } else {
-                    Text("Translate").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    Text("Translate").font(.body.weight(.semibold)).foregroundStyle(.white)
                 }
             }
-            .frame(maxWidth: .infinity).padding(.vertical, 16)
+            .frame(maxWidth: .infinity).frame(minHeight: 52)
             .background(Theme.secondary)
             .clipShape(.rect(cornerRadius: Radius.chip))
             .softLift(radius: 12, y: 5, strength: 0.8)
         }
         .buttonStyle(.plain)
-        .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isTranslating)
-        .opacity(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
+        .disabled(!canTranslate)
+        .opacity(canTranslate || isTranslating ? 1 : 0.5)
+        .accessibilityLabel(isTranslating ? "Translating" : "Translate")
     }
 
-    private var outputCard: some View {
+    private func outputCard(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(target.displayName).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.secondary)
+                Text(target.displayName).font(.footnote.weight(.semibold)).foregroundStyle(Theme.secondary)
                     .tracking(0.3).textCase(.uppercase)
                 Spacer()
                 HStack(spacing: 8) {
-                    Button { NaturalVoice.shared.speak(outputText, fallbackLanguage: target.bcp47) } label: {
-                        Image(systemName: "speaker.wave.2.fill").font(.system(size: 14)).foregroundStyle(Theme.secondary)
-                            .frame(width: 30, height: 30).background(Theme.secondaryLight).clipShape(.circle)
+                    Button { NaturalVoice.shared.speak(text, fallbackLanguage: target.bcp47) } label: {
+                        Image(systemName: "speaker.wave.2.fill").scaledFont(14).foregroundStyle(Theme.secondary)
+                            .frame(width: 30 * Theme.chromeScale(typeScale), height: 30 * Theme.chromeScale(typeScale))
+                            .background(Theme.secondaryLight).clipShape(.circle)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Listen to the translation")
+                    .accessibilityHint("Reads the translation aloud")
                     Button {
-                        UIPasteboard.general.string = outputText
+                        UIPasteboard.general.string = text
                         Haptics.success()
-                        withAnimation { didCopy = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { withAnimation { didCopy = false } }
+                        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { didCopy = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                            withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { didCopy = false }
+                        }
                     } label: {
-                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc").font(.system(size: 14)).foregroundStyle(Theme.secondary)
-                            .frame(width: 30, height: 30).background(Theme.secondaryLight).clipShape(.circle)
+                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc").scaledFont(14).foregroundStyle(Theme.secondary)
+                            .frame(width: 30 * Theme.chromeScale(typeScale), height: 30 * Theme.chromeScale(typeScale))
+                            .background(Theme.secondaryLight).clipShape(.circle)
+                            .minimumHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(didCopy ? "Copied" : "Copy the translation")
                 }
             }
-            Text(outputText).font(.system(size: 19, weight: .medium)).foregroundStyle(Theme.text)
+            Text(text).font(.title3.weight(.medium)).foregroundStyle(Theme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .accessibilityLabel("\(target.displayName) translation")
+                .accessibilityValue(text)
         }
         .padding(18)
         .background(Theme.secondaryLight.opacity(0.6))
         .clipShape(.rect(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Theme.secondary.opacity(0.2), lineWidth: 1))
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .bottom)))
     }
 
     private func translate() async {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        isTranslating = true
-        let result = await TranslationService.translate(text, from: source, to: target)
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-            outputText = result
-            isTranslating = false
+        guard !text.isEmpty, !isTranslating else { return }
+        phase = .translating
+        let from = source, to = target
+        let outcome = await TranslationService.translation(of: text, from: from, to: to)
+        // The answer belongs to the direction and the text it was asked for. If
+        // either changed while it was out, it is not this screen's translation:
+        // printed now, French would sit under the ENGLISH label (read-10-8).
+        guard source == from, inputText.trimmingCharacters(in: .whitespacesAndNewlines) == text else {
+            if phase == .translating { phase = .idle }
+            return
+        }
+        withAnimation(Theme.motion(.spring(response: 0.4, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
+            switch outcome {
+            case .translated(let result): phase = .translated(result)
+            case .unavailable(let failure): phase = .failed(failure)
+            }
         }
     }
 }

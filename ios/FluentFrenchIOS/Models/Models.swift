@@ -5,6 +5,7 @@
 //  Core domain models mirroring the Expo app's type system.
 //
 
+import Foundation
 import SwiftUI
 
 // MARK: - Enums
@@ -82,6 +83,33 @@ nonisolated struct OriginalContext: Codable, Hashable {
     var sourceTab: String
     var capturedAt: Date
     var reExposureCount: Int
+    /// True when `sentence` is the learner's OWN French (their slip in Converse,
+    /// their transcribed speaking attempt) rather than French they encountered.
+    /// A learner-authored line is never shown as "Seen in the wild" and is never
+    /// handed to the concept tagger as an example of real French.
+    var isLearnerAuthored: Bool = false
+
+    init(sentence: String, translation: String? = nil, sourceTab: String,
+         capturedAt: Date, reExposureCount: Int, isLearnerAuthored: Bool = false) {
+        self.sentence = sentence
+        self.translation = translation
+        self.sourceTab = sourceTab
+        self.capturedAt = capturedAt
+        self.reExposureCount = reExposureCount
+        self.isLearnerAuthored = isLearnerAuthored
+    }
+
+    // Hand-written so contexts persisted before the flag existed still decode
+    // (they are all quoted source French, so `false` is the right default).
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sentence = try c.decodeIfPresent(String.self, forKey: .sentence) ?? ""
+        translation = try c.decodeIfPresent(String.self, forKey: .translation)
+        sourceTab = try c.decodeIfPresent(String.self, forKey: .sourceTab) ?? ""
+        capturedAt = try c.decodeIfPresent(Date.self, forKey: .capturedAt) ?? Date()
+        reExposureCount = try c.decodeIfPresent(Int.self, forKey: .reExposureCount) ?? 0
+        isLearnerAuthored = try c.decodeIfPresent(Bool.self, forKey: .isLearnerAuthored) ?? false
+    }
 }
 
 // MARK: - Confusion link
@@ -92,6 +120,10 @@ nonisolated struct ConfusionLink: Codable, Hashable, Identifiable {
     var wrongPicks: Int
     var lastConfusedAt: Date
     var strength: Double
+
+    /// The learner has mixed the pair up more than once — the only case the copy
+    /// may call "keep confusing" (engine-10-3).
+    var isRepeated: Bool { wrongPicks >= Tuning.confusionRepeatPicksFloor }
 }
 
 // MARK: - Gap item
@@ -130,8 +162,87 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// Link to the underlying skill (Concept) this gap is evidence of. Defaults to
     /// nil and is filled in asynchronously by the concept tagger after capture.
     var conceptId: String? = nil
+    /// A one-shot diagnostic item created for a blind-spot probe. Probes are kept for
+    /// concept evidence but are NOT learner-visible gaps: views must use
+    /// `AppStore.visibleGaps` (not `activeGaps`) for lists and counts.
+    var isProbe: Bool = false
+    /// Content v2: the exact surface form of `frenchWord` inside `exampleSentence`
+    /// (must occur verbatim). Nil → never offered as fill-blank.
+    var blankForm: String? = nil
+    /// Content v2: alternative typed answers accepted as correct.
+    var acceptedAnswers: [String]? = nil
+    /// Content v2: false for rule-label items (skill cards / MC only, never typed or arranged).
+    var isTestable: Bool = true
+    /// Confidence (0…1) of the heuristic concept tagger for a learner-captured gap;
+    /// nil when the concept came from content or a placement.
+    var tagConfidence: Double? = nil
+    /// Captured offline without a real gloss; the translation still has to be resolved.
+    var needsTranslation: Bool = false
+    /// Content v2 probe (B13): the multiple-choice DISTRACTORS for an `isProbe` item.
+    /// The correct answer is `englishTranslation`; the prompt is `frenchWord`.
+    var probeOptions: [String]? = nil
+    /// Content v2 probe: the question stem to print, when the probe's answer is a
+    /// CLAIM about `frenchWord` (a pronunciation, a placement rule) rather than its
+    /// meaning — asking "What does “vous avez” mean?" over pronunciation options is
+    /// unanswerable. Nil → the scheduler's default stem.
+    var probePrompt: String? = nil
+    /// Fingerprint of the content-owned fields (meaning, note, example, blank, alts,
+    /// testable) exactly as a Foundation content item SEEDED them. Nil for anything
+    /// not seeded from content (and for gaps seeded before it existed). It lets a
+    /// later content correction reach a gap already on the learner's record while
+    /// telling the learner's own edits apart from stale content (engine-10-6):
+    /// `FoundationContentLoader.refreshSeeded`.
+    var contentFingerprint: String? = nil
+    /// The stable id of the Foundation content item this gap was seeded from
+    /// ("<skillId>.<n>", `FoundationItemContent.id`). A content refresh matches the
+    /// gap to its item by this id, so a corrected headword updates the card in place
+    /// (engine-10-6). Nil for anything not seeded from content, and for gaps persisted
+    /// before it existed: the next refresh matches those once by concept + headword
+    /// and stamps it. Never a replacement for `id`, which persisted references use.
+    var contentItemId: String? = nil
 
+    /// Explicit keys so the tolerant decoder below and the synthesized encoder agree.
+    enum CodingKeys: String, CodingKey {
+        case id, frenchWord, englishTranslation, explanation, exampleSentence, exampleTranslation
+        case pronunciation, sourceType, category, difficulty, reviewCount, consecutiveCorrect
+        case lastReviewedAt, nextReviewAt, masteredAt, createdAt, cefrLevel, easeFactor
+        case currentInterval, irtDifficulty, fsrs, originalContext, confusionLinks
+        case partOfSpeech, gender, article, baseForm, register, relatedWords, conceptId
+        case isProbe, blankForm, acceptedAnswers, isTestable, tagConfidence, needsTranslation
+        case probeOptions, probePrompt, contentFingerprint, contentItemId
+    }
+
+    /// The mastery badge (`Tuning.gapMasteryStreak` consecutive correct). A badge,
+    /// not retirement: the gap stays on its FSRS schedule and a lapse clears it.
     var isMastered: Bool { masteredAt != nil }
+
+    /// Mastered AND the schedule wants it back: FSRS says it is due, or recall has
+    /// dropped below `Tuning.masteredRecallFloor`.
+    func isDueForMasteryCheck(at now: Date) -> Bool {
+        guard isMastered else { return false }
+        return nextReviewAt <= now || retrievability(at: now) < Tuning.masteredRecallFloor
+    }
+
+    /// Item-level practice eligibility: every unmastered gap, plus mastered gaps due
+    /// for a check. `ConceptSelector.isPracticable` layers concept eligibility on top.
+    func isPracticable(at now: Date) -> Bool {
+        !isMastered || isDueForMasteryCheck(at: now)
+    }
+
+    /// Never answered: no recall evidence yet. Retention analytics list it as "new"
+    /// rather than guessing a bucket for it.
+    var isNew: Bool { reviewCount == 0 }
+
+    /// The sentence that shows this headword in real use, for the concept tagger.
+    /// A learner-authored context is the learner's own (wrong) line, so it is
+    /// never handed over as an example of how the phrase is used.
+    var contextForTagging: String {
+        if let ctx = originalContext, !ctx.isLearnerAuthored,
+           !ctx.sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ctx.sentence
+        }
+        return exampleSentence
+    }
 
     /// Probability the learner can recall this right now (FSRS retrievability).
     var retrievability: Double { retrievability(at: Date()) }
@@ -140,10 +251,77 @@ nonisolated struct GapItem: Codable, Identifiable, Hashable {
     /// `SelectionRequest.now` through so selections are reproducible headlessly.
     func retrievability(at now: Date) -> Double {
         guard let fsrs else {
-            // fall back to a coarse estimate from consecutive correct
-            return min(0.95, 0.4 + Double(consecutiveCorrect) * 0.12)
+            // fall back to a coarse estimate from consecutive correct (engine-11-6)
+            return min(Tuning.legacyRecallCeiling,
+                       Tuning.legacyRecallBase + Double(consecutiveCorrect) * Tuning.legacyRecallPerCorrect)
         }
         return FSRS.retrievability(state: fsrs, now: now)
+    }
+
+    /// Confusion links the learner has NOT yet put behind them. A link is written on
+    /// the first mix-up and nothing ever weakens it, so one wrong pick used to label
+    /// the word "you keep confusing this" and boost its concept's rank for ever,
+    /// however often it was answered right afterwards (engine-10-3). A link retires
+    /// once the item's current correct streak — every answer of it given after the
+    /// last mix-up — reaches `Tuning.confusionClearStreak`; a new mix-up revives it.
+    var activeConfusionLinks: [ConfusionLink] {
+        confusionLinks.filter { !isConfusionResolved($0) }
+    }
+
+    private func isConfusionResolved(_ link: ConfusionLink) -> Bool {
+        guard consecutiveCorrect >= Tuning.confusionClearStreak, let last = lastReviewedAt else { return false }
+        return last > link.lastConfusedAt
+    }
+}
+
+nonisolated extension GapItem {
+    /// Back-compat decoding: every field added after the first release is optional
+    /// in the stored JSON and falls back to its default, so a gap persisted by an
+    /// older build (no `isProbe`, `isTestable`, …) still decodes. Lives in an
+    /// extension so the memberwise initializer stays available.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        frenchWord = try c.decode(String.self, forKey: .frenchWord)
+        englishTranslation = try c.decode(String.self, forKey: .englishTranslation)
+        explanation = try c.decodeIfPresent(String.self, forKey: .explanation) ?? ""
+        exampleSentence = try c.decodeIfPresent(String.self, forKey: .exampleSentence) ?? ""
+        exampleTranslation = try c.decodeIfPresent(String.self, forKey: .exampleTranslation) ?? ""
+        pronunciation = try c.decodeIfPresent(String.self, forKey: .pronunciation)
+        sourceType = try c.decode(SourceType.self, forKey: .sourceType)
+        category = try c.decode(GapCategory.self, forKey: .category)
+        difficulty = try c.decodeIfPresent(GapDifficulty.self, forKey: .difficulty) ?? .okay
+        reviewCount = try c.decodeIfPresent(Int.self, forKey: .reviewCount) ?? 0
+        consecutiveCorrect = try c.decodeIfPresent(Int.self, forKey: .consecutiveCorrect) ?? 0
+        lastReviewedAt = try c.decodeIfPresent(Date.self, forKey: .lastReviewedAt)
+        let created = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+        nextReviewAt = try c.decodeIfPresent(Date.self, forKey: .nextReviewAt) ?? created ?? Date()
+        masteredAt = try c.decodeIfPresent(Date.self, forKey: .masteredAt)
+        createdAt = created ?? Date()
+        cefrLevel = try c.decodeIfPresent(CEFRLevel.self, forKey: .cefrLevel)
+        easeFactor = try c.decodeIfPresent(Double.self, forKey: .easeFactor) ?? 2.5
+        currentInterval = try c.decodeIfPresent(Double.self, forKey: .currentInterval) ?? 0
+        irtDifficulty = try c.decodeIfPresent(Double.self, forKey: .irtDifficulty) ?? 0
+        fsrs = try c.decodeIfPresent(FsrsState.self, forKey: .fsrs)
+        originalContext = try c.decodeIfPresent(OriginalContext.self, forKey: .originalContext)
+        confusionLinks = try c.decodeIfPresent([ConfusionLink].self, forKey: .confusionLinks) ?? []
+        partOfSpeech = try c.decodeIfPresent(String.self, forKey: .partOfSpeech)
+        gender = try c.decodeIfPresent(String.self, forKey: .gender)
+        article = try c.decodeIfPresent(String.self, forKey: .article)
+        baseForm = try c.decodeIfPresent(String.self, forKey: .baseForm)
+        register = try c.decodeIfPresent(String.self, forKey: .register)
+        relatedWords = try c.decodeIfPresent([String].self, forKey: .relatedWords)
+        conceptId = try c.decodeIfPresent(String.self, forKey: .conceptId)
+        isProbe = try c.decodeIfPresent(Bool.self, forKey: .isProbe) ?? false
+        blankForm = try c.decodeIfPresent(String.self, forKey: .blankForm)
+        acceptedAnswers = try c.decodeIfPresent([String].self, forKey: .acceptedAnswers)
+        isTestable = try c.decodeIfPresent(Bool.self, forKey: .isTestable) ?? true
+        tagConfidence = try c.decodeIfPresent(Double.self, forKey: .tagConfidence)
+        needsTranslation = try c.decodeIfPresent(Bool.self, forKey: .needsTranslation) ?? false
+        probeOptions = try c.decodeIfPresent([String].self, forKey: .probeOptions)
+        probePrompt = try c.decodeIfPresent(String.self, forKey: .probePrompt)
+        contentFingerprint = try c.decodeIfPresent(String.self, forKey: .contentFingerprint)
+        contentItemId = try c.decodeIfPresent(String.self, forKey: .contentItemId)
     }
 }
 
@@ -158,4 +336,54 @@ nonisolated struct ErrorRecord: Codable, Identifiable, Hashable {
     var correctAnswer: String
     var conceptLabel: String
     var occurredAt: Date
+    /// The concept the gap belonged to when the mistake was made. Optional for
+    /// back-compat; error patterns group by it (falling back to the word).
+    var conceptId: String? = nil
+}
+
+// MARK: - Personal bests (per lesson kind)
+
+/// Lesson kinds a personal best is tracked for. Bests are keyed by `rawValue`.
+nonisolated enum LessonBestKind: String, Codable, CaseIterable {
+    case smart, scoped, capstone
+}
+
+/// The best result the learner has posted for one lesson kind.
+nonisolated struct LessonBest: Codable, Hashable {
+    /// Best first-attempt accuracy (0…1).
+    var accuracy: Double
+    /// Longest in-lesson correct streak.
+    var streak: Int
+    var achievedAt: Date? = nil
+}
+
+// MARK: - Tolerant decoding
+
+/// Wraps an element so a persisted array decodes element-by-element: one
+/// unreadable element becomes `nil` (and is dropped by the caller) instead of
+/// failing the whole array.
+nonisolated struct FailableDecodable<Element: Decodable>: Decodable {
+    let value: Element?
+
+    init(from decoder: Decoder) {
+        value = try? Element(from: decoder)
+    }
+}
+
+// MARK: - CEFR ordering
+
+/// Rank of a CEFR level (A1 = 0 … C2 = 5) so levels can be compared. Pure model
+/// logic (nonisolated): the selector, tagger, lesson and scenario gate all read it.
+nonisolated extension CEFRLevel {
+    var order: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+}
+
+// MARK: - Scenario guide storage
+
+/// Where learner-saved scenario guides live on the device. The key is declared
+/// here, next to the models, rather than inside `ScenarioStore`, so `AppStore`
+/// can clear it when a different learner signs in and carry it in the cloud
+/// snapshot without depending on the scenario service (store-1-4).
+nonisolated enum ScenarioStorage {
+    static let defaultsKey = "ff.savedScenarios.v1"
 }

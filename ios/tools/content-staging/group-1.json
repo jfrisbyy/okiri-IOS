@@ -1,0 +1,856 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "silent-final-consonants",
+      "category": "pronunciation",
+      "teaching": {
+        "rule": "Most consonants written at the end of a French word are silent: the t of petit, the s of vous, the p of beaucoup, the d of grand, the x of deux. A plural -s and the verb ending -ent (ils parlent) are silent too. The main exceptions are c, r, f and l (think of the English word CaReFuL), which are usually pronounced: avec, le sel, neuf, finir. But the r of the -er infinitive ending is silent (parler). When a feminine -e follows the consonant, the consonant is no longer last, so you hear it: petit (peu-TI) but petite (peu-TIT).",
+        "examples": [
+          {
+            "fr": "Il est petit.",
+            "en": "He is small.",
+            "note": "The final t is silent: peu-TI. The word ends on the vowel sound."
+          },
+          {
+            "fr": "Ils parlent.",
+            "en": "They speak.",
+            "note": "The s of ils (before a consonant) and the -ent ending are both silent, so ils parlent sounds exactly like il parle: il-PARL."
+          },
+          {
+            "fr": "avec du sel",
+            "en": "with salt",
+            "note": "c and l are among the final consonants that are usually pronounced: a-VEK, SEL."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "petit / petite",
+            "en": "small (masculine / feminine)",
+            "note": "In petit the t is last and silent; in petite the -e follows it, so the t is heard. Often this consonant is the only spoken difference between masculine and feminine."
+          },
+          {
+            "fr": "parler / finir",
+            "en": "to speak / to finish",
+            "note": "The r of the -er infinitive is silent (par-LÉ); the r of -ir infinitives is pronounced (fi-NIR)."
+          }
+        ],
+        "commonMistake": "English speakers pronounce every letter they see, saying the t of petit or the s of vous; stop on the vowel instead. The opposite slip is dropping a final c, r, f or l, which are usually heard: say the c of avec and the l of sel."
+      },
+      "probes": [
+        {
+          "fr": "beaucoup",
+          "en": "the p is silent: 'bo-kou'",
+          "ask": "How is “beaucoup” pronounced?",
+          "ex": "Il mange beaucoup.",
+          "exEn": "He eats a lot.",
+          "options": [
+            "the p is pronounced: 'bo-koup'",
+            "both the c and the p are silent: 'bo-ou'",
+            "the eau is said 'ee-oh': 'bee-oh-kou'"
+          ]
+        },
+        {
+          "fr": "ils chantent",
+          "en": "exactly like il chante: the -ent is silent",
+          "ask": "How does “ils chantent” sound?",
+          "ex": "Ils chantent bien.",
+          "exEn": "They sing well.",
+          "options": [
+            "the -ent is a nasal 'an': 'il-shan-tan'",
+            "the t of -ent is pronounced: 'il-shan-tent'",
+            "the s of ils is pronounced: 'ils-shant'"
+          ]
+        },
+        {
+          "fr": "le sac",
+          "en": "the c is pronounced: 'sak'",
+          "ask": "How is “le sac” pronounced?",
+          "ex": "Où est mon sac ?",
+          "exEn": "Where is my bag?",
+          "options": [
+            "the c is silent: 'sa'",
+            "the c is said as s: 'sas'",
+            "the c is said as ch: 'sash'"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "beaucoup",
+          "en": "a lot / very much",
+          "note": "The final p is silent and eau is a single 'o' sound: bo-KOU. The word ends on the vowel.",
+          "ex": "Il travaille beaucoup.",
+          "exEn": "He works a lot.",
+          "diff": "easy",
+          "blank": "beaucoup",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "tard",
+          "en": "late (in the day)",
+          "note": "The d is silent but the r before it is heard: TAR. For being late for something, French says en retard instead.",
+          "ex": "Il est tard, je rentre.",
+          "exEn": "It's late, I'm going home.",
+          "diff": "easy",
+          "blank": "tard",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "trop",
+          "en": "too (as in too expensive) / too much",
+          "note": "The p is silent: TRO, with the same o as in beau. Like beaucoup, it ends on the vowel.",
+          "ex": "C'est trop cher.",
+          "exEn": "It's too expensive.",
+          "diff": "easy",
+          "blank": "trop",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le mot",
+          "en": "the word",
+          "note": "The t is silent: MO, ending on a round o. Mot rhymes with beau.",
+          "ex": "Je ne connais pas ce mot.",
+          "exEn": "I don't know this word.",
+          "diff": "okay",
+          "blank": "mot",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le mois",
+          "en": "the month",
+          "note": "The s is silent: MWA, exactly like moi (me). Only the article and the context tell the two apart.",
+          "ex": "Je pars le mois prochain.",
+          "exEn": "I'm leaving next month.",
+          "diff": "okay",
+          "blank": "mois",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "parler",
+          "en": "to speak / to talk",
+          "note": "In the -er ending of an infinitive the r is silent: par-LÉ, so parler sounds like parlez. The r in the middle (par-) is pronounced.",
+          "ex": "Je voudrais parler à Sophie.",
+          "exEn": "I'd like to speak to Sophie.",
+          "diff": "okay",
+          "blank": "parler",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "choisir",
+          "en": "to choose",
+          "note": "Unlike -er verbs, -ir infinitives keep their final r: shwa-ZIR. The s between two vowels sounds like z.",
+          "ex": "Tu dois choisir une couleur.",
+          "exEn": "You have to choose a colour.",
+          "diff": "okay",
+          "blank": "choisir",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le sac",
+          "en": "the bag",
+          "note": "A final c is usually pronounced: SAK. Think of the English word CaReFuL: c, r, f and l at the end are usually heard.",
+          "ex": "Mon sac est lourd.",
+          "exEn": "My bag is heavy.",
+          "diff": "easy",
+          "blank": "sac",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le sel",
+          "en": "the salt",
+          "note": "A final l is pronounced: SEL, rhyming with belle.",
+          "ex": "Tu peux me passer le sel ?",
+          "exEn": "Can you pass me the salt?",
+          "diff": "easy",
+          "blank": "sel",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "chaud",
+          "en": "hot (masculine)",
+          "note": "The d is silent and au is a single 'o': SHO. The word ends on the vowel.",
+          "ex": "Le café est chaud.",
+          "exEn": "The coffee is hot.",
+          "diff": "okay",
+          "blank": "chaud",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "chaude",
+          "en": "hot (feminine)",
+          "note": "The added -e means the d is no longer last, so you hear it: SHOD. In many adjectives this consonant is the only spoken difference between masculine and feminine.",
+          "ex": "La soupe est chaude.",
+          "exEn": "The soup is hot (soupe is feminine).",
+          "diff": "okay",
+          "blank": "chaude",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "ils chantent",
+          "en": "they sing",
+          "note": "The verb ending -ent is silent: il-SHANT. Ils chantent sounds exactly like il chante, so only the context tells you it is plural.",
+          "ex": "Ils chantent très bien.",
+          "exEn": "They sing very well.",
+          "diff": "hard",
+          "blank": "chantent",
+          "alts": [
+            "elles chantent"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "accent-marks",
+      "category": "pronunciation",
+      "teaching": {
+        "rule": "French accents are part of the spelling, and four of them matter most for pronunciation. é (accent aigu) is a closed 'ay' sound, shorter than English 'day' and with no glide: le thé, la clé. è (accent grave) and ê (accent circonflexe) are both the open 'eh' of English 'bed': la mère, la fête. ç (cédille) only appears before a, o or u and makes the c sound like s instead of k: ça, le garçon. On à and ù the accent changes nothing in the sound; it only tells words apart in writing (a / à, ou / où). An e with no accent at the end of a word is usually silent, so an accent on a final e tells you to say it: aime ends on the m, aimé ends on 'ay'.",
+        "examples": [
+          {
+            "fr": "le thé",
+            "en": "tea",
+            "note": "é is a tight 'ay' with no glide at the end: TÉ. The h is silent."
+          },
+          {
+            "fr": "la mère",
+            "en": "the mother",
+            "note": "è is open, like the e in 'bed': MÈR."
+          },
+          {
+            "fr": "ça",
+            "en": "that",
+            "note": "The cedilla makes c sound like s before a: SA. Without it, ca would read 'ka'."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "il marche / le marché",
+            "en": "he walks / the market",
+            "note": "In marche the final e is silent (MARSH); the accent on marché makes the last syllable heard: mar-SHÉ."
+          },
+          {
+            "fr": "le café / la fête",
+            "en": "the coffee / the party",
+            "note": "é is closed, with the lips spread and the jaw high (ka-FÉ); ê is open, with the jaw lower (FÈT). Mixing them up can change the word."
+          }
+        ],
+        "commonMistake": "English speakers treat accents as decoration: they say é, è and ê the same way, or read garçon with a k. Keep é closed ('ay'), è and ê open ('eh' as in 'bed'), and ç always as s."
+      },
+      "probes": [
+        {
+          "fr": "le bébé",
+          "en": "both are a closed 'ay' sound: 'bé-bé'",
+          "ask": "How are the two é's of “bébé” pronounced?",
+          "ex": "Le bébé a faim.",
+          "exEn": "The baby is hungry.",
+          "options": [
+            "both are silent, like a final e",
+            "both are an open 'eh', as in 'bed'",
+            "both are said 'ee', as in 'see'"
+          ]
+        },
+        {
+          "fr": "la bière",
+          "en": "an open 'eh', as in 'bed'",
+          "ask": "How is the è of “la bière” pronounced?",
+          "ex": "Il boit une bière.",
+          "exEn": "He's drinking a beer.",
+          "options": [
+            "a closed 'ay', as in 'day'",
+            "silent, like a final e",
+            "a long 'ee', as in 'see'"
+          ]
+        },
+        {
+          "fr": "le garçon",
+          "en": "as s: 'gar-son'",
+          "ask": "How is the ç of “le garçon” pronounced?",
+          "ex": "Ce garçon est mon frère.",
+          "exEn": "This boy is my brother.",
+          "options": [
+            "as k: 'gar-kon'",
+            "as ch: 'gar-shon'",
+            "it is silent: 'gar-on'"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "la clé",
+          "en": "the key",
+          "note": "é is a closed 'ay' sound with no glide at the end: KLÉ. Without the accent, a final e would be silent.",
+          "ex": "J'ai perdu ma clé.",
+          "exEn": "I've lost my key.",
+          "diff": "easy",
+          "blank": "clé",
+          "alts": [
+            "la clef",
+            "clef"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le bébé",
+          "en": "the baby",
+          "note": "Two é's, both closed and short: bé-BÉ. Keep the jaw still; English 'bay-bay' glides too much.",
+          "ex": "Le bébé dort.",
+          "exEn": "The baby is sleeping.",
+          "diff": "easy",
+          "blank": "bébé",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "désolé",
+          "en": "sorry (as in I'm sorry)",
+          "note": "Both é's are closed 'ay' sounds, and the s between two vowels sounds like z: dé-zo-LÉ. A woman writes désolée, which sounds the same.",
+          "ex": "Je suis désolé, je suis en retard.",
+          "exEn": "I'm sorry, I'm late.",
+          "diff": "okay",
+          "blank": "désolé",
+          "alts": [
+            "désolée"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "déjà",
+          "en": "already",
+          "note": "é is a closed 'ay': dé-JA. The grave accent on the final à changes nothing in the sound; it is only spelling.",
+          "ex": "Tu es déjà là ?",
+          "exEn": "You're here already?",
+          "diff": "easy",
+          "blank": "déjà",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "même",
+          "en": "same / even",
+          "note": "ê sounds like è, an open 'eh' as in 'bed': MÈM. The final e is silent.",
+          "ex": "C'est la même chose.",
+          "exEn": "It's the same thing.",
+          "diff": "okay",
+          "blank": "même",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "être",
+          "en": "to be",
+          "note": "ê is the open 'eh' of 'bed' and the final e is silent: ÈTR, a single syllable.",
+          "ex": "Je veux être médecin.",
+          "exEn": "I want to be a doctor.",
+          "diff": "easy",
+          "blank": "être",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la forêt",
+          "en": "the forest",
+          "note": "ê is an open 'eh' and the final t is silent: fo-RÈ. The circumflex often stands for an s that French lost and English kept: forêt / forest, fête / feast.",
+          "ex": "On se promène dans la forêt.",
+          "exEn": "We're walking in the forest.",
+          "diff": "okay",
+          "blank": "forêt",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la bière",
+          "en": "beer",
+          "note": "è is open, like the e in 'bed': BYÈR. The grave accent tells you not to say a closed é here.",
+          "ex": "Une bière, s'il vous plaît.",
+          "exEn": "A beer, please.",
+          "diff": "easy",
+          "blank": "bière",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la pièce",
+          "en": "the room (in a home)",
+          "note": "è is an open 'eh': PYÈS. Une pièce is any room of a home (a bedroom is une chambre); the word also means a coin and a play.",
+          "ex": "L'appartement a trois pièces.",
+          "exEn": "The flat has three rooms.",
+          "diff": "okay",
+          "blank": "pièces",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un élève",
+          "en": "a pupil (school student)",
+          "note": "Two different accents, two different sounds: a closed é, then an open è (é-LÈV). Reading both the same way is the classic slip.",
+          "ex": "C'est un bon élève.",
+          "exEn": "He's a good pupil.",
+          "diff": "hard",
+          "blank": "élève",
+          "alts": [
+            "une élève"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le garçon",
+          "en": "the boy",
+          "note": "The cedilla makes the c sound like s before o: gar-SON. Without it, co would read 'ko'.",
+          "ex": "Le garçon joue dans le jardin.",
+          "exEn": "The boy is playing in the garden.",
+          "diff": "easy",
+          "blank": "garçon",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la leçon",
+          "en": "the lesson",
+          "note": "The cedilla makes the c sound like s before o: leu-SON. Without it, co would read 'ko'.",
+          "ex": "Je ne comprends pas cette leçon.",
+          "exEn": "I don't understand this lesson.",
+          "diff": "easy",
+          "blank": "leçon",
+          "alts": [
+            "le cours"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "elision",
+      "category": "pronunciation",
+      "teaching": {
+        "rule": "A handful of very short words lose their final vowel when the next word starts with a vowel sound (a vowel or a silent h), and an apostrophe takes its place: je, me, te, se, le, la, ne, de, que, and ce before forms of être (c'est). So je + arrive becomes j'arrive, le + homme becomes l'homme, ne + aime becomes n'aime. Before y, only the pronoun y triggers it (j'y vais, il n'y a pas): it stays le yaourt. Si elides only before il and ils (s'il, s'ils), never before elle. Elision is not casual or optional: it is required in careful speech and in writing, and the two words are said as one.",
+        "examples": [
+          {
+            "fr": "Il n'habite pas ici.",
+            "en": "He doesn't live here.",
+            "note": "ne + habite becomes n'habite, because the h of habiter is silent and counts as a vowel."
+          },
+          {
+            "fr": "Je pense qu'elle a raison.",
+            "en": "I think she's right.",
+            "note": "que + elle becomes qu'elle, said as one word: KEL. Que elides before any vowel."
+          },
+          {
+            "fr": "J'aime le chocolat.",
+            "en": "I like chocolate.",
+            "note": "je + aime becomes j'aime, said as one syllable: JÈM."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "s'il / si elle",
+            "en": "if he / if she",
+            "note": "si drops its i only before il and ils; before elle, on or any other vowel it stays whole."
+          },
+          {
+            "fr": "l'homme / le héros",
+            "en": "the man / the hero",
+            "note": "Most words starting with h behave as if they started with a vowel (l'homme). A small set have an 'aspirated' h that blocks elision: le héros, with a tiny break. Dictionaries mark these words."
+          }
+        ],
+        "commonMistake": "English speakers keep both vowels and say 'je arrive', 'le homme' or 'de accord'. These little words never sit in front of a vowel sound: say and write j'arrive, l'homme, d'accord. The opposite slip is eliding si before elle ('s'elle'), which is always wrong."
+      },
+      "probes": [
+        {
+          "fr": "j'arrive",
+          "en": "j'arrive, said as one word: 'zha-riv'",
+          "ask": "How is je + arrive written and said?",
+          "ex": "J'arrive tout de suite !",
+          "exEn": "I'm coming right away!",
+          "options": [
+            "je arrive, with both vowels said",
+            "j'arrive, with a pause after j'",
+            "je'arrive, with the e kept"
+          ]
+        },
+        {
+          "fr": "si elle",
+          "en": "it stays whole: si elle",
+          "ask": "What happens to si before elle?",
+          "ex": "Si elle vient, on part ensemble.",
+          "exEn": "If she comes, we'll leave together.",
+          "options": [
+            "it elides: s'elle",
+            "it becomes s'il",
+            "it links with a z: 'si-zel'"
+          ]
+        },
+        {
+          "fr": "le héros",
+          "en": "the h is 'aspirated': it is not pronounced, but it blocks elision",
+          "ask": "Why is it “le héros” and not “l'héros”?",
+          "ex": "C'est le héros du film.",
+          "exEn": "He's the hero of the film.",
+          "options": [
+            "the h is pronounced, as in English 'hero'",
+            "le never elides before a masculine noun",
+            "elision happens only before a vowel letter, never before an h"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "j'arrive",
+          "en": "I arrive",
+          "note": "je + arrive: the e of je drops and the two words are said as one: zha-RIV. Je arrive is never correct.",
+          "ex": "J'arrive à la gare à midi.",
+          "exEn": "I arrive at the station at noon.",
+          "diff": "easy",
+          "blank": "J'arrive",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "d'accord",
+          "en": "agreed / OK",
+          "note": "de + accord: da-KOR. Être d'accord means to agree; d'accord on its own means OK.",
+          "ex": "Tu es d'accord avec moi ?",
+          "exEn": "Do you agree with me?",
+          "diff": "easy",
+          "blank": "d'accord",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "l'homme",
+          "en": "the man",
+          "note": "The h of homme is silent, so le elides exactly as before a vowel: LOM.",
+          "ex": "L'homme attend le bus.",
+          "exEn": "The man is waiting for the bus.",
+          "diff": "easy",
+          "blank": "L'homme",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "quelqu'un",
+          "en": "someone / somebody",
+          "note": "quelque + un becomes quelqu'un, said as one word with the nasal un at the end: kèl-KUN. It is one of the very few places quelque loses its e.",
+          "ex": "Il y a quelqu'un ?",
+          "exEn": "Is anyone there?",
+          "diff": "okay",
+          "blank": "quelqu'un",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je m'appelle",
+          "en": "my name is",
+          "note": "me + appelle becomes m'appelle, said ma-PÈL. Literally 'I call myself'.",
+          "ex": "Je m'appelle Léa.",
+          "exEn": "My name is Léa.",
+          "diff": "easy",
+          "blank": "m'appelle",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il n'aime pas",
+          "en": "he doesn't like",
+          "note": "ne + aime becomes n'aime: the ne of a negation elides like any other, as in je n'ai pas and ce n'est pas.",
+          "ex": "Il n'aime pas le café.",
+          "exEn": "He doesn't like coffee.",
+          "diff": "okay",
+          "blank": "n'aime",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "qu'il",
+          "en": "that he",
+          "note": "que + il becomes qu'il, said KIL. Que elides before any vowel: qu'elle, qu'on, qu'un.",
+          "ex": "Je crois qu'il est malade.",
+          "exEn": "I think he's ill.",
+          "diff": "okay",
+          "blank": "qu'il",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "s'il",
+          "en": "if he / if it",
+          "note": "si elides only before il and ils: s'il, s'ils. Before elle or on it stays whole: si elle, si on.",
+          "ex": "S'il pleut, on reste à la maison.",
+          "exEn": "If it rains, we'll stay at home.",
+          "diff": "hard",
+          "blank": "S'il",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "il t'aime",
+          "en": "he loves you (informal)",
+          "note": "te + aime becomes t'aime, said TÈM. Me, te and se all elide before a vowel.",
+          "ex": "Il t'aime, tu sais.",
+          "exEn": "He loves you, you know.",
+          "diff": "okay",
+          "blank": "t'aime",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le jus d'orange",
+          "en": "orange juice",
+          "note": "de + orange becomes d'orange, said in one run with jus: zhu-do-RANJ. De elides before any vowel: un jus d'ananas, une tasse d'eau chaude.",
+          "ex": "Je voudrais un jus d'orange.",
+          "exEn": "I'd like an orange juice.",
+          "diff": "easy",
+          "blank": "d'orange",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "d'Italie",
+          "en": "from Italy",
+          "note": "de + Italie becomes d'Italie. Compare de Lyon, where de stays whole because Lyon starts with a consonant.",
+          "ex": "Elle vient d'Italie.",
+          "exEn": "She comes from Italy.",
+          "diff": "okay",
+          "blank": "d'Italie",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "j'écoute",
+          "en": "I'm listening / I listen",
+          "note": "je + écoute becomes j'écoute, said zhé-KOUT. Je keeps its e only before a consonant: je parle, but j'écoute.",
+          "ex": "J'écoute de la musique.",
+          "exEn": "I'm listening to music.",
+          "diff": "easy",
+          "blank": "J'écoute",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "e-muet",
+      "category": "pronunciation",
+      "teaching": {
+        "rule": "The unaccented e of little words (je, me, te, se, le, de, ne) and inside many words is a soft 'uh' called the e muet. At the end of a word it is silent (une table). Elsewhere it often disappears in everyday speech when only one consonant sound comes before it: samedi sounds 'sam-DI', un petit chat 'un p'tit chat', je te vois 'j'te vois'. It stays when dropping it would jam three consonants together (vendredi), and in a run of e's only one of two neighbours can go. The full form is never wrong: it is more common in careful speech and in the south of France.",
+        "examples": [
+          {
+            "fr": "samedi",
+            "en": "Saturday",
+            "note": "In everyday speech the middle e drops: sam'di (sam-DI), two syllables instead of three."
+          },
+          {
+            "fr": "Je te vois.",
+            "en": "I see you.",
+            "note": "The e of je drops: j'te vois (zhteu-VWA). Only one of the two e's goes."
+          },
+          {
+            "fr": "un petit chat",
+            "en": "a little cat",
+            "note": "petit loses its e: un p'tit chat (un-PTI-sha)."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "samedi / vendredi",
+            "en": "Saturday / Friday",
+            "note": "In samedi only m comes before the e, so it can drop (sam'di). In vendredi, dropping the e would jam d, r and d together, so it stays: van-dreu-DI."
+          },
+          {
+            "fr": "je me lève",
+            "en": "I get up",
+            "note": "Two e's in a row: one of them goes, never both. Say j'me lève or je m'lève."
+          }
+        ],
+        "commonMistake": "English speakers say every e as a full vowel ('suh-MEN', 'puh-TEE'), which sounds stilted in conversation; let the e go when a single consonant comes before it. Don't overdo it: dropping two e's in a row, or the e of vendredi, makes the word hard to recognise."
+      },
+      "probes": [
+        {
+          "fr": "à demain",
+          "en": "the e drops: 'ad-min', two syllables",
+          "ask": "How is “à demain” usually said in everyday speech?",
+          "ex": "Bonne soirée, à demain !",
+          "exEn": "Have a good evening, see you tomorrow!",
+          "options": [
+            "the final n is pronounced: 'a-deu-mèn'",
+            "the e is said like 'ay': 'a-dé-min'",
+            "the à drops: 'deu-min'"
+          ]
+        },
+        {
+          "fr": "vendredi",
+          "en": "no: it keeps d, r and d apart, so it stays",
+          "ask": "Can the e of “vendredi” drop in everyday speech?",
+          "ex": "Le marché a lieu le vendredi.",
+          "exEn": "The market is on Fridays.",
+          "options": [
+            "yes, always: 'vandr-di'",
+            "no, because the e of a weekday name never drops",
+            "it is silent, like a final e"
+          ]
+        },
+        {
+          "fr": "la semaine",
+          "en": "the e of se- drops: 'la-smèn'",
+          "ask": "How is “la semaine” usually said in everyday speech?",
+          "ex": "Je travaille toute la semaine.",
+          "exEn": "I work all week.",
+          "options": [
+            "the a of la drops: 'l'semaine'",
+            "the final e is said: 'la-smè-neu'",
+            "the s is silent: 'la-mèn'"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "la semaine",
+          "en": "the week",
+          "note": "The e of se- drops in everyday speech: la s'maine (la-SMÈN), two syllables.",
+          "ex": "La semaine prochaine, je suis en vacances.",
+          "exEn": "Next week I'm on holiday.",
+          "diff": "easy",
+          "blank": "semaine",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "demain",
+          "en": "tomorrow",
+          "note": "After a vowel, as in à demain, the e drops: à d'main, ending on the nasal 'in' sound.",
+          "ex": "À demain !",
+          "exEn": "See you tomorrow!",
+          "diff": "easy",
+          "blank": "demain",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "appeler",
+          "en": "to call",
+          "note": "The middle e drops: app'ler (a-PLÉ), two syllables rather than three.",
+          "ex": "Je vais appeler ma mère.",
+          "exEn": "I'm going to call my mother.",
+          "diff": "okay",
+          "blank": "appeler",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "tout de suite",
+          "en": "right away",
+          "note": "de loses its e, and its d, now touching the s of suite, hardens into a t sound: tout d'suite sounds 'toot-SWEET'.",
+          "ex": "Je reviens tout de suite.",
+          "exEn": "I'll be right back.",
+          "diff": "okay",
+          "blank": "tout de suite",
+          "alts": [
+            "immédiatement"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le cheval",
+          "en": "the horse",
+          "note": "After a vowel the e of che- drops: à ch'val (a-SHVAL). In le cheval only one of the two e's can go: le ch'val.",
+          "ex": "Elle monte à cheval.",
+          "exEn": "She rides horses.",
+          "diff": "okay",
+          "blank": "cheval",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "revenir",
+          "en": "to come back",
+          "note": "Two e's in a row, and only one can drop: on its own it is usually rev'nir (reuv-NIR). Dropping both would jam r, v and n together.",
+          "ex": "Je vais revenir plus tard.",
+          "exEn": "I'll come back later.",
+          "diff": "okay",
+          "blank": "revenir",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le genou",
+          "en": "the knee",
+          "note": "After a vowel the e of ge- drops: au g'nou (o-JNOU). In le genou the two e's sit side by side, so only one can go: le g'nou.",
+          "ex": "J'ai mal au genou.",
+          "exEn": "My knee hurts.",
+          "diff": "okay",
+          "blank": "genou",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "l'épicerie",
+          "en": "the grocer's (small food shop)",
+          "note": "The e between c and r drops: épic'rie (é-pis-RI), three syllables instead of four. Only the s sound comes before it, so the rule lets it go.",
+          "ex": "Il y a une épicerie au coin de la rue.",
+          "exEn": "There's a grocer's on the corner.",
+          "diff": "okay",
+          "blank": "épicerie",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "regarder",
+          "en": "to watch / to look at",
+          "note": "The e of re- drops after a vowel: tu veux r'garder (r-gar-DÉ).",
+          "ex": "Tu veux regarder la télé ?",
+          "exEn": "Do you want to watch TV?",
+          "diff": "okay",
+          "blank": "regarder",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "doucement",
+          "en": "gently / quietly",
+          "note": "The e before -ment is silent even in careful speech: douss-MAN, two syllables.",
+          "ex": "Doucement, c'est fragile !",
+          "exEn": "Gently, it's fragile!",
+          "diff": "okay",
+          "blank": "Doucement",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un petit peu",
+          "en": "a little bit",
+          "note": "petit loses its e: un p'tit peu (un-PTI-peu). The same happens in un p'tit café.",
+          "ex": "Je parle un petit peu français.",
+          "exEn": "I speak a little bit of French.",
+          "diff": "hard",
+          "blank": "petit",
+          "alts": [
+            "un peu"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "les devoirs",
+          "en": "homework",
+          "note": "After a vowel the e of de- drops: mes d'voirs (mé-DVWAR). Homework in general is plural in French: faire ses devoirs.",
+          "ex": "Je fais mes devoirs.",
+          "exEn": "I'm doing my homework.",
+          "diff": "okay",
+          "blank": "devoirs",
+          "alts": [],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

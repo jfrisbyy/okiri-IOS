@@ -1,0 +1,1291 @@
+//
+//  LessonSessionTests.swift
+//  FluentFrenchIOSTests
+//
+//  Package C part 2 — the lesson state machine: real hearts (C5), the schedule
+//  cursor, stepped-down remedials (C6), "Show me" (C12), the accent slip (C3),
+//  match rounds (C4 / B6), in-session release (B11), probes (C19), check-in
+//  roles (B6), capstone rules (C16), the foreground timer (C14) and what the
+//  speak buttons may read (C20).
+//
+//  Note: `#expect` / `#require` rewrite their argument into a closure, so every
+//  mutating call on a session is hoisted into a local first.
+//
+
+import Foundation
+import Testing
+@testable import FluentFrenchIOS
+
+@MainActor
+struct LessonSessionTests {
+    private let now = EngineFixtures.now
+
+    private var scheduler: LessonScheduler {
+        var config = LessonSchedulerConfig.tuning
+        config.seed = 11
+        return LessonScheduler(config: config)
+    }
+
+    private func config(hearts: Int? = nil, masteryTarget: Int? = nil) -> LessonSessionConfig {
+        var config = LessonSessionConfig.tuning
+        config.scheduler = scheduler
+        if let hearts { config.hearts = hearts }
+        if let masteryTarget { config.masteryTarget = masteryTarget }
+        return config
+    }
+
+    // MARK: Fixtures
+
+    private func gap(_ id: String, concept: String? = "c", reviewCount: Int = 0, consecutiveCorrect: Int = 0,
+                     category: GapCategory = .vocabulary) -> GapItem {
+        EngineFixtures.gap(id, concept: concept, category: category, consecutiveCorrect: consecutiveCorrect, reviewCount: reviewCount)
+    }
+
+    private func lesson(_ gaps: [GapItem], roles: [String: SelectedItemRole] = [:], mode: SelectionMode = .smart,
+                        target: String? = nil) -> AssembledLesson {
+        let items = gaps.map { SelectedItem(gapId: $0.id, conceptId: $0.conceptId, role: roles[$0.id] ?? .review, reason: "") }
+        let output = SelectionOutput(request: SelectionRequest(mode: mode, now: now), targetConceptId: target,
+                                     items: items, headline: "test", rankedConcepts: [], learnerLevel: .A1)
+        return AssembledLesson(selection: output, targetConcept: nil, gaps: gaps, reasons: [:],
+                               headline: "test", probeGapId: nil)
+    }
+
+    /// A session started on the scheduler's own schedule for the lesson.
+    private func session(for lesson: AssembledLesson, isCapstone: Bool = false,
+                         config: LessonSessionConfig? = nil) -> LessonSession {
+        let cfg = config ?? self.config()
+        var s = LessonSession(lesson: lesson, isCapstone: isCapstone, config: cfg)
+        s.start(with: cfg.scheduler.build(for: lesson, abilityOptionCount: Tuning.minMultipleChoiceOptions))
+        return s
+    }
+
+    private func correctAnswer(for q: LessonQuestion) -> LessonAnswer {
+        switch q.kind {
+        case .multipleChoice, .trueFalse: return .option(q.correctAnswer)
+        case .fillBlank, .translation: return .typed(q.correctAnswer)
+        case .arrange: return .arranged(q.correctOrder)
+        case .match: return .option("")
+        }
+    }
+
+    private func wrongAnswer(for q: LessonQuestion) -> LessonAnswer {
+        switch q.kind {
+        case .multipleChoice, .trueFalse: return .option("not-the-answer-\(q.id.uuidString)")
+        case .fillBlank, .translation: return .typed("zzz-wrong")
+        case .arrange: return .arranged(Array(q.correctOrder.reversed()))
+        case .match: return .option("")
+        }
+    }
+
+    /// Match every pair of the current match round correctly; returns the round's outcome.
+    private func completeMatch(_ s: inout LessonSession, _ q: LessonQuestion) -> LessonAnswerOutcome? {
+        var last: LessonAnswerOutcome? = nil
+        for g in q.matchGaps { last = s.matchPair(left: g.id, right: g.id) }
+        return last
+    }
+
+    /// Answer the current question (any kind) correctly.
+    private func answerCorrectly(_ s: inout LessonSession) throws -> LessonAnswerOutcome {
+        let q = try #require(s.current)
+        let outcome: LessonAnswerOutcome?
+        if q.kind == .match {
+            outcome = completeMatch(&s, q)
+        } else {
+            outcome = s.submit(correctAnswer(for: q))
+        }
+        return try #require(outcome)
+    }
+
+    /// Answer the current question wrongly (a match round: the first pair crossed).
+    private func answerWrongly(_ s: inout LessonSession) throws -> LessonAnswerOutcome {
+        let q = try #require(s.current)
+        let outcome: LessonAnswerOutcome?
+        if q.kind == .match {
+            outcome = s.matchPair(left: q.matchGaps[0].id, right: q.matchGaps[1].id)
+        } else {
+            outcome = s.submit(wrongAnswer(for: q))
+        }
+        return try #require(outcome)
+    }
+
+    // MARK: C5 — hearts are real
+
+    @Test func heartsFallOnMissesAndEndTheLesson() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps))
+        #expect(s.hasHearts && s.hearts == Tuning.lessonHearts)
+        var lost = 0
+        var answers = 0
+        var lastOutcome: LessonAnswerOutcome? = nil
+        while s.end == nil, let q = s.current {
+            let wasRemedial = q.isRemedial
+            let out = try answerWrongly(&s)
+            // C-R5: a scheduled miss costs a heart; a remedial retry — the second look
+            // at a miss already paid for — does not.
+            #expect(out.heartLost == !wasRemedial && !out.correct)
+            if out.heartLost { lost += 1 }
+            // A match round only counts as answered once every pair is placed; the
+            // wrong pair that ends it here never completes the round.
+            if out.roundComplete { answers += 1 }
+            lastOutcome = out
+            if s.end == nil {
+                let advanced = s.advance()
+                #expect(advanced)
+            }
+        }
+        #expect(lost == Tuning.lessonHearts)
+        #expect(answers > lost, "remedials were answered wrongly without ending the lesson")
+        #expect(s.end == .outOfHearts && s.hearts == 0)
+        #expect(lastOutcome?.endedByHearts == true)
+        #expect(lastOutcome?.remedialQueued == false, "no remedial once the lesson is over")
+        let lateSubmit = s.submit(.option("x"))
+        let lateReveal = s.reveal()
+        let lateAdvance = s.advance()
+        #expect(lateSubmit == nil && lateReveal == nil && !lateAdvance)
+        let summary = s.summary
+        #expect(summary.end == .outOfHearts)
+        #expect(!summary.missed.isEmpty && summary.missed.count <= answers)
+        #expect(summary.answered == answers)
+        #expect(summary.missedGapIds.contains("g1"))
+    }
+
+    /// Hearts-out EARLY is a recap, not a finished lesson (C-R2): the store keeps the
+    /// evidence and the per-answer XP but neither counts the day nor pays the
+    /// finishing bonus; a lesson played to the end does both.
+    @Test func outOfHeartsEarlyIsNotBookedAsACompletedLesson() throws {
+        let gaps = (1...6).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps), config: config(hearts: 1))
+        var answerXP = 0
+        let first = try answerCorrectly(&s)
+        answerXP += first.xp
+        store.awardXP(first.xp)
+        #expect(first.xp > 0)
+        while s.end == nil, s.advance() {
+            let out = try answerWrongly(&s)
+            answerXP += out.xp
+            store.awardXP(out.xp)
+        }
+        let summary = s.summary
+        #expect(summary.end == .outOfHearts && !summary.isCompleted)
+        #expect(summary.answered == 2)
+        #expect(Double(summary.plannedAnswered) / Double(summary.planned) < Tuning.heartsOutCompletionFraction)
+        let xpBefore = store.xp
+        let unlocked = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                            abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(unlocked.isEmpty)
+        #expect(store.lessonsCompleted(on: now) == 0, "hearts-out never counts toward the day's lessons")
+        #expect(store.xp == xpBefore && store.xp == answerXP, "only the per-answer XP, no finishing bonus")
+        #expect(store.sessionIndex == 1, "…but the session itself is still recorded")
+        #expect(store.lessonsSinceCapstone == 0, "a hearts-out lesson never advances the capstone cadence")
+
+        // The same bookkeeping for a quit; a finished lesson counts and pays the bonus.
+        var quit = session(for: lesson(gaps))
+        quit.quit()
+        #expect(!quit.summary.isCompleted)
+        var done = session(for: lesson(gaps))
+        repeat { _ = try answerCorrectly(&done) } while done.advance()
+        let finished = done.summary
+        #expect(finished.end == .finished && finished.isCompleted)
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !finished.isCompleted, answered: finished.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
+        #expect(store.xp == answerXP + Tuning.xpPerLessonComplete)
+    }
+
+    /// C-R5: a lesson the learner worked through to the end and then lost the last
+    /// heart on is not "nothing done today" — it counts toward the day's lesson
+    /// count (Home, the daily plan and the weekly goal all read that count).
+    @Test func heartsOutAfterMostOfTheScheduleStillCountsTowardTheDay() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps), config: config(hearts: 1))
+        while s.end == nil {
+            if s.isLast {
+                _ = try answerWrongly(&s)
+            } else {
+                _ = try answerCorrectly(&s)
+                _ = s.advance()
+            }
+        }
+        let summary = s.summary
+        #expect(summary.end == .outOfHearts)
+        #expect(summary.planned > 0 && summary.plannedAnswered == summary.planned)
+        #expect(summary.isCompleted, "the whole schedule was answered — the last heart went on the last question")
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
+        #expect(store.xp == Tuning.xpPerLessonComplete, "and it pays the finishing XP")
+    }
+
+    /// lesson-7-2. A remedial shows the correct answer before the learner picks, so
+    /// answering it is not recall. It used to send full evidence: a correct remedial
+    /// booked a successful FSRS review, lengthening the interval of a word missed
+    /// moments earlier, and added positive concept evidence; a missed one logged the
+    /// same mistake twice. A remedial now sends none.
+    @Test func aRemedialSendsNoEvidenceBecauseItShowsTheAnswerFirst() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps))
+        let miss = try answerWrongly(&s)
+        #expect(miss.remedialQueued)
+        #expect(miss.evidence.count == 1, "the miss itself is real evidence")
+
+        var sawRemedial = false
+        while s.advance() {
+            guard let q = s.current else { break }
+            let wasRemedial = q.isRemedial
+            if q.kind == .match {
+                // A match round's evidence comes pair by pair, and its forced last
+                // pair books nothing (lesson-10-6), so count the whole round.
+                var booked = 0
+                for g in q.matchGaps { booked += s.matchPair(left: g.id, right: g.id)?.evidence.count ?? 0 }
+                #expect(booked == q.matchGaps.count - 1, "an ordinary match round still counts")
+                continue
+            }
+            let outcome = try answerCorrectly(&s)
+            if wasRemedial {
+                sawRemedial = true
+                #expect(outcome.evidence.isEmpty,
+                        "a correct remedial must not book a review or concept evidence")
+            } else {
+                #expect(!outcome.evidence.isEmpty, "an ordinary answer still counts")
+            }
+        }
+        #expect(sawRemedial, "the run must actually contain a remedial")
+    }
+
+    /// C-R5: the share is measured on the questions the lesson PLANNED — the
+    /// remedials a miss inserts neither pad it nor make it harder to reach.
+    @Test func remedialsAreOutsideThePlannedShare() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps))
+        let scheduled = s.plannedCount
+        let miss = try answerWrongly(&s)
+        #expect(miss.remedialQueued)
+        #expect(s.plannedCount == scheduled, "a remedial is not a planned question")
+        #expect(s.plannedAnswered == 1)
+        var remedialsAnswered = 0
+        while s.advance() {
+            guard let q = s.current else { break }
+            if q.isRemedial {
+                _ = try answerCorrectly(&s)
+                remedialsAnswered += 1
+            } else {
+                _ = try answerCorrectly(&s)
+            }
+        }
+        #expect(remedialsAnswered > 0)
+        let summary = s.summary
+        #expect(summary.planned == scheduled)
+        #expect(summary.plannedAnswered == scheduled)
+        #expect(summary.answered == scheduled + remedialsAnswered)
+    }
+
+    @Test func quitEndsTheSession() throws {
+        var s = session(for: lesson([gap("g1"), gap("g2")]))
+        _ = try answerCorrectly(&s)
+        s.quit()
+        #expect(s.end == .quit && s.summary.end == .quit && s.summary.answered == 1)
+        let lateSubmit = s.submit(.option("x"))
+        let lateAdvance = s.advance()
+        #expect(lateSubmit == nil && !lateAdvance)
+    }
+
+    // MARK: C16 — capstone rules
+
+    @Test func capstoneHasNoHeartsRemedialsRevealsOrMasteryFlashes() throws {
+        let gaps = (1...3).map { gap("g\($0)", reviewCount: 3, consecutiveCorrect: 1) }
+        let l = lesson(gaps, mode: .capstone)
+        var s = session(for: l, isCapstone: true, config: config(masteryTarget: 1))
+        #expect(!s.hasHearts && s.hearts == nil)
+        #expect(s.schedule.count == gaps.count, "one question per gap")
+        #expect(s.conceptWeight == Tuning.capstoneWeight)
+        let reveal = s.reveal()
+        #expect(!s.canReveal && reveal == nil)
+
+        let miss = try answerWrongly(&s)
+        #expect(!miss.heartLost && !miss.endedByHearts && !miss.remedialQueued && miss.masteredWord == nil)
+        #expect(s.schedule.count == gaps.count && s.end == nil)
+        #expect(miss.evidence.first?.conceptWeight == Tuning.capstoneWeight)
+        let advanced1 = s.advance()
+        #expect(advanced1)
+
+        let hit = try answerCorrectly(&s)
+        #expect(hit.masteredWord == nil, "no mastery flash in a capstone")
+        #expect(hit.evidence.first?.conceptWeight == Tuning.capstoneWeight)
+        let advanced2 = s.advance()
+        #expect(advanced2)
+        _ = try answerCorrectly(&s)
+        let advanced3 = s.advance()
+        #expect(!advanced3 && s.end == .finished)
+
+        let summary = s.summary
+        #expect(summary.held.map { $0.id } == ["g2", "g3"] && summary.slipped.map { $0.id } == ["g1"])
+        #expect(summary.masteredCount == 0)
+        #expect(summary.scored == 3 && summary.scoredCorrect == 2)
+    }
+
+    // MARK: C6 — remedials
+
+    @Test func remedialsAreSteppedDownSpacedAndCapped() throws {
+        let gaps = (1...5).map { gap("g\($0)", reviewCount: 3, consecutiveCorrect: 1) }   // recall → fill-blank first
+        var s = session(for: lesson(gaps), config: config(hearts: 20))
+        let q = try #require(s.current)
+        #expect(q.kind == .fillBlank && q.gap.id == "g1")
+        let before = s.schedule.count
+        let submitted = s.submit(.typed("nope"))
+        let miss = try #require(submitted)
+        #expect(miss.remedialQueued && s.schedule.count == before + 1)
+        #expect(miss.evidence.first?.loggedAnswer == "nope", "a wrong typed answer is logged")
+        let remedial = s.schedule[s.position + 1 + Tuning.remedialSpacing]
+        #expect(remedial.isRemedial && remedial.gap.id == "g1" && remedial.kind == .multipleChoice && remedial.showsAnswer)
+
+        // Keep missing g1 in every form: remedials stop at the cap, the lesson still finishes.
+        while s.end == nil, s.advance(), let cur = s.current {
+            if cur.kind == .match {
+                _ = completeMatch(&s, cur)
+            } else if cur.gap.id == "g1" {
+                _ = s.submit(wrongAnswer(for: cur))
+            } else {
+                _ = s.submit(correctAnswer(for: cur))
+            }
+        }
+        #expect(s.end == .finished)
+        #expect(s.schedule.filter { $0.isRemedial && $0.gap.id == "g1" }.count == Tuning.maxRemedialsPerGap)
+        #expect(s.summary.missed.map { $0.id } == ["g1"])
+    }
+
+    @Test func remedialNeverLandsBehindTheProbes() throws {
+        var probe = gap("p", concept: "cp")
+        probe.isProbe = true
+        probe.probeOptions = ["a", "b", "c"]
+        let l = lesson([gap("g1"), gap("g2"), probe], roles: ["p": .probe])
+        var s = session(for: l, config: config(hearts: 20))
+        #expect(s.schedule.last?.isProbe == true)
+        while s.end == nil, let cur = s.current, !cur.isProbe {
+            _ = s.submit(wrongAnswer(for: cur))
+            #expect(s.schedule.last?.isProbe == true, "the probe stays last")
+            #expect(s.schedule.filter { $0.isProbe }.count == 1)
+            _ = s.advance()
+        }
+        #expect(s.current?.isProbe == true)
+    }
+
+    // MARK: C12 — "Show me"
+
+    @Test func revealIsAMissWithoutHeartOrErrorLog() throws {
+        var s = session(for: lesson((1...3).map { gap("g\($0)") }))
+        let heartsBefore = s.hearts
+        let q = try #require(s.current)
+        #expect(s.canReveal)
+        let revealed = s.reveal()
+        let out = try #require(revealed)
+        #expect(!out.correct && !out.firstTry && !out.heartLost && s.hearts == heartsBefore)
+        let e = try #require(out.evidence.first)
+        #expect(!e.correct && !e.firstTry && e.loggedAnswer == nil && e.format == q.answerFormat && e.gapId == q.gap.id)
+        #expect(out.feedback?.tone == .revealed && out.feedback?.title.contains(q.correctAnswer) == true)
+        #expect(out.remedialQueued, "a revealed item still gets its stepped-down retry")
+        #expect(s.revealsLeft == Tuning.hintsPerLesson - 1)
+        let again = s.reveal()
+        #expect(again == nil, "already answered")
+        #expect(s.summary.missed.first?.gap.id == q.gap.id)
+
+        var used = 1
+        while s.end == nil, s.advance(), s.canReveal {
+            _ = s.reveal()
+            used += 1
+        }
+        #expect(used == Tuning.hintsPerLesson && s.revealsLeft == 0 && !s.canReveal)
+        #expect(s.hearts == heartsBefore, "reveals never cost hearts")
+    }
+
+    // MARK: C3 — accent slip
+
+    @Test func accentSlipCountsAsAHardSuccess() throws {
+        var cafe = gap("cafe", reviewCount: 6, consecutiveCorrect: Tuning.productionEvidenceFloor)
+        cafe.frenchWord = "café"
+        cafe.exampleSentence = "un café noir"
+        var s = session(for: lesson([cafe, gap("g2"), gap("g3")]))
+        let q = try #require(s.current)
+        #expect(q.kind == .translation && q.gap.id == "cafe")
+        let submitted = s.submit(.typed("cafe"))
+        let out = try #require(submitted)
+        #expect(out.correct && out.firstTry && out.xp > 0 && !out.heartLost)
+        let e = try #require(out.evidence.first)
+        #expect(e.correct && e.grade == .hard && e.loggedAnswer == nil)
+        #expect(out.feedback?.tone == .close && out.feedback?.title.contains("accents") == true)
+        #expect(out.feedback?.isCorrect == true)
+        #expect(s.summary.scoredCorrect == 1 && s.summary.missed.isEmpty)
+    }
+
+    @Test func storeRecordsAGradedAnswerAtTheGivenGrade() {
+        let hard = EngineFixtures.store(concepts: [], gaps: [gap("g", concept: nil)])
+        hard.recordGradedAnswer(gapId: "g", grade: .hard, format: .translation, now: now)
+        let easy = EngineFixtures.store(concepts: [], gaps: [gap("g", concept: nil)])
+        easy.recordAnswer(gapId: "g", correct: true, format: .translation, firstTry: true, now: now)
+        let h = hard.gaps[0], e = easy.gaps[0]
+        #expect(h.reviewCount == 1 && h.consecutiveCorrect == 1, "a hard grade is still a success")
+        #expect(h.nextReviewAt < e.nextReviewAt, "…but comes back sooner than an easy first try")
+        let again = EngineFixtures.store(concepts: [], gaps: [gap("g", concept: nil, consecutiveCorrect: 2)])
+        again.recordGradedAnswer(gapId: "g", grade: .again, format: .fillBlank, now: now)
+        #expect(again.gaps[0].consecutiveCorrect == 0, ".again is a miss")
+    }
+
+    // MARK: B11 — in-session release
+
+    @Test func releaseDropsRemainingTargetItemsAndBackfillsFromReview() throws {
+        let streak = Tuning.conceptReleaseStreak
+        // Targets the learner has met before: only answers on words the lesson did
+        // NOT just teach build the release streak (lesson-11-3).
+        let targets = (1...streak).map { gap("t\($0)", concept: "T", reviewCount: 2, consecutiveCorrect: 1) }
+        let reviews = (1...2).map { gap("r\($0)", concept: "R") }
+        var roles: [String: SelectedItemRole] = [:]
+        for t in targets { roles[t.id] = .target }
+        for r in reviews { roles[r.id] = .review }
+        var s = session(for: lesson(targets + reviews, roles: roles, target: "T"))
+        #expect(s.releaseStreak == streak && s.targetConceptId == "T")
+
+        var released: String? = nil
+        var targetAnswers = 0
+        while s.end == nil, released == nil, let q = s.current {
+            let out = try answerCorrectly(&s)
+            if q.role == .target { targetAnswers += 1 }
+            released = out.releasedConceptId
+            if released == nil { _ = s.advance() }
+        }
+        #expect(released == "T" && targetAnswers == streak)
+        let rest = s.schedule[(s.position + 1)...]
+        #expect(!rest.contains { $0.role == .target && $0.conceptId == "T" && !$0.isInterstitial })
+        #expect(rest.contains { $0.gap.conceptId == "R" && !$0.isInterstitial }, "backfilled from review")
+
+        while s.end == nil, s.advance() { _ = try answerCorrectly(&s) }
+        #expect(s.end == .finished && s.summary.releasedConceptIds == ["T"])
+    }
+
+    /// A smart lesson's spine is its new target words, asked first. Three right
+    /// answers on words the word cards printed moments ago released the concept in
+    /// every lesson — each word lost its reversed round and the learner was told
+    /// "you've got it" after three recognition taps (lesson-11-3). Answers on words
+    /// the lesson taught never build the streak, so every target word keeps both
+    /// of its rounds.
+    @Test func answersOnWordsTheLessonTaughtNeverReleaseTheConcept() throws {
+        let streak = Tuning.conceptReleaseStreak
+        let targets = (1...streak).map { gap("t\($0)", concept: "T") }
+        let reviews = (1...2).map { gap("r\($0)", concept: "R") }
+        var roles: [String: SelectedItemRole] = [:]
+        for t in targets { roles[t.id] = .target }
+        for r in reviews { roles[r.id] = .review }
+        var s = session(for: lesson(targets + reviews, roles: roles, target: "T"), config: config(hearts: 20))
+        #expect(targets.allSatisfy { s.mayTeach($0) }, "the targets are new: the lesson teaches them")
+
+        var targetAnswers = 0
+        while s.end == nil {
+            let q = try #require(s.current)
+            let out = try answerCorrectly(&s)
+            if q.role == .target && !q.isInterstitial { targetAnswers += 1 }
+            #expect(out.releasedConceptId == nil, "three taps on words just taught are not evidence of the concept")
+            if !s.advance() { break }
+        }
+        #expect(s.end == .finished && s.summary.releasedConceptIds.isEmpty)
+        #expect(targetAnswers == targets.count * Tuning.masteryTarget, "every target word is asked in both rounds")
+        #expect(s.schedule.contains { $0.role == .target && $0.isReversed }, "the English → French round survives")
+    }
+
+    /// A correct answer on a taught word does not BREAK a streak either; a miss does.
+    @Test func releaseTrackerIgnoresTaughtAnswersButResetsOnAMiss() {
+        var tracker = ConceptReleaseTracker()
+        let n = Tuning.conceptReleaseStreak
+        for _ in 0..<(n - 1) { #expect(tracker.record(conceptId: "c", firstTryCorrect: true, releaseStreak: n) == nil) }
+        #expect(tracker.record(conceptId: "c", firstTryCorrect: true, releaseStreak: n, countsTowardStreak: false) == nil,
+                "a taught answer does not complete the streak (lesson-11-3)")
+        #expect(tracker.streaks["c"] == n - 1, "…and does not reset it")
+        #expect(tracker.record(conceptId: "c", firstTryCorrect: false, releaseStreak: n, countsTowardStreak: false) == nil)
+        #expect(tracker.streaks["c"] == 0, "a miss on a taught word still resets the streak")
+    }
+
+    /// The practice bar's denominator is what the LIVE schedule can still
+    /// deliver: a check-in is asked once, and a released concept's remaining
+    /// questions are dropped, so neither was ever masterable. A flawless lesson
+    /// must be able to reach the number the bar shows.
+    @Test func masteryDenominatorCountsOnlyGapsTheScheduleCanStillMaster() throws {
+        let streak = Tuning.conceptReleaseStreak
+        let targets = (1...streak).map { gap("t\($0)", concept: "T", reviewCount: 2, consecutiveCorrect: 1) }
+        let reviews = (1...2).map { gap("r\($0)", concept: "R") }
+        let check = gap("chk", concept: "K")
+        var roles: [String: SelectedItemRole] = ["chk": .checkIn]
+        for t in targets { roles[t.id] = .target }
+        for r in reviews { roles[r.id] = .review }
+        var s = session(for: lesson(targets + reviews + [check], roles: roles, target: "T"),
+                        config: config(hearts: 20))
+
+        #expect(!s.masterableGapIds.contains("chk"), "a check-in is asked once, so it can never be mastered")
+        #expect(s.masterableGapIds.count < s.lesson.gaps.filter { !$0.isProbe }.count)
+
+        while s.end == nil {
+            _ = try answerCorrectly(&s)
+            if !s.advance() { break }
+        }
+        #expect(s.end == .finished)
+        #expect(s.summary.accuracyPercent == 100)
+        #expect(s.masterableCount > 0)
+        #expect(s.masteredGapIds.count == s.masterableCount,
+                "a flawless lesson reaches the number the practice bar shows")
+        #expect(!s.masterableGapIds.contains(where: { id in targets.contains { $0.id == id } }),
+                "the released concept's remaining questions were dropped")
+    }
+
+    /// A check-in riding a probe item is a scored check-in: it counts toward the
+    /// lesson's accuracy, costs a heart when missed and is listed in the recap —
+    /// none of the exemptions a blind-spot probe gets. It is NOT remediated: see
+    /// `aMissedCheckInIsNeverRemediatedIntoASecondCheckIn`.
+    @Test func aCheckInRidingAProbeItemIsScoredLikeAnyCheckIn() throws {
+        var probe = gap("p", concept: "K")
+        probe.isProbe = true
+        probe.probeOptions = ["d1", "d2", "d3"]
+        let l = lesson([probe] + (0..<3).map { gap("f\($0)") }, roles: ["p": .checkIn])
+        var s = session(for: l, config: config(hearts: 5))
+
+        let q = try #require(s.current)
+        #expect(q.gap.id == "p" && q.isCheckIn && !q.isProbe)
+        let submitted = s.submit(.option("d1"))
+        let out = try #require(submitted)
+        #expect(!out.correct && out.heartLost, "a missed check-in costs a heart")
+        #expect(s.scored == 1 && s.scoredCorrect == 0, "it counts in the honest accuracy base")
+        #expect(out.evidence.first?.isCheckIn == true && out.evidence.first?.format != .probe)
+        #expect(s.summary.missed.contains { $0.gap.id == "p" }, "it reaches the recap")
+        #expect(!out.remedialQueued, "a check-in is asked once")
+        #expect(!s.schedule.contains { $0.isRemedial && $0.gap.id == "p" })
+    }
+
+    /// One check-in asked is one check-in recorded.
+    ///
+    /// The stepped-down remedial shows the correct option before the pick and keeps
+    /// the gap's selected role, so re-scoring it would bank a PASSED check-in on the
+    /// concept the learner just failed: the adaptive interval would grow instead of
+    /// halving, the governor's rolling window would take a spurious pass, and a
+    /// provisional placement seed could be "verified" by an answer it was handed.
+    @Test func aMissedCheckInIsNeverRemediatedIntoASecondCheckIn() throws {
+        let checkIn = gap("c1", concept: "M", reviewCount: 4, consecutiveCorrect: 2)
+        let l = lesson([checkIn] + (1...3).map { gap("g\($0)", concept: "G") }, roles: ["c1": .checkIn])
+        var s = session(for: l, config: config(hearts: 20))
+
+        let q = try #require(s.current)
+        #expect(q.gap.id == "c1" && q.isCheckIn)
+        let out = try answerWrongly(&s)
+        #expect(!out.correct && out.evidence.first?.isCheckIn == true)
+        #expect(!out.remedialQueued, "no remedial: it would be the second check-in on this concept")
+        #expect(!s.schedule.contains { $0.isRemedial && $0.gap.id == "c1" })
+        let match = try #require(s.schedule.first { $0.isInterstitial })
+        #expect(!match.matchGaps.contains { $0.id == "c1" }, "nor is it paired with its meaning in the match round")
+
+        // Everything else in the lesson still answers as usual, and no other
+        // check-in evidence appears anywhere in it.
+        var checkInOutcomes = out.evidence.filter { $0.isCheckIn }.map { $0.correct }
+        while s.end == nil, s.advance() {
+            let next = try answerCorrectly(&s)
+            checkInOutcomes += next.evidence.filter { $0.isCheckIn }.map { $0.correct }
+        }
+        #expect(checkInOutcomes == [false], "exactly one check-in outcome, and it is the miss")
+        #expect(s.schedule.contains { $0.isRemedial } == false)
+    }
+
+    /// A "Show me" on a check-in is the same story: an admitted miss, and nothing
+    /// that could re-score it as a pass.
+    @Test func revealingACheckInQueuesNoRemedial() throws {
+        let checkIn = gap("c1", concept: "M", reviewCount: 4, consecutiveCorrect: 2)
+        var s = session(for: lesson([checkIn] + (1...2).map { gap("g\($0)", concept: "G") }, roles: ["c1": .checkIn]))
+        #expect(s.current?.gap.id == "c1")
+        let revealed = s.reveal()
+        let out = try #require(revealed)
+        #expect(!out.correct && out.evidence.first?.isCheckIn == true)
+        #expect(!out.remedialQueued && !s.schedule.contains { $0.isRemedial })
+    }
+
+    /// End to end on the REAL store: one check-in asked is one check-in booked.
+    ///
+    /// The headless driver answers each selected gap exactly once and never builds a
+    /// match round, so only a real session feeding a real `AppStore` can hold this
+    /// line — and it is the line `Tuning.seedVerificationPasses`, the governor window
+    /// (`Tuning.governorWindow`) and the adaptive check-in interval all stand on.
+    @Test func aMissedCheckInBooksExactlyOneOutcomeInTheStore() throws {
+        let long = now.addingTimeInterval(-20 * EngineFixtures.day)
+        var doneGap = EngineFixtures.gap("done-0", concept: "done", category: .vocabulary,
+                                         consecutiveCorrect: Tuning.gapMasteryStreak,
+                                         reviewCount: Tuning.gapMasteryStreak,
+                                         lastReviewed: long, mastered: long)
+        var state = FSRS.makeInitialState(grade: .easy, now: long)
+        state.dueAt = now.addingTimeInterval(-EngineFixtures.day)
+        doneGap.fsrs = state
+        doneGap.nextReviewAt = state.dueAt
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("root", mastery: 0.5),
+                                                    EngineFixtures.mastered("done", category: .vocabulary)],
+                                         gaps: (0..<3).map { EngineFixtures.gap("root-\($0)", concept: "root") } + [doneGap])
+        store.sessionIndex = 1
+        let assembled = try #require(LessonPipeline(store: store).lesson(for: .smart(now: now)))
+        #expect(assembled.selection.items.first { $0.gapId == "done-0" }?.role == .checkIn)
+
+        var s = session(for: assembled, config: config(hearts: 20))
+        var asked = 0
+        while s.end == nil, asked < 60 {
+            asked += 1
+            let q = try #require(s.current)
+            var outcomes: [LessonAnswerOutcome] = []
+            if q.kind == .match {
+                #expect(!q.matchGaps.contains { s.role(for: $0, in: q) == .checkIn },
+                        "the check-in is not paired with its own meaning")
+                for g in q.matchGaps { if let o = s.matchPair(left: g.id, right: g.id) { outcomes.append(o) } }
+            } else {
+                // `#require` rewrites its argument into a closure: hoist the mutating call.
+                let submitted = s.submit(s.role(for: q.gap, in: q) == .checkIn ? wrongAnswer(for: q)
+                                                                              : correctAnswer(for: q))
+                outcomes.append(try #require(submitted))
+            }
+            // Exactly what LessonViewModel forwards for each piece of evidence.
+            for e in outcomes.flatMap({ $0.evidence }) {
+                store.recordAnswer(gapId: e.gapId, correct: e.correct, format: e.format, firstTry: e.firstTry,
+                                   conceptWeight: e.conceptWeight, isCheckIn: e.isCheckIn, now: now)
+            }
+            if !s.advance() { break }
+        }
+
+        #expect(store.checkInHistory == [false], "one check-in asked, one outcome booked — and it is the miss")
+        let concept = try #require(store.concept("done"))
+        let halved = max(Tuning.checkInMinDays, Tuning.checkInInitialDays / Tuning.checkInMissDivisor)
+        #expect(concept.checkInIntervalDays == halved,
+                "the miss shortens the interval; a second, aided pass would have grown it again")
+        #expect(concept.nextCheckInAt == now.addingTimeInterval(halved * EngineFixtures.day))
+    }
+
+    // MARK: Confusion evidence (lesson-3-3)
+
+    /// A wrong answer that IS another item on the table names that item, so the store
+    /// can link the pair: the selector ranks concepts on confusion and the assembler
+    /// places a confused pair side by side. Without the partner both are dead code.
+    @Test func aWrongPickNamesTheLessonItemItBelongsTo() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps), config: config(hearts: 20))
+
+        #expect(s.confusedGapId(for: "g2-en", excluding: "g1") == "g2", "another item's meaning")
+        #expect(s.confusedGapId(for: "g2-fr", excluding: "g1") == "g2", "or its French form")
+        #expect(s.confusedGapId(for: "g1-en", excluding: "g1") == nil, "the item itself is not a confusion")
+        #expect(s.confusedGapId(for: "something nobody wrote", excluding: "g1") == nil)
+
+        let q = try #require(s.current)
+        #expect(q.kind == .multipleChoice)
+        let wrong = try #require(q.options.first { !AnswerGrader.optionMatches($0, q.correctAnswer) })
+        let submitted = s.submit(.option(wrong))
+        let ev = try #require(submitted?.evidence.first)
+        #expect(!ev.correct && ev.confusedWithGapId == s.confusedGapId(for: wrong, excluding: ev.gapId))
+        #expect(ev.confusedWithGapId != nil, "the distractors come from the lesson's own items")
+    }
+
+    /// A wrong pair in a match round knows both halves already: the word asked and
+    /// the meaning tapped. A right pair names nobody.
+    @Test func aWrongMatchPairCarriesTheConfusedPartner() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps), config: config(hearts: 20))
+        var q = try #require(s.current)
+        var steps = 0
+        while q.kind != .match, steps < 40 {
+            _ = try answerCorrectly(&s)
+            let advanced = s.advance()
+            #expect(advanced)
+            q = try #require(s.current)
+            steps += 1
+        }
+        #expect(q.kind == .match)
+        let left = q.matchGaps[0].id, other = q.matchGaps[1].id
+        let crossed = s.matchPair(left: left, right: other)
+        let wrong = try #require(crossed?.evidence.first)
+        #expect(wrong.gapId == left && wrong.confusedWithGapId == other)
+
+        // A right pair on a row's first attempt names nobody.
+        let paired = s.matchPair(left: other, right: other)
+        let right = try #require(paired?.evidence.first)
+        #expect(right.correct && right.confusedWithGapId == nil)
+    }
+
+    /// A miss on an ordinary item still gets its stepped-down remedial (C6) — the
+    /// check-in rule is the only exemption.
+    @Test func anOrdinaryMissIsStillRemediated() throws {
+        var s = session(for: lesson([gap("g1"), gap("g2")], roles: ["g1": .review]))
+        let out = try answerWrongly(&s)
+        #expect(out.remedialQueued && s.schedule.contains { $0.isRemedial && $0.gap.id == "g1" })
+    }
+
+    // MARK: Option grading keeps tags
+
+    /// Options that differ only in their parenthetical tag are different answers:
+    /// exactly one of "the (masculine singular)" / "the (feminine singular)" is right.
+    @Test func taggedOptionsAreGradedApart() throws {
+        var article = gap("le", concept: "definite-articles", category: .grammar)
+        article.englishTranslation = "the (masculine singular)"
+        let q = LessonQuestion(gap: article, kind: .multipleChoice,
+                               prompt: "What does “le” mean?",
+                               correctAnswer: article.englishTranslation,
+                               options: ["the (masculine singular)", "the (feminine singular)", "the (plural)"])
+        #expect(LessonSession.grade(.option("the (masculine singular)"), for: q).correct)
+        #expect(!LessonSession.grade(.option("the (feminine singular)"), for: q).correct)
+        #expect(!LessonSession.grade(.option("the (plural)"), for: q).correct)
+        #expect(!LessonSession.grade(.option("the"), for: q).correct)
+
+        var s = LessonSession(lesson: lesson([article]), isCapstone: false, config: config())
+        s.start(with: [q])
+        let submitted = s.submit(.option("the (feminine singular)"))
+        let out = try #require(submitted)
+        #expect(!out.correct && out.xp == 0 && out.heartLost)
+        #expect(out.evidence.first?.loggedAnswer == "the (feminine singular)")
+    }
+
+    // MARK: Mastery is earned unaided
+
+    /// A remedial shows the answer before the pick (C6), so it can never be the
+    /// evidence that flashes "Mastered!".
+    @Test func remedialCorrectDoesNotCountTowardMastery() throws {
+        var s = session(for: lesson([gap("g1"), gap("g2")]), config: config(hearts: 20, masteryTarget: 2))
+        let first = try #require(s.current)
+        _ = try answerWrongly(&s)
+        #expect(s.masteredGapIds.isEmpty)
+        var remedialsAnswered = 0
+        var flashes: [String] = []
+        while s.advance() {
+            let q = try #require(s.current)
+            let out = try answerCorrectly(&s)
+            if q.isRemedial { remedialsAnswered += 1 }
+            if let word = out.masteredWord { flashes.append(word) }
+        }
+        #expect(remedialsAnswered > 0, "the miss queued a remedial")
+        #expect(!s.masteredGapIds.contains(first.gap.id), "the missed word was handed its answer, not mastered")
+        #expect(!flashes.contains(first.gap.frenchWord))
+    }
+
+    // MARK: C4 / B6 — match rounds
+
+    /// Guessing down the right column must not stack lapses: one miss per left
+    /// row per round, and a pair already tried does nothing at all.
+    @Test func repeatedWrongPairsRecordOneMissPerRow() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 20))
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+
+        let first = s.matchPair(left: "g1", right: "g2")
+        let wrong = try #require(first)
+        #expect(!wrong.correct && wrong.evidence.count == 1 && wrong.remedialQueued)
+        let remedialsAfterFirst = s.schedule.filter { $0.isRemedial }.count
+
+        let repeated = s.matchPair(left: "g1", right: "g2")
+        #expect(repeated == nil, "the same pair again is not a new answer")
+
+        let other = s.matchPair(left: "g1", right: "g3")
+        let second = try #require(other)
+        #expect(!second.correct, "still wrong, so the row still flashes")
+        #expect(second.evidence.isEmpty, "one miss per left row per round")
+        #expect(!second.remedialQueued && s.schedule.filter { $0.isRemedial }.count == remedialsAfterFirst)
+        #expect(!second.heartLost && s.hearts == 19, "the round's one heart was already spent")
+
+        var last: LessonAnswerOutcome? = nil
+        for g in gaps { last = s.matchPair(left: g.id, right: g.id) }
+        let done = try #require(last)
+        #expect(done.roundComplete && !done.correct)
+        #expect(s.summary.missed.map { $0.id } == ["g1"], "only g1 was missed, once")
+    }
+
+    @Test func matchRoundIsOneQuestionWithEvidencePerPair() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config())
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+
+        let crossed = s.matchPair(left: "g1", right: "g2")
+        let wrong = try #require(crossed)
+        #expect(!wrong.correct && !wrong.roundComplete && wrong.heartLost && s.hearts == Tuning.lessonHearts - 1)
+        let e = try #require(wrong.evidence.first)
+        #expect(e.gapId == "g1" && !e.correct && e.format == .match && e.firstTry && e.loggedAnswer == "g2-en")
+        #expect(wrong.remedialQueued && s.schedule.count == 2 && s.schedule[1].gap.id == "g1" && s.schedule[1].isRemedial)
+
+        let crossedAgain = s.matchPair(left: "g2", right: "g3")
+        let wrongAgain = try #require(crossedAgain)
+        #expect(!wrongAgain.heartLost && s.hearts == Tuning.lessonHearts - 1, "one heart per round")
+        let unknown = s.matchPair(left: "zz", right: "g1")
+        #expect(unknown == nil, "unknown rows are ignored")
+
+        // lesson-10-6: the corrected pairing of a missed row books nothing — the miss
+        // was its evidence. (This test pinned `correct` evidence with firstTry false
+        // here before; that success put the word back on a streak.)
+        let retried = s.matchPair(left: "g1", right: "g1")
+        let retry = try #require(retried)
+        #expect(retry.correct && !retry.roundComplete && retry.evidence.isEmpty)
+        let g2Retried = s.matchPair(left: "g2", right: "g2")
+        #expect(g2Retried?.evidence.isEmpty == true, "g2 was missed too")
+        let g3Paired = s.matchPair(left: "g3", right: "g3")
+        let g3 = try #require(g3Paired?.evidence.first)
+        #expect(g3.gapId == "g3" && g3.correct && g3.firstTry, "a first attempt is evidence")
+        let lastPair = s.matchPair(left: "g4", right: "g4")
+        let done = try #require(lastPair)
+        #expect(done.evidence.isEmpty, "the last row's pairing is forced")
+        #expect(done.roundComplete && !done.correct && done.xp == 0)
+        #expect(done.feedback?.tone == .incorrect && done.feedback?.title.contains("g1-fr") == true)
+        #expect(done.feedback?.detail?.contains("g4-fr — g4-en") == true)
+        let afterRound = s.matchPair(left: "g1", right: "g1")
+        #expect(afterRound == nil, "the round is over")
+        #expect(s.summary.missed.map { $0.id } == ["g1", "g2"])
+        #expect(s.summary.scored == 1 && s.summary.scoredCorrect == 0 && s.summary.answered == 1)
+        let advanced = s.advance()
+        #expect(advanced && s.current?.isRemedial == true)
+    }
+
+    /// lesson-10-6: a left row's first attempt is its only evidence. The last row of
+    /// a round can only go with the last meaning, so it is no evidence at all, and a
+    /// row's correct pairing after a miss is found by elimination. Booking either as
+    /// a success put a word missed seconds earlier back on a streak.
+    @Test func onlyAMatchRowsUnforcedFirstAttemptIsEvidence() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 20))
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+        var booked: [LessonEvidence] = []
+        for g in gaps {
+            let o = s.matchPair(left: g.id, right: g.id)
+            booked += try #require(o).evidence
+        }
+        #expect(booked.map { $0.gapId } == ["g1", "g2", "g3"], "the forced last pair books nothing")
+        #expect(booked.allSatisfy { $0.correct && $0.firstTry })
+
+        var t = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 20))
+        t.start(with: [scheduler.matchQuestion(for: gaps)])
+        let missed = t.matchPair(left: "g1", right: "g2")
+        let miss = try #require(missed)
+        #expect(miss.evidence.map { $0.correct } == [false])
+        let fixed = t.matchPair(left: "g1", right: "g1")
+        let fix = try #require(fixed)
+        #expect(fix.correct && fix.evidence.isEmpty, "no success seconds after the lapse")
+        let ontoMatched = t.matchPair(left: "g3", right: "g1")
+        #expect(ontoMatched == nil, "a matched meaning cannot be paired again")
+    }
+
+    @Test func cleanMatchRoundScoresOnce() throws {
+        let gaps = (1...3).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config())
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+        let done = try answerCorrectly(&s)
+        #expect(done.roundComplete && done.correct && done.xp == LessonScoring.xp(forCombo: 1))
+        #expect(done.feedback?.tone == .correct)
+        #expect(s.hearts == Tuning.lessonHearts && s.summary.scoredCorrect == 1 && s.summary.xp == done.xp)
+        #expect(s.progress == 1)
+    }
+
+    @Test func outOfHeartsMidRoundEndsTheLesson() throws {
+        let gaps = (1...3).map { gap("g\($0)") }
+        var s = LessonSession(lesson: lesson(gaps), isCapstone: false, config: config(hearts: 1))
+        s.start(with: [scheduler.matchQuestion(for: gaps)])
+        let wrong = try answerWrongly(&s)
+        #expect(wrong.endedByHearts && s.end == .outOfHearts && !wrong.remedialQueued)
+        let late = s.matchPair(left: "g1", right: "g1")
+        #expect(late == nil)
+    }
+
+    // MARK: firstTry, probes, roles
+
+    @Test func firstTryFollowsEarlierMisses() throws {
+        var s = session(for: lesson((1...3).map { gap("g\($0)") }), config: config(hearts: 20))
+        let first = try #require(s.current)
+        #expect(s.firstTry(for: first))
+        _ = try answerWrongly(&s)
+        var seenRemedial = false
+        var seenRoundTwo = false
+        while s.end == nil, s.advance(), let cur = s.current {
+            if cur.kind == .match {
+                _ = completeMatch(&s, cur)
+                continue
+            }
+            let out = try answerCorrectly(&s)
+            if cur.gap.id == first.gap.id {
+                #expect(!s.firstTry(for: cur), "a gap already missed is never a first try again")
+                if cur.isRemedial {
+                    seenRemedial = true
+                    // A remedial shows the answer, so it books nothing at all (lesson-7-2);
+                    // there is no evidence left to carry a firstTry flag.
+                    #expect(out.evidence.isEmpty)
+                } else {
+                    seenRoundTwo = true
+                    #expect(out.evidence.first?.firstTry == false)
+                }
+            } else {
+                #expect(out.evidence.first?.firstTry == true)
+            }
+        }
+        #expect(seenRemedial && seenRoundTwo)
+    }
+
+    @Test func probeMissIsADiagnosisNotASlip() throws {
+        var probe = gap("p", concept: "cp")
+        probe.isProbe = true
+        probe.probeOptions = ["a", "b", "c"]
+        var s = session(for: lesson([gap("g1"), probe], roles: ["p": .probe]))
+        while let cur = s.current, !cur.isProbe {
+            _ = try answerCorrectly(&s)
+            _ = s.advance()
+        }
+        let q = try #require(s.current)
+        #expect(q.isProbe && q.answerFormat == .probe)
+        let scoredBefore = s.summary.scored
+        let out = try answerWrongly(&s)
+        #expect(!out.heartLost && s.hearts == Tuning.lessonHearts && !out.remedialQueued)
+        #expect(out.evidence.first?.format == .probe && out.evidence.first?.correct == false)
+        #expect(out.evidence.first?.loggedAnswer == nil, "a probe miss is a diagnosis, not a mistake to log")
+        #expect(!s.summary.missedGapIds.contains("p") && s.summary.scored == scoredBefore)
+        let advanced = s.advance()
+        #expect(!advanced && s.end == .finished)
+    }
+
+    @Test func checkInRoleFlowsIntoEvidence() throws {
+        let checkIn = gap("c1", concept: "M", reviewCount: 4, consecutiveCorrect: 2)
+        var s = session(for: lesson([checkIn, gap("g2")], roles: ["c1": .checkIn]))
+        let q = try #require(s.current)
+        #expect(q.gap.id == "c1" && q.isCheckIn)
+        let out = try answerCorrectly(&s)
+        #expect(out.evidence.first?.isCheckIn == true)
+        let advanced = s.advance()
+        #expect(advanced)
+        let other = try answerCorrectly(&s)
+        #expect(other.evidence.first?.isCheckIn == false)
+    }
+
+    // MARK: Cursor and scoring
+
+    @Test func cleanRunFinishesWithFullAccuracyAndMastery() throws {
+        let gaps = (1...3).map { gap("g\($0)") }
+        var s = session(for: lesson(gaps))
+        let total = s.schedule.count
+        #expect(total == gaps.count * Tuning.masteryTarget + 1, "two rounds plus the match interstitial")
+        var expectedXP = 0
+        var mastered: [String] = []
+        var n = 0
+        repeat {
+            let out = try answerCorrectly(&s)
+            n += 1
+            expectedXP += LessonScoring.xp(forCombo: n)
+            #expect(out.xp == LessonScoring.xp(forCombo: n))
+            if let word = out.masteredWord { mastered.append(word) }
+        } while s.advance()
+        #expect(s.end == .finished && s.progress == 1 && s.isLast)
+        let summary = s.summary
+        #expect(summary.answered == total && summary.scored == total && summary.scoredCorrect == total)
+        #expect(summary.accuracy == 1 && summary.accuracyPercent == 100)
+        #expect(summary.xp == expectedXP && summary.bestCombo == total)
+        #expect(summary.masteredCount == gaps.count && Set(mastered) == Set(gaps.map { $0.frenchWord }))
+        #expect(summary.missed.isEmpty && summary.held.isEmpty && summary.slipped.isEmpty)
+    }
+
+    @Test func progressTracksAnsweredQuestions() throws {
+        var s = session(for: lesson([gap("g1"), gap("g2")]))
+        let total = Double(s.schedule.count)
+        #expect(s.progress == 0)
+        _ = try answerCorrectly(&s)
+        #expect(s.progress == 1 / total)
+        let advanced = s.advance()
+        #expect(advanced && s.progress == 1 / total)
+        _ = try answerCorrectly(&s)
+        #expect(s.progress == 2 / total)
+    }
+
+    @Test func bareGapListBecomesAScopedLesson() {
+        let gaps = [gap("a"), gap("b")]
+        let scoped = LessonSession.lesson(for: gaps, assembled: nil, isCapstone: false)
+        #expect(scoped.isScoped && !scoped.isCapstone && scoped.gaps.count == 2)
+        #expect(scoped.selection.items.map { $0.gapId } == ["a", "b"])
+        let capstone = LessonSession.lesson(for: gaps, assembled: nil, isCapstone: true)
+        #expect(capstone.isCapstone)
+        let given = lesson(gaps)
+        #expect(LessonSession.lesson(for: gaps, assembled: given, isCapstone: false).id == given.id)
+    }
+
+    // MARK: C14 — foreground time
+
+    @Test func timerCountsForegroundTimeOnly() {
+        var t = LessonTimer()
+        #expect(t.elapsed(at: now) == 0 && !t.isStarted)
+        t.resume(at: now)
+        #expect(!t.isRunning, "resume before start is a no-op")
+        t.start(at: now)
+        t.pause(at: now.addingTimeInterval(90))
+        t.pause(at: now.addingTimeInterval(400))
+        t.resume(at: now.addingTimeInterval(600))
+        #expect(t.elapsed(at: now.addingTimeInterval(630)) == 120)
+        #expect(t.creditedMinutes(at: now.addingTimeInterval(630)) == 2)
+        // Lesson time follows the activity rule (D9 / C-R3): nothing under the
+        // threshold, rounded, capped — a tap-and-quit credits no minute.
+        var short = LessonTimer()
+        short.start(at: now)
+        let threshold = Tuning.minActivitySeconds
+        #expect(short.creditedMinutes(at: now.addingTimeInterval(threshold - 1)) == 0, "under the activity threshold nothing is credited")
+        #expect(short.creditedMinutes(at: now.addingTimeInterval(threshold)) == 1, "at the threshold one minute")
+        #expect(short.creditedMinutes(at: now.addingTimeInterval(89)) == 1 && short.creditedMinutes(at: now.addingTimeInterval(91)) == 2, "rounded, not floored")
+        for seconds in [threshold, 45, 120, 600] {
+            #expect(short.creditedMinutes(at: now.addingTimeInterval(seconds))
+                    == ActivityCredit.minutes(activeSeconds: seconds, capMinutes: Tuning.lessonCreditCapMinutes), "same rule as activity credit")
+        }
+        let long = Double(Tuning.lessonCreditCapMinutes + 30) * 60
+        #expect(short.creditedMinutes(at: now.addingTimeInterval(long)) == Tuning.lessonCreditCapMinutes, "capped")
+        var untouched = LessonTimer()
+        #expect(untouched.creditedMinutes(at: now.addingTimeInterval(3600)) == 0, "a timer never started credits nothing")
+        untouched.pause(at: now)
+        #expect(untouched.elapsed(at: now) == 0)
+    }
+
+    // MARK: C20 — speech
+
+    @Test func speechNeverReadsTheAnswerBeforeItIsShown() throws {
+        let g = gap("g1", reviewCount: 3, consecutiveCorrect: 1)
+        var rng = LessonRandom(seed: 1)
+        let fillQuestion = scheduler.question(for: g, kind: .fillBlank, pool: [g], optionCount: 3, rng: &rng)
+        let fill = try #require(fillQuestion)
+        let spoken = try #require(LessonSpeech.spokenPrompt(for: fill))
+        #expect(!spoken.contains(AnswerGrader.blankToken) && !spoken.contains("g1-fr") && spoken.contains(LessonSpeech.blankPause))
+        #expect(LessonSpeech.spokenAnswer(for: fill) == g.exampleSentence)
+
+        let translationQuestion = scheduler.question(for: g, kind: .translation, pool: [g], optionCount: 3, rng: &rng)
+        let translation = try #require(translationQuestion)
+        #expect(LessonSpeech.spokenPrompt(for: translation) == nil, "the English side is never read in a French voice")
+        #expect(LessonSpeech.spokenAnswer(for: translation) == "g1-fr")
+
+        let pool = (1...4).map { gap("g\($0)") }
+        let reversedQuestion = scheduler.question(for: pool[0], kind: .multipleChoice, variant: 1, pool: pool, optionCount: 3, rng: &rng)
+        let reversed = try #require(reversedQuestion)
+        #expect(reversed.isReversed)
+        #expect(LessonSpeech.spokenPrompt(for: reversed) == nil && LessonSpeech.spokenAnswer(for: reversed) == "g1-fr")
+        let forwardQuestion = scheduler.question(for: pool[0], kind: .multipleChoice, pool: pool, optionCount: 3, rng: &rng)
+        let forward = try #require(forwardQuestion)
+        #expect(LessonSpeech.spokenPrompt(for: forward) == "g1-fr")
+
+        var long = g
+        long.exampleSentence = "g1-fr a b c d"
+        let arrangeQuestion = scheduler.question(for: long, kind: .arrange, pool: [long], optionCount: 3, rng: &rng)
+        let arrange = try #require(arrangeQuestion)
+        #expect(arrange.kind == .arrange && LessonSpeech.spokenPrompt(for: arrange) == nil)
+        #expect(LessonSpeech.spokenAnswer(for: arrange) == "g1-fr a b c d")
+        #expect(LessonSpeech.spokenPrompt(for: scheduler.matchQuestion(for: pool)) == nil)
+    }
+
+    /// lesson-5-5: an AI-written fill-blank's sentence is the model's own, and the
+    /// listen button after the answer reads THAT sentence completed — not the
+    /// content example, which is different French the learner never saw.
+    @Test func speechReadsTheSentenceOnScreenForAnAIFillBlank() throws {
+        let g = gap("g1", reviewCount: 3, consecutiveCorrect: 1)
+        var q = LessonQuestion(gap: g, kind: .fillBlank,
+                               prompt: "\(AnswerGrader.blankToken) synthetic frame",
+                               correctAnswer: "g1-fr")
+        q.source = .ai
+        #expect(q.prompt != g.exampleSentence)
+        #expect(LessonSpeech.spokenAnswer(for: q) == "g1-fr synthetic frame")
+
+        // A question with no usable prompt still falls back to the content example.
+        let bare = LessonQuestion(gap: g, kind: .fillBlank, prompt: "", correctAnswer: "g1-fr")
+        #expect(LessonSpeech.spokenAnswer(for: bare) == g.exampleSentence)
+    }
+
+    // MARK: C10 — feedback
+
+    @Test func feedbackListsAcceptedAlternatives() throws {
+        var g = gap("g1", reviewCount: 6, consecutiveCorrect: Tuning.productionEvidenceFloor)
+        g.acceptedAnswers = ["g1-alt"]
+        var rng = LessonRandom(seed: 3)
+        let question = scheduler.question(for: g, kind: .translation, pool: [g], optionCount: 3, rng: &rng)
+        let q = try #require(question)
+        let wrong = LessonSession.feedback(for: q, correct: false, verdict: .incorrect, revealed: false, combo: 0)
+        #expect(wrong.tone == .incorrect && wrong.title == "Answer: g1-fr" && wrong.alternatives == ["g1-alt"])
+        #expect(wrong.detail == q.explanation && wrong.speech == "g1-fr")
+        let hot = LessonSession.feedback(for: q, correct: true, verdict: .correct, revealed: false, combo: Tuning.comboHighStreak)
+        #expect(hot.tone == .correct && hot.title.contains("XP"))
+        #expect(LessonSession.praise(combo: 1) == "Correct!")
+    }
+
+    // MARK: lesson-4-2 — the missed recap reads back the meaning
+
+    /// The recap prints the item's MEANING (plus the completed sentence for a
+    /// sentence format), never the question's own answer: "True" says nothing,
+    /// and a translation or a reversed multiple choice answers with the French
+    /// word that is already the line above it.
+    @Test func recapAnswerRestatesTheMeaningNotTheQuestionsAnswer() throws {
+        var g = gap("g1", reviewCount: 4, consecutiveCorrect: 1)
+        g.exampleSentence = "g1-fr a b c d"
+        let pool = (1...4).map { gap("g\($0)") }
+        var rng = LessonRandom(seed: 4)
+
+        let tf = try #require(scheduler.question(for: g, kind: .trueFalse, pool: [g], optionCount: 3, rng: &rng))
+        #expect(tf.correctAnswer == "True" || tf.correctAnswer == "False")
+        #expect(LessonSession.recapAnswer(for: tf) == "g1-en")
+
+        let translation = try #require(scheduler.question(for: g, kind: .translation, pool: [g], optionCount: 3, rng: &rng))
+        #expect(translation.correctAnswer == "g1-fr" && LessonSession.recapAnswer(for: translation) == "g1-en")
+
+        let reversed = try #require(scheduler.question(for: pool[0], kind: .multipleChoice, variant: 1,
+                                                       pool: pool, optionCount: 3, rng: &rng))
+        #expect(reversed.isReversed && LessonSession.recapAnswer(for: reversed) == "g1-en")
+
+        let forward = try #require(scheduler.question(for: pool[0], kind: .multipleChoice,
+                                                      pool: pool, optionCount: 3, rng: &rng))
+        #expect(LessonSession.recapAnswer(for: forward) == "g1-en")
+
+        let fill = try #require(scheduler.question(for: g, kind: .fillBlank, pool: [g], optionCount: 3, rng: &rng))
+        #expect(fill.kind == .fillBlank && fill.prompt.contains(AnswerGrader.blankToken))
+        #expect(LessonSession.recapAnswer(for: fill) == "g1-en — g1-fr a b c d",
+                "the sentence with the blank filled, not the bare blank form")
+
+        let arrange = try #require(scheduler.question(for: g, kind: .arrange, pool: [g], optionCount: 3, rng: &rng))
+        #expect(arrange.kind == .arrange && LessonSession.recapAnswer(for: arrange) == "g1-en — g1-fr a b c d")
+        #expect(LessonSession.recapAnswer(for: scheduler.matchQuestion(for: pool)) == "g1-en")
+    }
+
+    /// End to end: a missed true/false leaves a recap line the learner can read.
+    @Test func aMissedTrueFalseRecapsTheMeaning() throws {
+        var g = gap("g1", reviewCount: 3, consecutiveCorrect: 1)
+        g.exampleSentence = "g1 example"   // the blank form does not occur: not blankable
+        var s = session(for: lesson([g]), config: config(hearts: 99))
+        let q = try #require(s.current)
+        #expect(q.kind == .trueFalse)
+        _ = try answerWrongly(&s)
+        let missed = try #require(s.summary.missed.first)
+        #expect(missed.kind == .trueFalse && missed.answer == "g1-en")
+    }
+
+    // MARK: lesson-6-3 — the persisted mistake log keeps the meaning
+
+    /// A true/false answers "True" or "False", so logging the submission verbatim
+    /// files a mistake that reads "~~True~~ / False" in Retention — no word, no
+    /// meaning, and it is the second question of every recall-level gap. What is
+    /// logged is the meaning pair the statement was really about.
+    @Test func trueFalseMissesAreLoggedAsAMeaningPair() throws {
+        let g = gap("g1")
+
+        // A false statement accepted: the learner took the distractor for the meaning.
+        var falseStatement = LessonQuestion(gap: g, kind: .trueFalse, prompt: "True or false?",
+                                            correctAnswer: "False", statement: "“g1-fr” means “g9-en”.")
+        falseStatement.claimedMeaning = "g9-en"
+        let accepted = LessonSession.loggedPair(for: falseStatement, given: "True")
+        #expect(accepted.given == "g9-en" && accepted.correct == "g1-en")
+
+        // A true statement rejected: the learner turned down the real meaning.
+        var trueStatement = LessonQuestion(gap: g, kind: .trueFalse, prompt: "True or false?",
+                                           correctAnswer: "True", statement: "“g1-fr” means “g1-en”.")
+        trueStatement.claimedMeaning = "g1-en"
+        let rejected = LessonSession.loggedPair(for: trueStatement, given: "False")
+        #expect(rejected.given == "not “g1-en”" && rejected.correct == "g1-en")
+
+        // Every other format already answers in its own words.
+        let mc = LessonQuestion(gap: g, kind: .multipleChoice, prompt: "What does “g1-fr” mean?",
+                                correctAnswer: "g1-en", options: ["g1-en", "g2-en"])
+        let picked = LessonSession.loggedPair(for: mc, given: "g2-en")
+        #expect(picked.given == "g2-en" && picked.correct == "g1-en")
+
+        // End to end: what the store would file for a missed true/false.
+        var s = LessonSession(lesson: lesson([g]), isCapstone: false, config: config())
+        s.start(with: [falseStatement])
+        let submitted = s.submit(.option("True"))
+        let outcome = try #require(submitted)
+        let evidence = try #require(outcome.evidence.first)
+        #expect(evidence.loggedAnswer == "g9-en" && evidence.correctAnswer == "g1-en")
+        #expect(evidence.loggedAnswer != "True" && evidence.correctAnswer != "False")
+    }
+
+    // MARK: lesson-4-3 / lesson-4-4 — what a lesson may teach before it asks
+
+    /// A word card (and the intro's meaning line) is withheld from anything the
+    /// lesson is about to TEST. A check-in is excluded by its ROLE, not by its
+    /// evidence: `ConceptSelector.checkInVehicle` falls back to a never-reviewed
+    /// gap, which is exactly what a provisional placement seed offers.
+    @Test func aCheckInVehicleIsNeverTaughtEvenWhenItHasNeverBeenReviewed() throws {
+        let fresh = gap("new")
+        let seedVehicle = gap("seed")                     // never reviewed, but checked in
+        let interleaved = gap("rev", reviewCount: 4, consecutiveCorrect: 2)
+        var probe = gap("pr")
+        probe.isProbe = true
+        let l = lesson([fresh, seedVehicle, interleaved, probe],
+                       roles: ["new": .target, "seed": .checkIn, "rev": .review, "pr": .probe])
+        let s = LessonSession(lesson: l, isCapstone: false, config: config())
+
+        #expect(seedVehicle.isNew, "the vehicle is never-reviewed — the old filter let it through")
+        #expect(s.teachableGaps.map(\.id) == ["new"])
+        #expect(s.teachingGaps.map(\.id) == ["new"])
+        #expect(s.mayTeach(fresh))
+        #expect(!s.mayTeach(seedVehicle) && !s.mayTeach(interleaved) && !s.mayTeach(probe))
+    }
+
+    // MARK: lesson-7-5 — no lesson asks about a word it never taught
+
+    /// Day one: every item is new, so every item is teachable — and every one of them
+    /// gets a word card. The card cap used to sit below the lesson size, so the last
+    /// new word of a full lesson was first met as "What does X mean?": a wrong guess
+    /// there cost a heart and booked a lapse on a word nothing had introduced.
+    @Test func everyTeachableItemOfAFullSizeLessonGetsAWordCard() throws {
+        #expect(Tuning.teachingWordCards >= max(Tuning.lessonSize, Tuning.scopedLessonSize),
+                "the cap must never drop a card for an item the lesson will ask about")
+        for size in [Tuning.lessonSize, Tuning.scopedLessonSize] {
+            let gaps = (1...size).map { gap("g\($0)") }
+            let s = session(for: lesson(gaps))
+            #expect(s.teachableGaps.count == size)
+            #expect(s.teachingGaps.map(\.id) == s.teachableGaps.map(\.id),
+                    "a \(size)-item lesson teaches all \(size)")
+        }
+    }
+
+    /// The cap itself still works — it is a ceiling on the teaching stage, not a
+    /// silent drop that only bites at full lesson size.
+    @Test func theWordCardCapTrimsTheTailWhenItIsSetBelowTheLesson() throws {
+        var cfg = config()
+        cfg.teachingWordCards = 2
+        let gaps = (1...4).map { gap("g\($0)") }
+        let s = session(for: lesson(gaps), config: cfg)
+        #expect(s.teachableGaps.count == 4)
+        #expect(s.teachingGaps.map(\.id) == ["g1", "g2"])
+    }
+
+    // MARK: lesson-7-4 — the X and the finish button book the same lesson
+
+    /// Closing a lesson whose last question is already answered is finishing it, not
+    /// abandoning it: the learner is on the same screen the "Finish" button leads
+    /// from, and booking it as a quit would cost them the day's lesson count and the
+    /// finishing XP.
+    @Test func quittingAfterTheLastAnswerFinishesTheLesson() throws {
+        let gaps = (1...3).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps))
+        while true {
+            _ = try answerCorrectly(&s)
+            if s.isLast { break }
+            #expect(s.endIfEndedNow == .quit, "mid-lesson, ending now is still a quit")
+            _ = s.advance()
+        }
+        #expect(s.endIfEndedNow == .finished)
+        s.quit()
+        let summary = s.summary
+        #expect(s.end == .finished && summary.end == .finished && summary.isCompleted)
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
+        #expect(store.xp == Tuning.xpPerLessonComplete)
+    }
+
+    /// A hearts-out lesson worked past `heartsOutCompletionFraction` counts toward the
+    /// day whichever control ends it: `quit()` leaves the hearts-out reason alone, so
+    /// the X on the recap books exactly what "See recap" books.
+    @Test func quittingAHeartsOutRecapBooksItAsTheRecapWould() throws {
+        let gaps = (1...4).map { gap("g\($0)") }
+        let store = EngineFixtures.store(concepts: [], gaps: gaps)
+        var s = session(for: lesson(gaps), config: config(hearts: 1))
+        while s.end == nil {
+            if s.isLast {
+                _ = try answerWrongly(&s)
+            } else {
+                _ = try answerCorrectly(&s)
+                _ = s.advance()
+            }
+        }
+        #expect(s.end == .outOfHearts && s.summary.isCompleted)
+        s.quit()
+        let summary = s.summary
+        #expect(summary.end == .outOfHearts, "quitting an ended lesson never rewrites its reason")
+        #expect(summary.isCompleted, "…so the X does not turn a counted lesson into an abandoned one")
+        _ = store.completeLesson(targetConceptId: nil, isCapstone: false,
+                                 abandoned: !summary.isCompleted, answered: summary.answered, now: now)
+        #expect(store.lessonsCompleted(on: now) == 1)
+    }
+}

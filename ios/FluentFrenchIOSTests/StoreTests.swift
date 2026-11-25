@@ -1,0 +1,2133 @@
+//
+//  StoreTests.swift
+//  FluentFrenchIOSTests
+//
+//  Package A — store & data safety: honest empty state, tolerant decoding,
+//  corrupt-blob preservation, complete resets, calendar-correct streaks,
+//  concept-grouped error patterns, the capture factory, the plan of record,
+//  XP / personal bests, coalesced persistence and probe exclusion.
+//
+
+import Foundation
+import Testing
+@testable import FluentFrenchIOS
+
+/// Counts how many times a store rebuilt its Foundation content (store-7-3).
+nonisolated final class ContentBuildCounter: @unchecked Sendable {
+    private(set) var count = 0
+    func bump() { count += 1 }
+}
+
+/// A throwaway UserDefaults suite that is wiped when the test ends.
+nonisolated final class ScratchDefaults {
+    let name: String
+    let defaults: UserDefaults
+
+    init() {
+        name = "ff.tests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+    }
+
+    deinit {
+        defaults.removePersistentDomain(forName: name)
+    }
+}
+
+@MainActor
+struct StoreTests {
+    private let now = EngineFixtures.now
+    private let day = EngineFixtures.day
+
+    private func encoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }
+
+    private func decoder() -> JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+
+    // MARK: talkmedia-3-1 — whose French a context quotes
+
+    @Test func aContextPersistedBeforeTheLearnerAuthoredFlagStillDecodesAsSourceFrench() throws {
+        // Every context written by an older build quotes French the learner MET,
+        // so the missing key has to read as `false` — not fail the decode and not
+        // relabel an article sentence as something the learner said.
+        let legacy = Data("""
+        {"sentence":"Il a plu toute la nuit.","sourceTab":"read","capturedAt":"2025-01-01T00:00:00Z","reExposureCount":2}
+        """.utf8)
+        let ctx = try decoder().decode(OriginalContext.self, from: legacy)
+        #expect(ctx.sentence == "Il a plu toute la nuit.")
+        #expect(ctx.reExposureCount == 2)
+        #expect(ctx.isLearnerAuthored == false)
+
+        // And the flag survives a round trip once it is set.
+        let mine = OriginalContext(sentence: "Je suis vingt-cinq ans", sourceTab: "converse",
+                                   capturedAt: now, reExposureCount: 0, isLearnerAuthored: true)
+        let round = try decoder().decode(OriginalContext.self, from: encoder().encode(mine))
+        #expect(round == mine)
+        #expect(round.isLearnerAuthored)
+    }
+
+    @Test func onlySourceFrenchIsOfferedToTheTaggerAsContext() {
+        var read = EngineFixtures.gap("g1", concept: nil)
+        read.exampleSentence = "example"
+        read.originalContext = OriginalContext(sentence: "Il a plu toute la nuit.", sourceTab: "read",
+                                               capturedAt: now, reExposureCount: 0)
+        #expect(read.contextForTagging == "Il a plu toute la nuit.", "French the learner met is real context")
+
+        var mine = read
+        mine.originalContext = OriginalContext(sentence: "Je suis vingt-cinq ans", sourceTab: "converse",
+                                               capturedAt: now, reExposureCount: 0, isLearnerAuthored: true)
+        #expect(mine.contextForTagging == "example", "the learner's own slip is not evidence of usage")
+
+        var blank = read
+        blank.originalContext = OriginalContext(sentence: "   ", sourceTab: "read", capturedAt: now, reExposureCount: 0)
+        #expect(blank.contextForTagging == "example")
+
+        var none = read
+        none.originalContext = nil
+        #expect(none.contextForTagging == "example")
+    }
+
+    // MARK: A1 / A3 — fresh install and empty-array authority
+
+    @Test func freshStoreIsHonestlyEmpty() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.gaps.isEmpty, "no sample gaps on a fresh install")
+        #expect(store.errors.isEmpty, "no sample errors on a fresh install")
+        #expect(store.masteryDays.isEmpty, "no fake streak on a fresh install")
+        #expect(store.currentStreak == 0)
+        #expect(store.longestStreak == 0)
+        #expect(store.xp == 0)
+        #expect(store.personalBests.isEmpty)
+        #expect(store.hasCompletedAssessment == false)
+        #expect(store.preferences == nil)
+        #expect(store.loadError == nil)
+        #expect(store.concepts.count == ConceptTaxonomy.seed().count)
+    }
+
+    @Test func emptyPersistedArraysAreAuthoritative() {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.gaps = [EngineFixtures.gap("keep", concept: nil)]
+        first.errors = [ErrorRecord(id: "e", gapId: "keep", category: .grammar, frenchWord: "x", userAnswer: "a",
+                                    correctAnswer: "b", conceptLabel: "L", occurredAt: now)]
+        first.save()
+        first.flush()
+        #expect(AppStore(persistence: scratch.defaults).gaps.count == 1)
+
+        first.gaps = []
+        first.errors = []
+        first.save()
+        first.flush()
+
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.gaps.isEmpty, "an empty gap list the learner produced stays empty")
+        #expect(reloaded.errors.isEmpty)
+        #expect(reloaded.loadError == nil)
+    }
+
+    // MARK: A2 — tolerant decoding and corrupt-blob preservation
+
+    @Test func oneBadElementIsDroppedNotTheWholeArray() throws {
+        let scratch = ScratchDefaults()
+        let good = EngineFixtures.gap("good", concept: nil)
+        let goodJSON = try JSONSerialization.jsonObject(with: encoder().encode(good))
+        let mixed: [Any] = [goodJSON, ["id": 42, "frenchWord": ["not", "a", "string"]]]
+        scratch.defaults.set(try JSONSerialization.data(withJSONObject: mixed), forKey: "ff.gaps.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.gaps.map { $0.id } == ["good"])
+        #expect(store.loadError == nil)
+    }
+
+    @Test func unreadableBlobIsPreservedAndWritesRefusedUntilAcknowledged() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("this is not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        #expect(store.loadError?.message.isEmpty == false)
+        #expect(store.canPushToCloud == false)
+        #expect(store.gaps.isEmpty)
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage)
+
+        store.gaps = [EngineFixtures.gap("new", concept: nil)]
+        store.save()
+        store.flush()
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1") == garbage, "a failed load never overwrites the blob")
+        #expect(store.hasPendingWrite, "the write stays pending, not lost")
+
+        store.acknowledgeLoadError(discard: true)
+        #expect(store.loadError == nil)
+        store.flush()
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1.corrupt") == nil, "discard removes the preserved copy")
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["new"])
+    }
+
+    @Test func keepingTheCorruptBlobSurvivesLaterWrites() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("{{{{".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.errors.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptErrors)
+        store.acknowledgeLoadError(discard: false)
+        store.recordError(gap: EngineFixtures.gap("g", concept: nil), userAnswer: "a", correctAnswer: "b", now: now)
+        store.flush()
+        #expect(scratch.defaults.data(forKey: "ff.errors.v1.corrupt") == garbage)
+        #expect(AppStore(persistence: scratch.defaults).errors.count == 1)
+    }
+
+    // MARK: store-9-1 — a sign-out never destroys the preserved unreadable copy
+
+    /// The recovery screen's "Sign out" is a force sign-out: the backup could not be
+    /// verified, so the readable part goes with it. The unreadable copy belongs to
+    /// the device rather than to the account, and it is the last remaining trace of
+    /// the record — it stays.
+    @Test func signingOutKeepsThePreservedUnreadableCopy() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage)
+
+        store.clearForSignOut()
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage,
+                "a sign-out never deletes the unreadable copy")
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.loadError == nil, "and the wiped record reads cleanly next launch")
+        #expect(reloaded.corruptBlob(for: .corruptGaps) == garbage)
+    }
+
+    /// The two deliberate wipes still take it: an explicit "erase everything", and
+    /// another learner taking the device over (nothing of the previous one lingers).
+    @Test func deliberateWipesDiscardThePreservedUnreadableCopy() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        store.acknowledgeLoadError(discard: false)
+        store.resetProgress()
+        #expect(store.corruptBlob(for: .corruptGaps) == nil, "an explicit reset erases everything")
+
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1.corrupt")
+        store.beginSession(userId: "user-1")
+        #expect(store.corruptBlob(for: .corruptGaps) == garbage, "the same device, no new learner")
+        store.beginSession(userId: "user-2")
+        #expect(store.corruptBlob(for: .corruptGaps) == nil,
+                "another learner's device record leaves nothing behind")
+    }
+
+    @Test func oldGapJSONWithoutNewKeysDecodesWithDefaults() throws {
+        var gap = EngineFixtures.gap("old", concept: "c")
+        gap.isProbe = true
+        gap.isTestable = false
+        gap.needsTranslation = true
+        gap.blankForm = "x"
+        gap.acceptedAnswers = ["y"]
+        gap.tagConfidence = 0.4
+        var object = try #require(JSONSerialization.jsonObject(with: encoder().encode(gap)) as? [String: Any])
+        for key in ["isProbe", "blankForm", "acceptedAnswers", "isTestable", "tagConfidence", "needsTranslation"] {
+            object.removeValue(forKey: key)
+        }
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try decoder().decode(GapItem.self, from: data)
+        #expect(decoded.id == "old")
+        #expect(decoded.conceptId == "c")
+        #expect(decoded.isProbe == false)
+        #expect(decoded.isTestable == true)
+        #expect(decoded.needsTranslation == false)
+        #expect(decoded.blankForm == nil)
+        #expect(decoded.acceptedAnswers == nil)
+        #expect(decoded.tagConfidence == nil)
+
+        // And the new fields round-trip when present.
+        let roundTrip = try decoder().decode(GapItem.self, from: encoder().encode(gap))
+        #expect(roundTrip == gap)
+    }
+
+    // MARK: A4 — complete resets
+
+    private func fillEverything(_ store: AppStore) {
+        store.gaps = [EngineFixtures.gap("g", concept: nil)]
+        store.concepts[0].alpha = 9
+        store.errors = [ErrorRecord(id: "e", gapId: "g", category: .grammar, frenchWord: "x", userAnswer: "a",
+                                    correctAnswer: "b", conceptLabel: "L", occurredAt: now)]
+        store.abilityTheta = 1.7
+        store.masteryDays = ["2026-01-01"]
+        store.hasCompletedAssessment = true
+        store.assessedLevel = .B2
+        store.sessionIndex = 9
+        store.preferences = .default
+        store.recordActivityMinutes(.reading, minutes: 5, now: now)
+        store.recordLessonMinutes(4, now: now)
+        store.gapsSinceLastLesson = 3
+        store.lessonsSinceCapstone = 2
+        store.xp = 500
+        store.recordLessonBest(kind: .smart, accuracy: 0.9, streak: 5, now: now)
+        _ = store.planForToday(now: now) { DailyPlan(items: [], rationale: "r", isColdStart: true) }
+        store.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+    }
+
+    private func expectEmpty(_ store: AppStore) {
+        #expect(store.gaps.isEmpty)
+        #expect(store.concepts.allSatisfy { $0.alpha == 1 && $0.beta == 1 })
+        #expect(store.concepts.count == ConceptTaxonomy.seed().count)
+        #expect(store.errors.isEmpty)
+        #expect(store.abilityTheta == Tuning.defaultAbilityTheta)
+        #expect(store.masteryDays.isEmpty)
+        #expect(store.hasCompletedAssessment == false)
+        #expect(store.assessedLevel == .A1)
+        #expect(store.sessionIndex == 0)
+        #expect(store.preferences == nil)
+        #expect(store.activityProgress.isEmpty)
+        #expect(store.lifetimeMinutes.isEmpty)
+        #expect(store.lessonMinutes.isEmpty)
+        #expect(store.totalLessonMinutes == 0)
+        #expect(store.lessonsCompletedByDay.isEmpty)
+        #expect(store.gapsSinceLastLesson == 0)
+        #expect(store.lessonsSinceCapstone == 0)
+        #expect(store.xp == 0)
+        #expect(store.personalBests.isEmpty)
+        #expect(store.dailyPlanOfRecord == nil)
+        #expect(store.dailyPlanDayKey == nil)
+        #expect(store.loadError == nil)
+    }
+
+    @Test func resetProgressClearsEveryFieldAndPersists() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        fillEverything(store)
+        store.resetProgress()
+        expectEmpty(store)
+        #expect(store.localUpdatedAt != nil, "a reset is learner activity: it must win newest-wins and clear the cloud too")
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.gaps.isEmpty)
+        #expect(reloaded.masteryDays.isEmpty)
+        #expect(reloaded.xp == 0)
+        #expect(reloaded.preferences == nil)
+        #expect(reloaded.hasCompletedAssessment == false)
+    }
+
+    @Test func clearForSignOutClearsEveryFieldWithoutMarkingActivity() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        fillEverything(store)
+        store.clearForSignOut()
+        expectEmpty(store)
+        #expect(store.localUpdatedAt == nil, "a sign-out is not learner activity")
+        #expect(AppStore(persistence: scratch.defaults).gaps.isEmpty)
+    }
+
+    @Test func firstRunPlacementStartsTheRecordFromZero() {
+        let store = EngineFixtures.store()
+        fillEverything(store)
+        // Pre-placement leftovers on a device that has never been placed.
+        store.hasCompletedAssessment = false
+        let result = PlacementResult(vocabBand: 3, grammarBand: 3, estimatedLevel: .B1, isTrueBeginner: false,
+                                     masteredConceptIds: Array(ConceptTaxonomy.baseConceptIds),
+                                     missedGaps: [EngineFixtures.gap("missed", concept: nil)], askedCount: 8,
+                                     correctCount: 6)
+        store.applyPlacement(result, isFirstRun: true)
+        #expect(store.hasCompletedAssessment)
+        #expect(store.assessedLevel == .B1)
+        #expect(store.masteryDays.isEmpty)
+        #expect(store.activityProgress.isEmpty)
+        #expect(store.xp == 0)
+        #expect(store.sessionIndex == 0)
+        #expect(store.lessonsSinceCapstone == 0)
+        // Every base concept was seeded, but seeds are provisional and never count
+        // toward coverage (B8): the learner starts in Foundation, so the missed gap
+        // leads and the Foundation slice follows it.
+        #expect(store.isInFoundation && store.unlockedModalities.isEmpty)
+        #expect(store.gaps.first?.id == "missed")
+        #expect(store.gaps.filter { $0.id == "missed" }.count == 1)
+        #expect(store.errors.isEmpty)
+    }
+
+    // MARK: A7 — a "first run" placement never wipes an already-placed record
+
+    /// A foreground reconcile applied a snapshot that placed the learner on
+    /// another device while the first-run assessment was still on screen. Tapping
+    /// Finish must not start the record from zero (and push that over the
+    /// account): the result is applied as a retake — level updated, fresh missed
+    /// gaps added, everything else intact.
+    @Test func firstRunPlacementOnAnAlreadyPlacedStoreBehavesLikeARetake() {
+        let store = EngineFixtures.store()
+        fillEverything(store)
+        store.hasCompletedAssessment = true
+        store.xp = 100
+        store.masteryDays = ["2026-01-01", "2026-01-02"]
+        let existingGapIds = store.gaps.map { $0.id }
+        let bestsBefore = store.personalBests
+        let sessionBefore = store.sessionIndex
+        let lessonsBefore = store.lessonsSinceCapstone
+
+        let result = PlacementResult(vocabBand: 2, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                     masteredConceptIds: [],
+                                     missedGaps: [EngineFixtures.gap("missed", concept: nil)], askedCount: 8,
+                                     correctCount: 4)
+        store.applyPlacement(result, isFirstRun: true, now: now)
+
+        #expect(store.hasCompletedAssessment)
+        // D8: a retake only adds evidence — the level and ability the learner
+        // already earned (B2 / theta 1.7) are never lowered by a weaker result.
+        #expect(store.assessedLevel == .B2, "a retake never demotes the earned level")
+        #expect(store.abilityTheta == 1.7, "practice-grown ability survives a weaker retake")
+        #expect(store.xp == 100, "XP is not wiped")
+        #expect(store.masteryDays == ["2026-01-01", "2026-01-02"], "the streak is not wiped")
+        #expect(store.personalBests == bestsBefore)
+        #expect(store.sessionIndex == sessionBefore)
+        #expect(store.lessonsSinceCapstone == lessonsBefore)
+        #expect(!store.errors.isEmpty, "mistake history survives")
+        #expect(store.gaps.map { $0.id } == ["missed"] + existingGapIds, "fresh missed gaps are added, existing ones kept")
+        #expect(!store.activityProgress.isEmpty)
+    }
+
+    // MARK: A11 — calendar-correct streaks across DST
+
+    @Test func streakWalksCalendarDaysAcrossSpringForward() throws {
+        let store = EngineFixtures.store()
+        var calendar = Calendar(identifier: .gregorian)
+        let zone = try #require(TimeZone(identifier: "America/New_York"))
+        calendar.timeZone = zone
+        store.calendar = calendar
+
+        // US DST starts 2026-03-08 (02:00 → 03:00): that day is 23 hours long.
+        func local(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int) -> Date {
+            calendar.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+        }
+        store.masteryDays = ["2026-03-06", "2026-03-07", "2026-03-08"]
+
+        // 00:30 on the day after the transition; today is empty, so the streak is
+        // the three days before it. 86 400-second stepping lands on 23:30 Mar 7 and
+        // skips Mar 8 entirely.
+        #expect(store.currentStreak(now: local(2026, 3, 9, 0, 30)) == 3)
+        #expect(store.currentStreak(now: local(2026, 3, 8, 23, 30)) == 3)
+        #expect(store.practisedOn(local(2026, 3, 8, 0, 10)))
+        #expect(store.practisedOn(local(2026, 3, 8, 23, 50)))
+        #expect(!store.practisedOn(local(2026, 3, 9, 0, 10)))
+        #expect(store.dayKey(local(2026, 3, 8, 2, 30)) == "2026-03-08", "the skipped hour still belongs to Mar 8")
+        #expect(store.longestStreak == 3)
+
+        // Fall back (2026-11-01, 25-hour day): the streak still counts each day once.
+        store.masteryDays = ["2026-10-31", "2026-11-01", "2026-11-02"]
+        #expect(store.currentStreak(now: local(2026, 11, 2, 1, 30)) == 3)
+        #expect(store.longestStreak == 3)
+        // A gap breaks it.
+        store.masteryDays = ["2026-10-30", "2026-11-01", "2026-11-02"]
+        #expect(store.currentStreak(now: local(2026, 11, 2, 12, 0)) == 2)
+        #expect(store.longestStreak == 2)
+    }
+
+    @Test func dayKeyIsLocaleIndependentAndParsesBack() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let key = DayKey.key(for: now, calendar: calendar)
+        #expect(key.count == 10)
+        let parsed = try #require(DayKey.date(from: key, calendar: calendar))
+        #expect(DayKey.key(for: parsed, calendar: calendar) == key)
+        #expect(DayKey.date(from: "garbage", calendar: calendar) == nil)
+    }
+
+    // MARK: A12 — error patterns grouped by concept
+
+    @Test func errorPatternsGroupByConceptWithWordFallback() {
+        let g = EngineFixtures.smallGraph()
+        let s = g.store
+        let root2 = s.gaps.first { $0.id == "root-2" }!
+        let root4 = s.gaps.first { $0.id == "root-4" }!
+        var orphan = EngineFixtures.gap("orphan", concept: nil)
+        orphan.frenchWord = "Orphelin"
+        s.gaps.append(orphan)
+
+        s.recordError(gap: root2, userAnswer: "a", correctAnswer: "b", now: now)
+        s.recordError(gap: root4, userAnswer: "a", correctAnswer: "b", now: now.addingTimeInterval(60))
+        s.recordError(gap: orphan, userAnswer: "a", correctAnswer: "b", now: now)
+
+        let patterns = s.errorPatterns
+        #expect(patterns.count == 2)
+        let rootPattern = patterns.first { $0.id == "root" }
+        #expect(rootPattern?.count == 2)
+        #expect(rootPattern?.conceptLabel == "Concept root", "labelled with the concept's name, not a word")
+        #expect(rootPattern?.records.first?.id == s.errors.first { $0.gapId == "root-4" }?.id, "newest first")
+        #expect(rootPattern?.headline.contains("2 mistakes") == true)
+        let wordPattern = patterns.first { $0.id == "word:orphelin" }
+        #expect(wordPattern?.count == 1)
+        #expect(wordPattern?.conceptLabel == "Orphelin")
+        #expect(patterns.first?.id == "root", "largest group first")
+
+        // Records persisted before `conceptId` existed group by the gap's current concept.
+        s.errors = [ErrorRecord(id: "legacy", gapId: "root-1", category: .grammar, frenchWord: "x", userAnswer: "a",
+                                correctAnswer: "b", conceptLabel: "old label", occurredAt: now)]
+        #expect(s.errorPatterns.first?.id == "root")
+    }
+
+    @Test func errorHistoryIsCapped() {
+        let s = EngineFixtures.store()
+        let gap = EngineFixtures.gap("g", concept: nil)
+        for i in 0..<(Tuning.errorHistoryCap + 25) {
+            s.recordError(gap: gap, userAnswer: "\(i)", correctAnswer: "b", now: now.addingTimeInterval(Double(i)))
+        }
+        #expect(s.errors.count == Tuning.errorHistoryCap)
+        #expect(s.errors.first?.userAnswer == "\(Tuning.errorHistoryCap + 24)", "newest are kept")
+    }
+
+    // MARK: A16 — capture factory and dedupe
+
+    @Test func capturedGapsStartScheduledAndDedupeOnHeadword() {
+        let s = EngineFixtures.store()
+        let gap = s.makeCapturedGap(frenchWord: "  Bonjour ", englishTranslation: "hello", sourceType: .reading,
+                                    category: .register, cefrLevel: .B1, difficulty: .hard, now: now)
+        #expect(gap.frenchWord == "Bonjour")
+        #expect(gap.fsrs != nil, "never a nil FSRS state")
+        #expect(gap.fsrs?.dueAt == now)
+        #expect(gap.nextReviewAt == now)
+        #expect(gap.createdAt == now)
+        #expect(gap.cefrLevel == .B1)
+        #expect(gap.irtDifficulty == Tuning.irtDifficulty(for: .B1) + Tuning.irtHardBump)
+        #expect(gap.reviewCount == 0 && gap.consecutiveCorrect == 0 && gap.masteredAt == nil)
+        #expect(!gap.id.isEmpty)
+
+        #expect(s.captureGap(gap))
+        #expect(s.gaps.count == 1)
+        #expect(s.gapsSinceLastLesson == 1)
+        let dup = s.makeCapturedGap(frenchWord: "bonjour", englishTranslation: "hi", sourceType: .listening, now: now)
+        #expect(!s.captureGap(dup), "same headword, case-insensitive → rejected")
+        #expect(s.gaps.count == 1)
+        #expect(s.hasGap(forWord: "BONJOUR"))
+
+        // Level defaults to the learner's own level when the capture site has none.
+        let leveled = s.makeCapturedGap(frenchWord: "merci", englishTranslation: "thanks", sourceType: .speech, now: now)
+        #expect(leveled.cefrLevel == s.learnerLevel)
+        #expect(leveled.irtDifficulty == Tuning.irtDifficulty(for: s.learnerLevel))
+    }
+
+    // MARK: D14 — plan of record
+
+    @Test func planOfRecordIsComputedOncePerDayAndRollsOver() {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        var computeCount = 0
+        func compute() -> DailyPlan {
+            computeCount += 1
+            return DailyPlan(items: [DailyPlanItem(modality: .reading, targetMinutes: 10 * computeCount)],
+                             rationale: "plan \(computeCount)", isColdStart: false)
+        }
+        let first = s.planForToday(now: now, compute: compute)
+        let again = s.planForToday(now: now.addingTimeInterval(3600), compute: compute)
+        #expect(computeCount == 1)
+        #expect(again == first)
+        #expect(s.dailyPlanDayKey == s.dayKey(now))
+        #expect(s.localUpdatedAt == nil, "a cache is not learner activity")
+
+        // Survives a relaunch.
+        s.flush()
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.dailyPlanOfRecord == first)
+        #expect(reloaded.dailyPlanDayKey == s.dayKey(now))
+
+        // Next day → recomputed once.
+        let tomorrow = s.calendar.date(byAdding: .day, value: 1, to: now)!
+        let next = s.planForToday(now: tomorrow, compute: compute)
+        #expect(computeCount == 2)
+        #expect(next.rationale == "plan 2")
+
+        // Explicit refresh.
+        s.refreshPlan()
+        #expect(s.dailyPlanOfRecord == nil)
+        let refreshed = s.refreshPlan(now: tomorrow, compute: compute)
+        #expect(computeCount == 3)
+        #expect(refreshed.rationale == "plan 3")
+    }
+
+    // MARK: A16 — XP, bests, lesson minutes, lesson counters
+
+    @Test func xpAndPersonalBestsPersist() {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.awardXP(Tuning.xpPerCorrect)
+        s.awardXP(-5)
+        #expect(s.xp == Tuning.xpPerCorrect)
+        #expect(s.recordLessonBest(kind: .smart, accuracy: 0.8, streak: 3, now: now))
+        #expect(!s.recordLessonBest(kind: .smart, accuracy: 0.7, streak: 9, now: now), "lower accuracy is not a best")
+        #expect(s.recordLessonBest(kind: .smart, accuracy: 0.8, streak: 4, now: now), "same accuracy, longer streak")
+        #expect(s.recordLessonBest(kind: .capstone, accuracy: 0.5, streak: 1, now: now), "kinds are independent")
+        #expect(s.personalBest(for: .scoped) == nil)
+        s.flush()
+
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.xp == Tuning.xpPerCorrect)
+        #expect(reloaded.personalBest(for: .smart)?.accuracy == 0.8)
+        #expect(reloaded.personalBest(for: .smart)?.streak == 4)
+        #expect(reloaded.personalBest(for: .capstone)?.accuracy == 0.5)
+    }
+
+    @Test func completeLessonAwardsXPCountsTheDayAndResetsTheTrigger() {
+        let s = EngineFixtures.store()
+        s.gapsSinceLastLesson = 4
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.xp == Tuning.xpPerLessonComplete)
+        #expect(s.lessonsCompleted(on: now) == 1)
+        #expect(s.gapsSinceLastLesson == 0, "markLessonOffered runs inside completeLesson")
+        #expect(s.sessionIndex == 1)
+        #expect(s.lessonsSinceCapstone == 1)
+
+        s.completeLesson(targetConceptId: nil, isCapstone: true, now: now)
+        #expect(s.xp == 2 * Tuning.xpPerLessonComplete + Tuning.xpCapstoneBonus)
+        #expect(s.lessonsSinceCapstone == 0)
+        #expect(s.lessonsCompleted(on: now) == 2)
+
+        // Abandoned with answers: bookkeeping, no completion XP, not a lesson done —
+        // and it does not advance the capstone cadence (firstrun-5-1): quitting or
+        // running out of hearts must never bring the capstone forward.
+        s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 2, now: now)
+        #expect(s.sessionIndex == 3)
+        #expect(s.lessonsSinceCapstone == 0)
+        #expect(s.lessonsCompleted(on: now) == 2)
+        #expect(s.xp == 2 * Tuning.xpPerLessonComplete + Tuning.xpCapstoneBonus)
+
+        // Abandoned with nothing answered: a no-op.
+        s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 0, now: now)
+        #expect(s.sessionIndex == 3)
+    }
+
+    /// firstrun-5-1: the capstone is a delayed mixed test of what stuck, so only a
+    /// lesson played to the end may walk the cadence toward it. Four hearts-out or
+    /// quit lessons used to make Home offer a capstone to a learner who had
+    /// completed nothing and retained least.
+    @Test func abandonedLessonsNeverWalkTheCapstoneCadence() {
+        let s = EngineFixtures.store()
+        for _ in 0..<Tuning.capstoneEveryNLessons {
+            s.completeLesson(targetConceptId: nil, isCapstone: false, abandoned: true, answered: 3, now: now)
+        }
+        #expect(s.sessionIndex == Tuning.capstoneEveryNLessons, "the sessions still happened")
+        #expect(s.lessonsCompleted(on: now) == 0)
+        #expect(s.lessonsSinceCapstone == 0, "no capstone is offered on abandoned lessons alone")
+        #expect(s.lessonsSinceCapstone < Tuning.capstoneEveryNLessons)
+
+        // Lessons played to the end do walk it, and reaching the cadence is what
+        // Home reads to offer the capstone.
+        for _ in 0..<Tuning.capstoneEveryNLessons {
+            s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        }
+        #expect(s.lessonsSinceCapstone == Tuning.capstoneEveryNLessons)
+        // A capstone resets the cadence whether or not it was finished.
+        s.completeLesson(targetConceptId: nil, isCapstone: true, abandoned: true, answered: 2, now: now)
+        #expect(s.lessonsSinceCapstone == 0)
+    }
+
+    @Test func lessonMinutesAndActivityHistoryArePrunedButTotalsSurvive() {
+        let s = EngineFixtures.store()
+        let old = s.calendar.date(byAdding: .day, value: -(Tuning.activityHistoryDays + 5), to: now)!
+        s.recordActivityMinutes(.reading, minutes: 30, now: old)
+        s.recordLessonMinutes(7, now: old)
+        s.recordActivityMinutes(.reading, minutes: 5, now: now)
+        s.recordLessonMinutes(3, now: now)
+        #expect(s.activityProgress.count == 1, "the stale bucket is pruned")
+        #expect(s.lessonMinutes.count == 1)
+        #expect(s.totalMinutes(.reading) == 35, "lifetime minutes are never pruned")
+        #expect(s.totalLessonMinutes == 10)
+        #expect(s.lessonMinutes[s.dayKey(now)] == 3)
+    }
+
+    @Test func lifetimeMinutesMigrateFromLegacyBuckets() throws {
+        let scratch = ScratchDefaults()
+        let legacy = ["2026-05-01|reading": 12, "2026-05-02|reading": 8, "2026-05-02|listening": 4]
+        scratch.defaults.set(try JSONEncoder().encode(legacy), forKey: "ff.activityProgress.v1")
+        let s = AppStore(persistence: scratch.defaults)
+        #expect(s.totalMinutes(.reading) == 20)
+        #expect(s.totalMinutes(.listening) == 4)
+    }
+
+    // MARK: A9 — coalesced persistence
+
+    @Test func saveIsCoalescedAndFlushWritesImmediately() async throws {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.gaps = [EngineFixtures.gap("a", concept: nil)]
+        s.save()
+        #expect(s.hasPendingWrite)
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1") == nil, "nothing is encoded synchronously")
+        // Poll rather than assume scheduling order: other main-actor tests (the
+        // multi-day simulations) can delay the coalesced write's continuation.
+        for _ in 0..<40 where s.hasPendingWrite {
+            try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval))
+        }
+        #expect(!s.hasPendingWrite)
+        #expect(AppStore(persistence: scratch.defaults).gaps.count == 1)
+
+        s.gaps.append(EngineFixtures.gap("b", concept: nil))
+        s.save()
+        s.flush()
+        #expect(!s.hasPendingWrite)
+        #expect(AppStore(persistence: scratch.defaults).gaps.count == 2)
+        #expect(s.localUpdatedAt != nil)
+    }
+
+    // MARK: store-5-1 — the big blobs are encoded off the MainActor
+
+    @Test func explicitFlushPersistsTheBigBlobsSynchronously() {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.gaps = [EngineFixtures.gap("a", concept: nil)]
+        s.save()
+        s.flush()
+        // No await here on purpose: ContentView calls `flush()` from `.background`
+        // and the app can be suspended the instant it returns, so an explicit
+        // flush must leave nothing encoding in the background (store-5-1).
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1") != nil)
+        #expect(scratch.defaults.data(forKey: "ff.concepts.v1") != nil)
+        #expect(scratch.defaults.data(forKey: "ff.errors.v1") != nil)
+        #expect(!s.hasPendingWrite)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["a"])
+    }
+
+    @Test func coalescedWriteStaysPendingUntilTheBlobsAreOnDisk() async throws {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.gaps = [EngineFixtures.gap("a", concept: nil)]
+        s.save()
+        #expect(s.hasPendingWrite)
+        for _ in 0..<40 where s.hasPendingWrite {
+            try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval))
+        }
+        // `hasPendingWrite` covers the background encode too, so when it clears the
+        // gaps blob really is written — the lifecycle hook can trust it.
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1") != nil)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["a"])
+    }
+
+    @Test func aBackgroundBlobEncodeNeverOverwritesNewerState() async throws {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        for i in 0..<4 {
+            s.gaps = [EngineFixtures.gap("g\(i)", concept: nil)]
+            s.save()
+            try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval))
+        }
+        s.gaps = [EngineFixtures.gap("final", concept: nil)]
+        s.save()
+        s.flush()
+        #expect(!s.hasPendingWrite)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["final"])
+        // Give anything still encoding every chance to land late.
+        try await Task.sleep(for: .seconds(Tuning.saveCoalesceInterval * 4))
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["final"],
+                "a stale background encode never lands on top of a newer inline write")
+    }
+
+    @Test func snapshotApplyClearsLoadErrorAndKeepsCorruptCopy() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("nope".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+        let s = AppStore(persistence: scratch.defaults)
+        #expect(s.loadError == .corruptGaps)
+        s.xp = 40
+        var snapshot = s.makeSnapshot()
+        #expect(snapshot.xp == 40, "XP travels in the snapshot")
+        snapshot.gaps = [EngineFixtures.gap("cloud", concept: nil)]
+        snapshot.xp = 120
+        s.apply(snapshot: snapshot)
+        #expect(s.loadError == nil)
+        #expect(s.gaps.map { $0.id } == ["cloud"])
+        #expect(s.xp == 120)
+        snapshot.xp = nil
+        s.apply(snapshot: snapshot)
+        #expect(s.xp == 120, "a pre-XP row keeps the device's XP")
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1.corrupt") == garbage)
+        #expect(AppStore(persistence: scratch.defaults).gaps.map { $0.id } == ["cloud"])
+    }
+
+    // MARK: A6 — everything sign-out wipes travels in the snapshot
+
+    /// Sign out (backup, wipe), sign back in (apply the row): personal bests,
+    /// lifetime / lesson minutes, lessons-per-day, the governor window, unlocked
+    /// modalities and the journey start all come back. A row from a build that
+    /// predates these fields leaves the device values alone.
+    @Test func snapshotRoundTripsEverythingSignOutWipes() throws {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        fillEverything(store)
+        store.checkInHistory = [true, false, true]
+        // Unlocks travel with the coverage that earned them: a bookkeeping point
+        // (load, snapshot) re-locks reading only when VERIFIED coverage has fallen
+        // below the bridge (B8), so the fixture holds enough verified base mastery.
+        let base = Array(ConceptTaxonomy.baseConceptIds).sorted()
+        let needed = Int((Double(base.count) * ReadinessConfig.tuning.readingUnlock).rounded(.up))
+        for cid in base.prefix(needed) {
+            let idx = store.concepts.firstIndex { $0.id == cid }!
+            store.concepts[idx].alpha = 9
+            store.concepts[idx].beta = 1
+            store.concepts[idx].observationCount = 8
+        }
+        #expect(store.baseCoverage >= ReadinessConfig.tuning.readingUnlock)
+        store.unlockedModalities = ["reading", "listening"]
+        store.journeyStartedAt = now.addingTimeInterval(-10 * day)
+        let bests = store.personalBests
+        let lifetime = store.lifetimeMinutes
+        let lessonMinutes = store.lessonMinutes
+        let totalLessonMinutes = store.totalLessonMinutes
+        let lessonsByDay = store.lessonsCompletedByDay
+        #expect(!bests.isEmpty && !lifetime.isEmpty && !lessonMinutes.isEmpty && totalLessonMinutes > 0 && !lessonsByDay.isEmpty)
+
+        // The row survives an encode/decode like the cloud column does.
+        let snapshot = try decoder().decode(ProgressSnapshot.self, from: encoder().encode(store.makeSnapshot()))
+        #expect(snapshot.personalBests == bests)
+        #expect(snapshot.lifetimeMinutes == lifetime)
+        #expect(snapshot.totalLessonMinutes == totalLessonMinutes)
+        #expect(snapshot.lessonMinutes == lessonMinutes)
+        #expect(snapshot.lessonsCompletedByDay == lessonsByDay)
+        #expect(snapshot.checkInHistory == [true, false, true])
+        #expect(snapshot.unlockedModalities == ["listening", "reading"])
+        #expect(snapshot.journeyStartedAt == now.addingTimeInterval(-10 * day))
+
+        store.clearForSignOut()
+        expectEmpty(store)
+        #expect(store.checkInHistory.isEmpty && store.unlockedModalities.isEmpty && store.journeyStartedAt == nil)
+
+        store.apply(snapshot: snapshot)
+        #expect(store.personalBests == bests)
+        #expect(store.lifetimeMinutes == lifetime)
+        #expect(store.totalLessonMinutes == totalLessonMinutes)
+        #expect(store.lessonMinutes == lessonMinutes)
+        #expect(store.lessonsCompletedByDay == lessonsByDay)
+        #expect(store.checkInHistory == [true, false, true])
+        #expect(store.unlockedModalities == ["reading", "listening"])
+        #expect(store.journeyStartedAt == now.addingTimeInterval(-10 * day))
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.personalBests == bests)
+        #expect(reloaded.totalLessonMinutes == totalLessonMinutes)
+        #expect(reloaded.unlockedModalities == ["reading", "listening"])
+
+        // A row written before these fields existed keeps what the device has.
+        var old = snapshot
+        old.personalBests = nil
+        old.lifetimeMinutes = nil
+        old.totalLessonMinutes = nil
+        old.lessonMinutes = nil
+        old.lessonsCompletedByDay = nil
+        old.checkInHistory = nil
+        old.unlockedModalities = nil
+        old.journeyStartedAt = nil
+        let legacy = try decoder().decode(ProgressSnapshot.self, from: encoder().encode(old))
+        store.apply(snapshot: legacy)
+        #expect(store.personalBests == bests)
+        #expect(store.totalLessonMinutes == totalLessonMinutes)
+        #expect(store.checkInHistory == [true, false, true])
+        #expect(store.unlockedModalities == ["reading", "listening"])
+        #expect(store.journeyStartedAt == now.addingTimeInterval(-10 * day))
+    }
+
+    // MARK: store-2-3 — saved scenario guides are part of the record
+
+    /// A guide the learner saves must look like a change to the record: written
+    /// to the shared key, dirty, sync clock moved, and carried in the next
+    /// snapshot. Writing the key straight from the view left the device looking
+    /// clean, so the guide was never uploaded and the next reconcile applied the
+    /// account's older blob over it.
+    @Test func savingScenarioGuidesMarksTheRecordDirtyAndTravelsInTheSnapshot() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.save()
+        store.flush()
+        let before = store.localUpdatedAt
+
+        let blob = Data("[{\"id\":\"guide-1\"}]".utf8)
+        store.setSavedScenarios(blob)
+
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == blob)
+        #expect(store.hasPendingWrite, "the guide marks the record dirty")
+        #expect(store.makeSnapshot().savedScenarios == blob, "and travels to the account")
+        if let before, let after = store.localUpdatedAt {
+            #expect(after >= before, "the sync clock moves, so the device is the newer side")
+        } else {
+            Issue.record("the guide should have set a sync clock")
+        }
+    }
+
+    /// The other half: a snapshot that carries guides replaces the device blob,
+    /// so a restore on a new device brings the saved guides back.
+    @Test func appliedSnapshotRestoresSavedScenarioGuides() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.setSavedScenarios(Data("[]".utf8))
+        store.flush()
+
+        var remote = store.makeSnapshot()
+        remote.savedScenarios = Data("[{\"id\":\"from-cloud\"}]".utf8)
+        remote.clientUpdatedAt = now
+        store.apply(snapshot: remote)
+
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == Data("[{\"id\":\"from-cloud\"}]".utf8))
+    }
+
+    // MARK: Recovery — the sequence CloudSync.restoreFromAccount drives
+
+    /// "Restore from my account": the gutted post-load state is replaced by the
+    /// account row, the preserved unreadable copy is deleted, and the reloaded
+    /// store holds the account's data — never the gutted state.
+    @Test func restoreFromAccountDiscardingTheUnreadableCopy() throws {
+        let scratch = ScratchDefaults()
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.gaps.v1")
+        scratch.defaults.set(now.addingTimeInterval(-day).timeIntervalSince1970, forKey: "ff.localUpdatedAt.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        #expect(store.gaps.isEmpty, "the corrupt blob loads as an empty list")
+        #expect(store.localUpdatedAt != nil, "the persisted clock survives the failed load")
+
+        // The account row: what the learner actually has.
+        var remote = store.makeSnapshot()
+        remote.gaps = [EngineFixtures.gap("cloud-1", concept: nil), EngineFixtures.gap("cloud-2", concept: nil)]
+        remote.xp = 300
+        remote.clientUpdatedAt = now
+
+        store.acknowledgeLoadError(discard: true)
+        store.apply(snapshot: remote)
+
+        #expect(store.loadError == nil)
+        #expect(store.canPushToCloud)
+        #expect(store.gaps.map { $0.id } == ["cloud-1", "cloud-2"])
+        #expect(store.xp == 300)
+        #expect(store.localUpdatedAt == now, "the device clock is the row's clock after a restore")
+        #expect(scratch.defaults.data(forKey: "ff.gaps.v1.corrupt") == nil, "discard removes the preserved copy")
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.loadError == nil)
+        #expect(reloaded.gaps.map { $0.id } == ["cloud-1", "cloud-2"])
+    }
+
+    /// "Restore, but keep the unreadable copy": same restore, the corrupt blob
+    /// stays on the device for support and does not affect the next launch.
+    @Test func restoreFromAccountKeepingTheUnreadableCopy() {
+        let scratch = ScratchDefaults()
+        let garbage = Data("{{{{".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.errors.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptErrors)
+        var remote = store.makeSnapshot()
+        remote.gaps = [EngineFixtures.gap("cloud", concept: nil)]
+        remote.errors = []
+
+        store.acknowledgeLoadError(discard: false)
+        store.apply(snapshot: remote)
+
+        #expect(store.loadError == nil)
+        #expect(store.gaps.map { $0.id } == ["cloud"])
+        #expect(scratch.defaults.data(forKey: "ff.errors.v1.corrupt") == garbage, "the copy is kept for support")
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.loadError == nil, "a kept copy never re-triggers recovery")
+        #expect(reloaded.gaps.map { $0.id } == ["cloud"])
+    }
+
+    /// Why the recovery path must bypass SnapshotReconciler: a gutted store on a
+    /// single device still carries the markers of its last good sync, so the
+    /// ordinary rule reports it as already in sync (clean) or, once touched, as
+    /// the side to push — either way the good cloud row would be lost.
+    @Test func ordinaryReconcileRuleCannotTellAGuttedStoreFromAGoodOne() {
+        let synced = now.addingTimeInterval(-day)
+        let server = now.addingTimeInterval(-day + 5)
+        let clean = SnapshotReconciler.LocalState(
+            updatedAt: synced, lastSyncedUpdatedAt: synced, lastSyncedServerUpdatedAt: server
+        )
+        let remote = SnapshotReconciler.RemoteState(clientUpdatedAt: synced, serverUpdatedAt: server)
+        #expect(SnapshotReconciler.decide(local: clean, remote: remote) == .alreadyInSync)
+
+        let touched = SnapshotReconciler.LocalState(
+            updatedAt: now, lastSyncedUpdatedAt: synced, lastSyncedServerUpdatedAt: server
+        )
+        #expect(SnapshotReconciler.decide(local: touched, remote: remote) == .pushLocal)
+    }
+
+    // MARK: A13 — probes are evidence, not learner-visible gaps
+
+    @Test func probesAreExcludedFromVisibleCountsAndRetention() throws {
+        let g = EngineFixtures.smallGraph()
+        let s = g.store
+        let probeConcept = s.concept(g.probeMe)!
+        let probe = try #require(s.materializeProbeGap(id: "probe-1", for: probeConcept, now: now))
+        #expect(probe.isProbe)
+        #expect(s.evidenceGaps.contains { $0.id == "probe-1" }, "the opt-in evidence view keeps probes")
+        #expect(!s.activeGaps.contains { $0.id == "probe-1" }, "the view-facing list never lists a probe")
+        #expect(!s.visibleGaps.contains { $0.id == "probe-1" })
+        #expect(s.activeGaps.count == s.evidenceGaps.count - 1)
+        #expect(s.visibleGaps.map { $0.id } == s.activeGaps.map { $0.id })
+        #expect(!s.gaps(in: .pronunciation).contains { $0.id == "probe-1" })
+        #expect(s.stats(for: .pronunciation).active == 0)
+        let buckets = s.retention(at: now)
+        let all = buckets.fresh + buckets.fading + buckets.atRisk + buckets.mastered + buckets.new
+        #expect(!all.contains { $0.id == "probe-1" })
+        #expect(probe.fsrs != nil, "a probe starts with a schedule like every store-made gap (B4)")
+        #expect(!s.dueGaps(at: now).contains { $0.id == "probe-1" })
+        #expect(!s.reviewQueue(at: now).contains { $0.id == "probe-1" })
+        #expect(!s.candidateGapIds(for: .mixed, now: now).contains("probe-1"))
+        #expect(s.materializeProbeGap(id: "probe-1", for: probeConcept, now: now)?.id == "probe-1", "reused, not duplicated")
+        #expect(s.gaps.filter { $0.id == "probe-1" }.count == 1)
+    }
+
+    // MARK: B2 — grades and evidence weights derived from the answer format
+
+    @Test func recordAnswerDerivesGradeAndWeightFromTheFormat() {
+        // (format, correct, firstTry) → (grade, concept weight)
+        let table: [(AnswerFormat, Bool, Bool, ReviewGrade, Double)] = [
+            (.trueFalse, true, true, .hard, 0.5),
+            (.match, true, true, .hard, 0.6),
+            (.multipleChoice, true, true, .good, 0.8),
+            (.multipleChoice, true, false, .hard, 0.8),
+            (.fillBlank, true, true, .easy, 1.0),
+            (.fillBlank, true, false, .good, 1.0),
+            (.translation, true, true, .easy, 1.2),
+            (.translation, true, false, .good, 1.2),
+            (.arrange, true, true, .easy, 1.2),
+            (.arrange, true, false, .good, 1.2),
+            (.probe, true, true, .good, 1.0),
+            (.speaking, true, true, .easy, 1.0),
+            (.converse, true, true, .good, 0.8),
+            (.translation, false, true, .again, 1.2),
+            (.match, false, false, .again, 0.6),
+        ]
+        for (format, correct, firstTry, grade, weight) in table {
+            #expect(Tuning.gradeMapping(format: format, correct: correct, firstTry: firstTry) == grade,
+                    "\(format) correct=\(correct) firstTry=\(firstTry)")
+            #expect(Tuning.formatEvidenceWeight(format) == weight, "\(format)")
+        }
+        for format in AnswerFormat.allCases {
+            #expect(Tuning.formatEvidenceWeight(format) > 0)
+            #expect(Tuning.gradeMapping(format: format, correct: false, firstTry: true) == .again)
+            #expect(Tuning.gradeMapping(format: format, correct: false, firstTry: false) == .again)
+            #expect(Tuning.gradeMapping(format: format, correct: true, firstTry: true).rawValue
+                    >= Tuning.gradeMapping(format: format, correct: true, firstTry: false).rawValue, "a retry never grades higher")
+        }
+
+        // recordAnswer lands the grade on the FSRS state and the weight on the
+        // concept — after the evidence decays toward the prior (B5).
+        func fresh() -> AppStore {
+            EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.5)],   // alpha 3.5, beta 3.5
+                                 gaps: [EngineFixtures.gap("g", concept: "c")])
+        }
+        func decayed(_ x: Double) -> Double { 1 + (x - 1) * Tuning.evidenceRecency }
+        let typed = fresh()
+        typed.recordAnswer(gapId: "g", correct: true, format: .translation, firstTry: true, now: now)
+        #expect(abs((typed.concept("c")?.alpha ?? 0) - (decayed(3.5) + 1.2)) < 1e-9)
+        #expect(abs((typed.concept("c")?.observationCount ?? 0) - (5 + 1.2)) < 1e-9, "raw observations grow by the undecayed weight")
+        let easy = FSRS.makeInitialState(grade: .easy, now: now)
+        #expect(typed.gaps[0].fsrs?.stability == easy.stability)
+        #expect(typed.gaps[0].fsrs?.difficulty == easy.difficulty)
+        #expect(typed.gaps[0].nextReviewAt == easy.dueAt)
+
+        let picked = fresh()
+        picked.recordAnswer(gapId: "g", correct: true, format: .multipleChoice, firstTry: true, now: now)
+        #expect(abs((picked.concept("c")?.alpha ?? 0) - (decayed(3.5) + 0.8)) < 1e-9)
+        #expect((picked.gaps[0].fsrs?.stability ?? 0) < (typed.gaps[0].fsrs?.stability ?? 0), "recognition earns a shorter interval than production")
+        #expect(picked.gaps[0].consecutiveCorrect == 1 && picked.gaps[0].reviewCount == 1)
+
+        // The extra multiplier (capstone) stacks on the format weight; a miss is a
+        // lapse. The concept is learning, so this is not a check-in: no doubling.
+        picked.recordAnswer(gapId: "g", correct: false, format: .trueFalse, firstTry: true, conceptWeight: Tuning.capstoneWeight, now: now)
+        #expect(abs((picked.concept("c")?.beta ?? 0) - (decayed(decayed(3.5)) + 0.5 * Tuning.capstoneWeight)) < 1e-9)
+        #expect(picked.gaps[0].consecutiveCorrect == 0 && picked.gaps[0].fsrs?.lapses == 1)
+        #expect(picked.checkInHistory.isEmpty)
+    }
+
+    // MARK: B3 — the mastered-gap schedule at the model level
+
+    @Test func masteredGapIsDueForACheckWhenDueOrWhenRecallDrops() {
+        let far = now.addingTimeInterval(30 * day)
+        // Legacy (fsrs == nil) mastered gap: recall comes from the streak fallback.
+        let high = EngineFixtures.gap("high", concept: nil, due: far, consecutiveCorrect: Tuning.gapMasteryStreak, mastered: now)
+        #expect(high.isMastered && !high.isDueForMasteryCheck(at: now) && !high.isPracticable(at: now))
+        #expect(high.isDueForMasteryCheck(at: far), "due date reached")
+        let low = EngineFixtures.gap("low", concept: nil, due: far, consecutiveCorrect: 3, mastered: now)   // fallback 0.76 < floor
+        #expect(low.retrievability(at: now) < Tuning.masteredRecallFloor)
+        #expect(low.isDueForMasteryCheck(at: now) && low.isPracticable(at: now))
+        let unmastered = EngineFixtures.gap("u", concept: nil, due: far)
+        #expect(unmastered.isPracticable(at: now) && !unmastered.isDueForMasteryCheck(at: now))
+
+        // With a real FSRS state the check falls out of the curve.
+        var scheduled = EngineFixtures.gap("s", concept: nil, consecutiveCorrect: Tuning.gapMasteryStreak,
+                                           reviewCount: Tuning.gapMasteryStreak, mastered: now)
+        scheduled.fsrs = FSRS.makeInitialState(grade: .easy, now: now)
+        scheduled.nextReviewAt = scheduled.fsrs!.dueAt
+        #expect(!scheduled.isPracticable(at: now))
+        #expect(scheduled.isPracticable(at: scheduled.nextReviewAt))
+        #expect(scheduled.isPracticable(at: now.addingTimeInterval(60 * day)))
+        let s = EngineFixtures.store()
+        s.gaps = [high, low, unmastered, scheduled]
+        #expect(Set(s.dueMasteredGaps(at: now).map { $0.id }) == ["low"])
+        #expect(Set(s.dueMasteredGaps(at: far).map { $0.id }) == ["high", "low", "s"])
+        #expect(Set(s.schedulableGaps(at: now).map { $0.id }) == ["low", "u"])
+        #expect(s.masteredGaps.count == 3, "the badge is unchanged by the schedule")
+    }
+
+    // MARK: B4 — never-reviewed gaps are "new", not "at risk"
+
+    @Test func neverReviewedGapsAreNewAndExcludedFromAverages() {
+        let s = EngineFixtures.store()
+        var seeded = EngineFixtures.gap("seeded", concept: nil)
+        seeded.fsrs = EngineFixtures.freshFsrs(at: now)                 // scheduled, never answered
+        let legacy = EngineFixtures.gap("legacy", concept: nil)         // fsrs nil, never answered
+        var reviewed = EngineFixtures.gap("reviewed", concept: nil, reviewCount: 1)
+        reviewed.fsrs = FSRS.makeInitialState(grade: .good, now: now)  // r = 1 right now
+        let legacyReviewed = EngineFixtures.gap("legacy-reviewed", concept: nil, reviewCount: 2)   // fallback 0.4 → at risk
+        let done = EngineFixtures.gap("done", concept: nil, consecutiveCorrect: Tuning.gapMasteryStreak,
+                                      reviewCount: Tuning.gapMasteryStreak, mastered: now)
+        s.gaps = [seeded, legacy, reviewed, legacyReviewed, done]
+
+        let b = s.retention(at: now)
+        #expect(Set(b.new.map { $0.id }) == ["seeded", "legacy"])
+        #expect(b.fresh.map { $0.id } == ["reviewed"])
+        #expect(b.atRisk.map { $0.id } == ["legacy-reviewed"], "only reviewed gaps can be at risk")
+        #expect(b.fading.isEmpty)
+        #expect(b.mastered.map { $0.id } == ["done"])
+        #expect(s.overallRetention(at: now) == 70, "mean of 1.0 and 0.4 over the reviewed pool only")
+        #expect(s.gapHealth(at: now).score == 70)
+        #expect(s.gapHealth(at: now).label == "Healthy")
+        #expect(!s.candidateGapIds(for: .retention(.atRisk), now: now).contains("seeded"))
+
+        // No evidence at all: honest, not "at risk".
+        s.gaps = [seeded, legacy]
+        #expect(s.overallRetention(at: now) == 100)
+        #expect(s.gapHealth(at: now).score == 100 && s.gapHealth(at: now).label == "No reviews yet")
+        s.gaps = []
+        #expect(s.gapHealth(at: now).score == 100 && s.gapHealth(at: now).label == "All clear")
+
+        // Day one of Foundation: a full seed and nothing at risk.
+        s.gaps = EngineFixtures.foundationGaps(for: Array(s.concepts.prefix(5)), perConcept: 6, at: now)
+        #expect(s.retention(at: now).atRisk.isEmpty)
+        #expect(s.retention(at: now).new.count == 30)
+        #expect(s.candidateGapIds(for: .retention(.atRisk), now: now).isEmpty)
+
+        // After the first answer the gap leaves "new".
+        s.recordReview(gapId: s.gaps[0].id, correct: false, now: now)
+        #expect(s.retention(at: now).new.count == 29)
+        #expect(!s.retention(at: now).atRisk.isEmpty || !s.retention(at: now).fading.isEmpty || !s.retention(at: now).fresh.isEmpty)
+    }
+
+    // MARK: E13 / E10 — speaking and conversation evidence
+
+    @Test func speakingEvidenceLandsOnTheConceptOnly() {
+        let s = EngineFixtures.store()
+        let cid = s.concepts[0].id
+        s.recordSpeakingEvidence(conceptId: cid, correct: true, now: now)
+        s.recordSpeakingEvidence(conceptId: cid, correct: false, now: now)
+        s.recordSpeakingEvidence(conceptId: nil, correct: true, now: now)
+        s.recordSpeakingEvidence(conceptId: "no-such-concept", correct: true, now: now)
+        let w = Tuning.formatEvidenceWeight(.speaking)
+        // The first answer lands on the (1, 1) prior; the second decays it first (B5).
+        #expect(abs((s.concept(cid)?.alpha ?? 0) - (1 + w * Tuning.evidenceRecency)) < 1e-9)
+        #expect(abs((s.concept(cid)?.beta ?? 0) - (1 + w)) < 1e-9)
+        #expect(abs((s.concept(cid)?.observationCount ?? 0) - 2 * w) < 1e-9)
+        #expect(s.concept(cid)?.lastTestedAt == now)
+        #expect(s.gaps.allSatisfy { $0.sourceType == .foundation && $0.reviewCount == 0 },
+                "no captured gap, and no schedule moved: the evidence is concept-level")
+        #expect(s.concepts.filter { $0.alpha != 1 || $0.beta != 1 }.count == 1)
+        #expect(s.localUpdatedAt != nil, "evidence is learner activity")
+    }
+
+    /// engine-5-1: evidence from Speak/Converse leaves the concept `.learning`, which
+    /// takes it off the frontier for good — so it can never be probed again, and the
+    /// probe was the only path that ever seeded its curriculum. It would then rank in
+    /// the plan forever with an empty spine and could never be taught. The first
+    /// evidence from ANY surface now opens the skill's material.
+    @Test func firstEvidenceFromSpeakingOpensTheSkillsCurriculum() {
+        let s = EngineFixtures.store()
+        let cid = "subjunctive-intro"
+        #expect(s.concept(cid) != nil, "a B1 concept nothing ever seeds")
+        // Its curriculum exists in the content file; no seeding path reaches it.
+        let items = (0..<6).map { i in
+            FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                  ex: "x \(cid)-w\(i) y", exEn: "t", blank: "\(cid)-w\(i)")
+        }
+        let file = FoundationContentFile(version: 2, skills: [
+            FoundationSkillContent(id: cid, category: GapCategory.grammar.rawValue,
+                                   teaching: FoundationTeachingContent(rule: "r"),
+                                   probes: EngineFixtures.syntheticProbes(for: cid), items: items),
+        ])
+        s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
+        #expect(s.gaps(forConcept: cid).isEmpty)
+
+        s.recordSpeakingEvidence(conceptId: cid, correct: false, now: now)
+        #expect(s.concept(cid)?.state == .learning)
+        let seeded = s.gaps(forConcept: cid).filter { !$0.isProbe }
+        #expect(!seeded.isEmpty, "the app can now teach what Speak just diagnosed")
+
+        // Idempotent: more evidence does not re-seed the same curriculum.
+        s.recordSpeakingEvidence(conceptId: cid, correct: true, now: now)
+        #expect(s.gaps(forConcept: cid).filter { !$0.isProbe }.count == seeded.count)
+
+        // And it is a real lesson target now, not a rank with nothing behind it.
+        s.sessionIndex = 1
+        let output = ConceptSelector(store: s).select(.smart(now: now))
+        #expect(output.targetConceptId == cid)
+        #expect(!output.items.isEmpty)
+    }
+
+    /// The A2 bridge slice is seeded exactly once, on the transition where reading
+    /// opens — so "already seeded" must not be true after a single skill was opened on
+    /// demand (a probe, or the first Speak evidence on it). It used to be, which left
+    /// every other bridge skill with no content the app could ever teach.
+    @Test func oneOnDemandBridgeSkillDoesNotCancelTheBridgeSlice() {
+        let s = EngineFixtures.store()
+        let bridge = FoundationSeeder.bridgeConceptIds
+        #expect(bridge.count > 1)
+        let skills = bridge.map { cid in
+            FoundationSkillContent(id: cid, category: GapCategory.grammar.rawValue,
+                                   items: (0..<3).map { i in
+                                       FoundationItemContent(fr: "\(cid)-w\(i)", en: "\(cid)-e\(i)", note: "n",
+                                                             ex: "x \(cid)-w\(i) y", exEn: "t", blank: "\(cid)-w\(i)")
+                                   })
+        }
+        let file = FoundationContentFile(version: 2, skills: skills)
+        s.foundationContent = { when in FoundationContentLoader.gaps(from: file, now: when) }
+
+        #expect(!s.hasBridgeContent)
+        #expect(s.seedConceptContentIfNeeded(bridge[0], now: now) > 0)
+        #expect(!s.hasBridgeContent, "one skill is not the slice")
+        for cid in bridge.dropFirst() { s.seedConceptContentIfNeeded(cid, now: now) }
+        #expect(s.hasBridgeContent)
+    }
+
+    /// engine-5-2: `newlyUnlocked` is the "already celebrated" bit. Clearing every
+    /// flag immediately before recomputing it made each completed lesson re-announce
+    /// the identical "New skills unlocked" list, for the whole dozen concepts that sit
+    /// on the frontier until reading opens.
+    /// store-6-2 / engine-6-2. The concept map spans A1-C1 while content is authored
+    /// band by band, so most of the frontier is skills with nothing behind them.
+    /// Meeting the prerequisites for one of those is not an unlock the learner can
+    /// act on, and celebrating it promises a lesson that does not exist.
+    @Test func anUnlockIsNotAnnouncedForASkillTheAppCannotTeach() {
+        let s = EngineFixtures.store(concepts: [
+            EngineFixtures.mastered("root"),
+            EngineFixtures.concept("taught", level: .A2, prerequisites: ["root"]),
+            EngineFixtures.concept("untaught", level: .A2, prerequisites: ["root"]),
+        ], gaps: [])
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["taught"])
+
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now) == ["Concept taught"],
+                "only the skill with content behind it is announced")
+        #expect(s.concept("untaught")?.newlyUnlocked == false,
+                "an unteachable skill is not flagged as newly unlocked either")
+
+        // When its content lands, it becomes a real unlock and is announced then.
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["taught", "untaught"])
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now) == ["Concept untaught"])
+    }
+
+    @Test func unlocksAreAnnouncedOnceNotAfterEveryLesson() {
+        let s = EngineFixtures.store(concepts: [
+            EngineFixtures.mastered("root"),
+            EngineFixtures.concept("opened", level: .A2, prerequisites: ["root"]),
+            EngineFixtures.concept("later", level: .A2, prerequisites: ["root", "second"]),
+            EngineFixtures.learning("second", mastery: 0.4),
+        ], gaps: [])
+        // An unlock is only announced for a skill the app can teach (store-6-2), so
+        // these synthetic concepts need content behind them for the test to be about
+        // the announce-once rule rather than about teachability.
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["opened", "later", "second"])
+
+        let first = s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(first == ["Concept opened"])
+        #expect(s.concept("opened")?.newlyUnlocked == true)
+
+        for _ in 0..<3 {
+            #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now).isEmpty,
+                    "the same unlock is never celebrated twice")
+        }
+
+        // A concept that becomes selectable later is still announced, once.
+        s.concepts[3] = EngineFixtures.mastered("second")
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now) == ["Concept later"])
+        #expect(s.completeLesson(targetConceptId: nil, isCapstone: false, now: now).isEmpty)
+
+        // Once the learner has actually worked on it, it stops being "new" so the
+        // lesson copy ("New skill you're ready for") retires with it.
+        s.recordConceptAnswer(conceptId: "opened", correct: true, now: now)
+        s.completeLesson(targetConceptId: "opened", isCapstone: false, now: now)
+        #expect(s.concept("opened")?.state != .neverObserved)
+        #expect(s.concept("opened")?.newlyUnlocked == false)
+    }
+
+    /// store-7-3: `isTeachable` used to rebuild the whole Foundation curriculum —
+    /// 598 items over the 181-concept taxonomy — on every call, and selection asks
+    /// it once per candidate concept and once more per selected item. About half of
+    /// lesson-start latency was spent re-decoding content that never changes.
+    @Test func teachabilityIsBuiltOnceAndRebuiltOnlyWhenTheContentChanges() {
+        let s = EngineFixtures.store(concepts: [
+            EngineFixtures.concept("taught"),
+            EngineFixtures.concept("untaught"),
+        ], gaps: [])
+        let counter = ContentBuildCounter()
+        let taughtOnly = EngineFixtures.syntheticContent(for: ["taught"])
+        s.foundationContent = { when in counter.bump(); return taughtOnly(when) }
+
+        #expect(s.isTeachable("taught"))
+        #expect(!s.isTeachable("untaught"))
+        for _ in 0..<20 { _ = s.isTeachable("taught") }
+        #expect(s.teachableConceptIds() == ["taught"])
+        #expect(counter.count == 1, "the curriculum is built once, not once per question")
+
+        // Replacing the content closure invalidates the memo, so a concept whose
+        // band is authored later becomes teachable immediately.
+        let both = EngineFixtures.syntheticContent(for: ["taught", "untaught"])
+        s.foundationContent = { when in counter.bump(); return both(when) }
+        #expect(s.isTeachable("untaught"))
+        #expect(counter.count == 2)
+    }
+
+    @Test func converseCorrectionCreatesADedupedGapAndRecordsALapse() throws {
+        let s = EngineFixtures.store()
+        let concept = s.concepts[0]
+        // The correction's evidence opens the concept's curriculum (engine-5-1),
+        // which a captured card no longer blocks (read-11-2), so the dedupe is
+        // counted on the learner's own cards, not on every gap.
+        func cards() -> Int { s.gaps.filter { $0.sourceType != .foundation }.count }
+        let gap = try #require(s.recordConverseCorrection(originalFrench: "orig-x", correctedFrench: " Corr-x ", explanation: "why-x",
+                                                          conceptId: concept.id, now: now))
+        #expect(gap.frenchWord == "Corr-x")
+        #expect(gap.explanation == "why-x")
+        #expect(gap.conceptId == concept.id)
+        #expect(gap.category == concept.category)
+        #expect(gap.cefrLevel == concept.cefrLevel)
+        #expect(gap.sourceType == .speech)
+        #expect(gap.needsTranslation, "no gloss was supplied")
+        #expect(gap.originalContext?.sentence == "orig-x")
+        #expect(gap.originalContext?.sourceTab == "converse")
+        // talkmedia-3-1: "orig-x" is the learner's own slip. It is flagged so the
+        // deck card never quotes it as French "seen in the wild", and so it is
+        // never handed to the tagger as an example of how the phrase is used.
+        #expect(gap.originalContext?.isLearnerAuthored == true)
+        #expect(gap.contextForTagging == gap.exampleSentence)
+        #expect(gap.contextForTagging != "orig-x")
+        // A store-made gap is born never-answered (zero lapses, engine-4-3); the slip adds one.
+        let seededLapses = FSRS.makeUnseenState(now: now).lapses
+        #expect(seededLapses == 0, "a gap nobody has answered has missed nobody")
+        #expect(gap.fsrs != nil && gap.fsrs?.lapses == seededLapses + 1)
+        #expect(gap.reviewCount == 1 && gap.consecutiveCorrect == 0)
+        #expect(gap.lastReviewedAt == now)
+        #expect(cards() == 1)
+        // The correction was shortened, so the card carries no English yet. A lesson
+        // cannot ask about it until a lookup fills it in, so it is not counted as
+        // material waiting for the next lesson either (read-9-5).
+        #expect(gap.needsTranslation && s.gapsSinceLastLesson == 0)
+        #expect(s.concept(concept.id)?.beta == 1 + Tuning.formatEvidenceWeight(.converse))
+
+        // The same corrected form again: deduped on the headword, another lapse on the same gap.
+        let again = try #require(s.recordConverseCorrection(originalFrench: "orig-y", correctedFrench: "corr-x", explanation: "why-y",
+                                                            conceptId: concept.id, now: now.addingTimeInterval(60)))
+        #expect(again.id == gap.id)
+        #expect(again.reviewCount == 2 && again.fsrs?.lapses == seededLapses + 2)
+        #expect(cards() == 1)
+
+        // Nothing to correct → nil and no gap.
+        #expect(s.recordConverseCorrection(originalFrench: "same-z", correctedFrench: "same-z", explanation: "", conceptId: nil, now: now) == nil)
+        #expect(s.recordConverseCorrection(originalFrench: "x", correctedFrench: "   ", explanation: "", conceptId: nil, now: now) == nil)
+        #expect(cards() == 1)
+
+        // With a gloss and an unknown concept: no translation flag, untagged, phrasing.
+        let glossed = try #require(s.recordConverseCorrection(originalFrench: "a-1", correctedFrench: "b-1", explanation: "e",
+                                                              conceptId: "no-such-concept", englishTranslation: "gloss-1", now: now))
+        #expect(!glossed.needsTranslation)
+        #expect(glossed.englishTranslation == "gloss-1")
+        #expect(glossed.conceptId == nil)
+        #expect(glossed.category == .phrasing)
+        #expect(glossed.cefrLevel == s.learnerLevel)
+        #expect(cards() == 2)
+
+        // A lapse on a mastered word through this path clears the badge too.
+        var mastered = EngineFixtures.gap("m", concept: nil, consecutiveCorrect: Tuning.gapMasteryStreak,
+                                          reviewCount: Tuning.gapMasteryStreak, mastered: now)
+        mastered.frenchWord = "Mot-m"
+        s.gaps.append(mastered)
+        let slipped = try #require(s.recordConverseCorrection(originalFrench: "mot-n", correctedFrench: "mot-m", explanation: "",
+                                                              conceptId: nil, now: now))
+        #expect(slipped.id == "m" && !slipped.isMastered && slipped.consecutiveCorrect == 0)
+    }
+
+    // MARK: firstrun-2-2 — ability is bounded by the difficulty of the evidence
+
+    @Test func abilityStopsClimbingAboveTheDifficultyOfTheItemsBeingAnswered() {
+        let s = EngineFixtures.store()
+        s.abilityTheta = -0.8                              // where a fresh A1 placement lands
+        var easy = EngineFixtures.gap("easy", concept: "definite-articles")
+        easy.irtDifficulty = -1.1                          // an A1 Foundation item
+        s.gaps = [easy]
+        for _ in 0..<600 { s.recordReview(gapId: "easy", correct: true, now: now) }
+        let ceiling = -1.1 + Tuning.thetaEvidenceCeiling
+        #expect(s.abilityTheta <= ceiling + 1e-9, "θ = \(s.abilityTheta) climbed past its evidence")
+        #expect(s.learnerLevel.order <= CEFRLevel.A2.order,
+                "drilling A1 Foundation items must never display as B1 — read \(s.learnerLevel.rawValue)")
+
+        // Harder material DOES carry the learner further.
+        var hard = EngineFixtures.gap("hard", concept: "negation")
+        hard.irtDifficulty = 0.8
+        s.gaps.append(hard)
+        for _ in 0..<400 { s.recordReview(gapId: "hard", correct: true, now: now) }
+        #expect(s.abilityTheta > ceiling)
+        #expect(s.abilityTheta <= 0.8 + Tuning.thetaEvidenceCeiling + 1e-9)
+
+        // The ceiling bounds the GAIN only: a miss still lowers ability, and a
+        // learner already placed above the ceiling is never demoted by answering
+        // an easy item correctly.
+        let earned = s.abilityTheta
+        s.recordReview(gapId: "hard", correct: false, now: now)
+        #expect(s.abilityTheta < earned)
+        let afterMiss = s.abilityTheta
+        s.recordReview(gapId: "easy", correct: true, now: now)
+        #expect(s.abilityTheta == afterMiss, "an easy item below the ceiling neither raises nor lowers θ")
+    }
+
+    // MARK: firstrun-2-5 — seeded curriculum is not the learner's practice history
+
+    @Test func seededGapsCountAsCurriculumAheadNotAsPractisedWeakSpots() {
+        let s = EngineFixtures.store()
+        let negation = s.concepts.filter { $0.id == "negation" }
+        s.gaps = EngineFixtures.foundationGaps(for: negation, perConcept: 3, at: now)
+        #expect(s.activeGaps.count == 3)
+        #expect(s.practisedGaps.isEmpty, "day one: the learner has been asked about none of it")
+        #expect(s.newGaps.count == 3)
+        #expect(HomeCopy.learnCardStat(toLearn: 3, practised: 0) == "3 to learn")
+        #expect(HomeCopy.toLearnLabel == "To learn")
+
+        s.recordReview(gapId: s.gaps[0].id, correct: true, now: now)
+        #expect(s.activeGaps.count == 3 && s.practisedGaps.count == 1 && s.newGaps.count == 2)
+        #expect(HomeCopy.learnCardStat(toLearn: s.activeGaps.count, practised: s.practisedGaps.count)
+                == "3 to learn · 1 practised")
+    }
+
+    // MARK: firstrun-2-3 — the streak counts practice, and says so
+
+    @Test func theStreakCountsDaysPractisedNotDaysAWordWasMastered() {
+        let s = EngineFixtures.store()
+        s.gaps = EngineFixtures.foundationGaps(for: s.concepts.filter { $0.id == "negation" },
+                                               perConcept: 1, at: now)
+        let id = s.gaps[0].id
+        s.recordReview(gapId: id, correct: true, now: now)
+        #expect(s.practisedOn(now), "one correct answer marks the day")
+        #expect(s.currentStreak(now: now) == 1)
+        // …and that is NOT mastery, which needs `Tuning.gapMasteryStreak` in a row.
+        #expect(s.masteredGaps.isEmpty)
+        #expect(s.gaps[0].consecutiveCorrect < Tuning.gapMasteryStreak)
+        #expect(s.masteredThisWeek == 0)
+    }
+
+    // MARK: firstrun-9-1 — "you saved N things" counts captures, not curriculum
+
+    @Test func capturedCountIgnoresCurriculumTheStoreSeededItself() {
+        let s = EngineFixtures.store()
+        s.gaps = EngineFixtures.foundationGaps(for: s.concepts.filter { $0.id == "negation" },
+                                               perConcept: 3, at: now)
+        #expect(s.capturedGapCount == 0, "authored curriculum is not something the learner saved")
+
+        // What a Speak / Read section actually banks.
+        s.gaps.insert(EngineFixtures.gap("kept", concept: "negation", sourceType: .speech), at: 0)
+        #expect(s.capturedGapCount == 1)
+
+        // A section that pulls a concept's whole authored slice in mid-session (the
+        // Speak/Converse evidence path) must not report that slice back as captures.
+        let before = s.capturedGapCount
+        let seeded = s.gaps.count
+        s.gaps.append(contentsOf: EngineFixtures.foundationGaps(for: s.concepts.filter { $0.id == "imparfait" },
+                                                                perConcept: 12, at: now))
+        #expect(s.gaps.count > seeded, "the slice really landed")
+        #expect(s.capturedGapCount == before, "…and none of it counts as saved")
+
+        // Mastering a captured card does not un-save it.
+        s.gaps[0].masteredAt = now
+        #expect(s.capturedGapCount == 1)
+    }
+
+    // MARK: firstrun-9-3 — the due scans and the Smart target are computed once
+
+    @Test func dueNowCountMatchesTheDueNowListItSummarises() {
+        let s = EngineFixtures.store()
+        let blocked = EngineFixtures.concept("blocked-c", prerequisites: ["missing-prereq"])
+        let open = EngineFixtures.concept("open-c")
+        s.concepts = [blocked, open, EngineFixtures.concept("missing-prereq")]
+        s.gaps = [
+            EngineFixtures.gap("due", concept: "open-c", due: now.addingTimeInterval(-60)),
+            EngineFixtures.gap("later", concept: "open-c", due: now.addingTimeInterval(3600)),
+            EngineFixtures.gap("blocked", concept: "blocked-c", due: now.addingTimeInterval(-60)),
+            EngineFixtures.gap("mine", concept: "blocked-c", due: now.addingTimeInterval(-60),
+                               sourceType: .speech)
+        ]
+        #expect(s.dueNow(at: now).map(\.id) == ["due", "mine"],
+                "a blocked Foundation item is not due; the learner's own capture always is")
+        #expect(s.dueNowCount(at: now) == s.dueNow(at: now).count)
+        #expect(s.prerequisiteBlockedConceptIds == ["blocked-c"])
+        for gap in s.gaps {
+            #expect(s.isPrerequisiteBlocked(gap, blocked: s.prerequisiteBlockedConceptIds)
+                    == s.isPrerequisiteBlocked(gap), "the set form and the per-gap form agree")
+        }
+
+        // Mastering the prerequisite opens the gate for both forms at once.
+        s.concepts[2] = EngineFixtures.mastered("missing-prereq")
+        #expect(s.prerequisiteBlockedConceptIds.isEmpty)
+        #expect(s.dueNowCount(at: now) == 3 && s.dueNowCount(at: now) == s.dueNow(at: now).count)
+    }
+
+    @Test func theSmartTargetIsMemoisedUntilTheStoreChanges() {
+        // Only the concept that HAS material can be the target, so the answer is
+        // pinned by which concept the gaps belong to.
+        let concepts = [EngineFixtures.concept("alpha"), EngineFixtures.concept("beta")]
+        let alphaGaps = (0..<3).map { EngineFixtures.gap("a\($0)", concept: "alpha", due: now) }
+        let betaGaps = (0..<3).map { EngineFixtures.gap("b\($0)", concept: "beta", due: now) }
+        let s = EngineFixtures.store(concepts: concepts, gaps: alphaGaps)
+
+        let first = s.nextSmartTargetConcept(now: now)
+        #expect(first?.id == "alpha")
+        #expect(first?.id == LessonPipeline(store: s).preview(.smart(now: now)).targetConceptId,
+                "the memo answers exactly what the selector would")
+        #expect(s.nextSmartTargetConcept(now: now)?.id == "alpha", "second read is the memo")
+
+        // Any persisted change retires it, so the label follows the material.
+        let generation = s.mutationGeneration
+        s.gaps = betaGaps
+        s.save(pushToCloud: false)
+        #expect(s.mutationGeneration != generation, "save() retires the memo")
+        #expect(s.nextSmartTargetConcept(now: now)?.id == "beta", "never the stale answer")
+
+        // And a memo never outlives its own clock window either, since a review can
+        // fall due with no mutation at all.
+        s.gaps = alphaGaps
+        #expect(s.nextSmartTargetConcept(now: now)?.id == "beta", "still inside the window")
+        let later = now.addingTimeInterval(Tuning.smartTargetCacheSeconds + 1)
+        #expect(s.nextSmartTargetConcept(now: later)?.id == "alpha", "window closed, recomputed")
+    }
+}
+
+// MARK: - Session, lesson and low-stakes-corruption safety (audit round 1)
+
+/// The store side of the sign-in / sign-out / mid-lesson rules the coordinator
+/// (ContentView + CloudSync) drives: an involuntary sign-out must not destroy
+/// unsynced work, a different learner must not inherit the previous one's data
+/// (including saved scenario guides), a lost plan preference must not block the
+/// app, and a lesson in flight must be visible to the reconcile scheduler.
+@MainActor
+struct StoreSessionSafetyTests {
+    private func encoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }
+
+    // MARK: store-1-2 — only a different learner wipes the device record
+
+    @Test func firstSignInKeepsThePreLoginRecordForMigration() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.gaps = [EngineFixtures.gap("pre-login", concept: nil)]
+        store.save()
+        store.flush()
+
+        #expect(store.beginSession(userId: "user-1") == false, "nothing to clear on a first sign-in")
+        #expect(store.gaps.map { $0.id } == ["pre-login"], "the record is migrated, not wiped")
+        #expect(store.lastSignedInUserId == "user-1")
+    }
+
+    @Test func sameLearnerSigningBackInKeepsUnsyncedProgress() {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.beginSession(userId: "user-1")
+        first.gaps = [EngineFixtures.gap("answered-offline", concept: nil)]
+        first.save()
+        first.flush()
+
+        // Relaunch after the session expired on its own: nothing was signed out.
+        let relaunched = AppStore(persistence: scratch.defaults)
+        #expect(relaunched.lastSignedInUserId == "user-1", "the account is remembered across launches")
+        #expect(relaunched.beginSession(userId: "user-1") == false)
+        #expect(relaunched.gaps.map { $0.id } == ["answered-offline"],
+                "work done since the last upload survives an involuntary sign-out")
+    }
+
+    @Test func aDifferentLearnerStartsFromACleanRecord() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        store.gaps = [EngineFixtures.gap("theirs", concept: nil)]
+        store.xp = 120
+        store.save()
+        store.flush()
+        scratch.defaults.set(Data("[]".utf8), forKey: ScenarioStorage.defaultsKey)
+
+        #expect(store.beginSession(userId: "user-2"), "a new learner clears the device")
+        #expect(store.gaps.isEmpty)
+        #expect(store.xp == 0)
+        #expect(store.lastSignedInUserId == "user-2")
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == nil,
+                "saved scenario guides do not bleed to the next learner")
+        #expect(AppStore(persistence: scratch.defaults).gaps.isEmpty, "the wipe is persisted")
+    }
+
+    @Test func explicitSignOutForgetsTheAccountAndTheGuides() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        scratch.defaults.set(Data("[]".utf8), forKey: ScenarioStorage.defaultsKey)
+
+        store.clearForSignOut()
+        #expect(store.lastSignedInUserId == nil)
+        #expect(scratch.defaults.string(forKey: "ff.lastSignedInUserId.v1") == nil)
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == nil)
+        #expect(AppStore(persistence: scratch.defaults).lastSignedInUserId == nil)
+    }
+
+    // MARK: store-1-4 — saved scenario guides travel with the account
+
+    @Test func savedScenarioGuidesAreBackedUpAndRestored() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        let guides = Data(#"[{"id":"s1"}]"#.utf8)
+        scratch.defaults.set(guides, forKey: ScenarioStorage.defaultsKey)
+
+        #expect(store.makeSnapshot().savedScenarios == guides, "guides ride along in the cloud snapshot")
+
+        scratch.defaults.removeObject(forKey: ScenarioStorage.defaultsKey)
+        var snapshot = store.makeSnapshot()
+        snapshot.savedScenarios = guides
+        store.apply(snapshot: snapshot)
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == guides,
+                "a restore brings the saved guides back")
+
+        var older = store.makeSnapshot()
+        older.savedScenarios = nil
+        store.apply(snapshot: older)
+        #expect(scratch.defaults.data(forKey: ScenarioStorage.defaultsKey) == guides,
+                "a row written before the field existed never deletes them")
+    }
+
+    // MARK: store-1-5 — a low-stakes blob never blocks the app
+
+    @Test func unreadablePreferencesRaiseANoticeInsteadOfBlockingTheApp() throws {
+        let scratch = ScratchDefaults()
+        let keep = [EngineFixtures.gap("keep", concept: nil)]
+        scratch.defaults.set(try encoder().encode(keep), forKey: "ff.gaps.v1")
+        let garbage = Data("not json".utf8)
+        scratch.defaults.set(garbage, forKey: "ff.preferences.v1")
+        scratch.defaults.set(garbage, forKey: "ff.activityProgress.v1")
+
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == nil, "the app is not held behind a cloud restore")
+        #expect(store.canPushToCloud, "and the learner's real record can still sync")
+        #expect(store.loadNotices == [.corruptPreferences, .corruptActivityProgress])
+        #expect(store.loadNoticeMessage?.isEmpty == false)
+        #expect(store.gaps.map { $0.id } == ["keep"], "learner data is untouched")
+        #expect(store.preferences == nil)
+        #expect(store.activityProgress.isEmpty)
+        #expect(store.corruptBlob(for: .corruptPreferences) == garbage, "the unreadable copy is preserved")
+
+        store.acknowledgeLoadNotices()
+        #expect(store.loadNoticeMessage == nil)
+        #expect(store.corruptBlob(for: .corruptPreferences) == garbage, "dismissing the notice keeps the copy")
+    }
+
+    @Test func unreadableLearnerDataStillBlocks() {
+        let scratch = ScratchDefaults()
+        scratch.defaults.set(Data("not json".utf8), forKey: "ff.concepts.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptConcepts)
+        #expect(store.canPushToCloud == false)
+        #expect(StoreLoadError.corruptConcepts.isBlocking)
+        #expect(StoreLoadError.corruptPreferences.isBlocking == false)
+    }
+
+    // MARK: store-1-3 — a lesson in flight is visible to the reconcile scheduler
+
+    @Test func lessonInProgressBracketsTheLesson() {
+        let store = AppStore(persistence: nil)
+        #expect(store.isLessonInProgress == false)
+        store.beginLesson()
+        #expect(store.isLessonInProgress)
+        store.endLesson()
+        #expect(store.isLessonInProgress == false)
+        store.beginLesson()
+        store.clearForSignOut()
+        #expect(store.isLessonInProgress == false, "a reset never leaves the flag stuck")
+    }
+
+    // MARK: lesson-3-3 — the confusion signal the lesson now sends
+
+    /// `recordConfusion` is what turns a wrong match pair (or a wrong option that is
+    /// another item on the table) into the link the selector ranks on and the
+    /// assembler places side by side. Repeats strengthen it; the link sits on the
+    /// gap that was missed.
+    @Test func recordingAConfusionLinksThePairAndStrengthensIt() throws {
+        let store = EngineFixtures.store(concepts: [EngineFixtures.learning("c", mastery: 0.4)],
+                                         gaps: [EngineFixtures.gap("a", concept: "c"),
+                                                EngineFixtures.gap("b", concept: "c")])
+        store.recordConfusion(gapId: "a", partnerGapId: "b")
+        let first = try #require(store.gaps.first { $0.id == "a" }?.confusionLinks.first)
+        #expect(first.partnerGapId == "b" && first.wrongPicks == 1)
+        #expect(store.gaps.first { $0.id == "b" }?.confusionLinks.isEmpty == true,
+                "the link sits on the item that was missed")
+
+        store.recordConfusion(gapId: "a", partnerGapId: "b")
+        let again = try #require(store.gaps.first { $0.id == "a" }?.confusionLinks.first)
+        #expect(again.wrongPicks == 2 && again.strength > first.strength)
+        #expect(store.gaps.first { $0.id == "a" }?.confusionLinks.count == 1, "one link per partner")
+    }
+}
+
+// MARK: - Cloud sync coordination (audit round 10)
+
+/// Records every upload `CloudSync` makes through its test seam, holding each one
+/// open long enough for a second caller to queue behind it.
+@MainActor
+final class UploadRecorder {
+    private(set) var count = 0
+    /// 1-based upload numbers that fail.
+    var failing: Set<Int> = []
+    /// Runs inside the given upload, before it returns (an answer saved mid-upload).
+    var during: [Int: () -> Void] = [:]
+
+    struct Refused: Error {}
+
+    func install(on cloud: CloudSync) {
+        cloud.uploadOverride = { [self] _ in
+            count += 1
+            let n = count
+            during[n]?()
+            try await Task.sleep(for: .milliseconds(100))
+            if failing.contains(n) { throw Refused() }
+            return nil
+        }
+    }
+}
+
+@MainActor
+struct CloudSyncCoordinationTests {
+    /// A signed-in device holding one unsynced change for `user-1`.
+    private func signedInWithAPendingChange() -> (ScratchDefaults, AppStore, CloudSync, UploadRecorder) {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        store.gaps = [EngineFixtures.gap("answered", concept: nil)]
+        store.save()
+        let cloud = CloudSync(defaults: scratch.defaults)
+        let recorder = UploadRecorder()
+        recorder.install(on: cloud)
+        cloud.setUser("user-1")
+        cloud.progressDidChange(store)
+        return (scratch, store, cloud, recorder)
+    }
+
+    // MARK: store-10-3 — overlapping flushes upload the record once
+
+    @Test func backgroundingUploadsAnUnchangedRecordOnce() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        // Going home sends `.inactive` then `.background`; both flush.
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        #expect(await inactive.value)
+        #expect(await background.value, "the queued flush is satisfied by the upload it waited for")
+        #expect(recorder.count == 1, "the same record is not uploaded twice")
+    }
+
+    @Test func aFailedRedundantUploadCannotReportABackupFailure() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        recorder.failing = [2, 3]
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        _ = await inactive.value
+        _ = await background.value
+        if case .synced = cloud.syncState {} else {
+            Issue.record("the row holds everything, so the card must not say the backup failed: \(cloud.syncState)")
+        }
+        #expect(await cloud.pushForSignOut(store: store),
+                "an offline sign-out of a backed-up device is not blocked (store-3-2)")
+        #expect(recorder.count == 1)
+    }
+
+    @Test func aQueuedFlushStillUploadsAnAnswerSavedMidUpload() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        recorder.during[1] = { store.localUpdatedAt = store.localUpdatedAt?.addingTimeInterval(60) }
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        _ = await inactive.value
+        #expect(await background.value)
+        #expect(recorder.count == 2, "the answer saved during the first upload is still owed (store-5-2)")
+    }
+
+    @Test func aQueuedFlushRetriesWhenTheUploadItWaitedForFailed() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        recorder.failing = [1]
+        let inactive = Task { await cloud.flushPending(store: store) }
+        let background = Task { await cloud.flushPending(store: store) }
+        #expect(await inactive.value == false)
+        #expect(await background.value, "nothing reached the row, so the queued caller uploads")
+        #expect(recorder.count == 2)
+    }
+
+    // MARK: store-10-2 — another account never silently erases unsynced progress
+
+    @Test func anotherAccountIsHeldWhileThePreviousRecordIsNotBackedUp() {
+        let (_, store, cloud, _) = signedInWithAPendingChange()
+        // The session ends on its own: uploads stop, the record and markers stay.
+        cloud.setUser(nil, keepMarkers: true)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store),
+                "nothing of this record ever reached user-1's account")
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-1", store: store) == false,
+                "the same account keeps the record, so there is nothing to ask")
+    }
+
+    @Test func aFullyBackedUpRecordSwitchesAccountsWithoutAsking() async {
+        let (_, store, cloud, recorder) = signedInWithAPendingChange()
+        #expect(await cloud.flushPending(store: store))
+        #expect(recorder.count == 1)
+        cloud.setUser(nil, keepMarkers: true)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store) == false,
+                "everything is in user-1's account, so clearing the device loses nothing")
+
+        // One more answer after the last upload, then the session ends.
+        store.localUpdatedAt = store.localUpdatedAt?.addingTimeInterval(60)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store),
+                "that answer exists only on this device")
+    }
+
+    @Test func aFirstSignInIsNeverHeld() {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.gaps = [EngineFixtures.gap("pre-login", concept: nil)]
+        store.save()
+        let cloud = CloudSync(defaults: scratch.defaults)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-1", store: store) == false,
+                "a first sign-in migrates the record; it is never wiped")
+    }
+
+    @Test func anUnreadableRecordIsNeverTreatedAsBackedUp() {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.beginSession(userId: "user-1")
+        scratch.defaults.set(Data("this is not json".utf8), forKey: "ff.gaps.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        let cloud = CloudSync(defaults: scratch.defaults)
+        #expect(cloud.switchingAccountWouldDiscardUnsyncedProgress(to: "user-2", store: store))
+    }
+
+    // MARK: store-10-1 — an offline launch keeps the stored session
+
+    @Test func theClientEmitsTheStoredSessionAtLaunch() {
+        #expect(SupabaseManager.clientOptions.auth.emitLocalSessionAsInitialSession,
+                "the legacy mode refreshes first and, offline, emits no session at all")
+    }
+
+    // MARK: store-10-4 — ability parameters read from Tuning
+
+    @Test func optionCountWidensAtEachTuningThreshold() {
+        let store = AppStore(persistence: nil)
+        let thresholds = Tuning.mcOptionCountThresholds
+        #expect(thresholds == thresholds.sorted(), "thresholds ascend")
+        store.abilityTheta = thresholds[0] - 0.01
+        #expect(store.optionCount == Tuning.mcOptionCountMin)
+        for (i, t) in thresholds.enumerated() {
+            store.abilityTheta = t
+            #expect(store.optionCount == Tuning.mcOptionCountMin + i + 1)
+        }
+        // The values were moved, not changed: 3 / 4 / 5 / 6 options.
+        store.abilityTheta = -1
+        #expect(store.optionCount == 3)
+        store.abilityTheta = 2
+        #expect(store.optionCount == 6)
+    }
+
+    @Test func placementThetaAscendsWithTheBand() {
+        let levels: [CEFRLevel] = [.A1, .A2, .B1, .B2, .C1, .C2]
+        let thetas = levels.map { Tuning.placementTheta(for: $0) }
+        #expect(thetas == thetas.sorted() && Set(thetas).count == thetas.count)
+        #expect(thetas.allSatisfy { $0 > Tuning.abilityThetaFloor && $0 < Tuning.abilityThetaCeiling })
+    }
+}
+
+// MARK: - Cloud sync (audit round 11)
+
+/// A row read that returns whatever the test last scripted.
+@MainActor
+final class ScriptedFetch {
+    var next: RemoteFetch
+    private(set) var reads = 0
+
+    init(_ first: RemoteFetch) { next = first }
+
+    func install(on cloud: CloudSync) {
+        cloud.fetchOverride = { [self] _ in
+            reads += 1
+            return next
+        }
+    }
+}
+
+@MainActor
+struct CloudSyncRound11Tests {
+    /// The row every first sign-in uploads: a device signed in, never placed.
+    private func emptyFirstSignInRow(at date: Date) -> ProgressSnapshot {
+        let scratch = ScratchDefaults()
+        let fresh = AppStore(persistence: scratch.defaults)
+        fresh.beginSession(userId: "user-1")
+        #expect(fresh.localUpdatedAt == nil)
+        var row = fresh.makeSnapshot()
+        row.clientUpdatedAt = date
+        return row
+    }
+
+    private func accountRow(gapId: String, at date: Date) -> ProgressSnapshot {
+        let other = AppStore(persistence: nil)
+        other.gaps = [EngineFixtures.gap(gapId, concept: nil)]
+        other.hasCompletedAssessment = true
+        other.localUpdatedAt = date
+        return other.makeSnapshot()
+    }
+
+    // MARK: store-11-1 — an empty account row is no backup
+
+    @Test func theFirstSignInRowHoldsNoActivityAndARealRowDoes() {
+        #expect(emptyFirstSignInRow(at: Date()).holdsNoLearnerActivity)
+        #expect(accountRow(gapId: "a", at: Date()).holdsNoLearnerActivity == false)
+        var answered = emptyFirstSignInRow(at: Date())
+        answered.concepts[0].observationCount = 1
+        #expect(answered.holdsNoLearnerActivity == false, "a single booked answer is a record")
+        var earned = emptyFirstSignInRow(at: Date())
+        earned.xp = 10
+        #expect(earned.holdsNoLearnerActivity == false)
+    }
+
+    @Test func anEmptyAccountRowNeverReplacesWhatWasDoneOffline() async {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        let cloud = CloudSync(defaults: scratch.defaults)
+        cloud.runsLaunchTimer = false
+        cloud.launchReconcileBudget = 1
+        cloud.launchOfflineOfferDelay = 2
+        let fetch = HeldFetch()
+        fetch.install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+
+        let launch = Task { await cloud.reconcileAtLaunch(store: store, userId: "user-1") }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(600))
+        while !fetch.isHolding, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        cloud.launchCheckpoint(store: store, userId: "user-1", elapsed: 2)
+        #expect(cloud.launchGate(for: "user-1") == .stillSyncing)
+        cloud.continueOfflineAtLaunch(store: store, userId: "user-1")
+
+        // The learner places and studies offline.
+        store.hasCompletedAssessment = true
+        store.gaps = [EngineFixtures.gap("offline", concept: nil)]
+        store.xp = 120
+        store.save()
+        // The account holds only the empty record of an earlier, abandoned sign-in.
+        fetch.release(.snapshot(emptyFirstSignInRow(at: Date().addingTimeInterval(-86_400)), serverUpdatedAt: nil))
+        await launch.value
+
+        #expect(store.gaps.map(\.id) == ["offline"], "an account with no progress replaces nothing")
+        #expect(store.hasCompletedAssessment && store.xp == 120)
+        #expect(uploads.count == 1, "the device copy goes up, as into an account with no row")
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).isPending(for: "user-1") == false)
+        #expect(cloud.userId == "user-1")
+    }
+
+    @Test func aRequestedRestoreFromAnEmptyRowFailsAndKeepsTheUnreadableCopy() async {
+        let scratch = ScratchDefaults()
+        let first = AppStore(persistence: scratch.defaults)
+        first.beginSession(userId: "user-1")
+        scratch.defaults.set(Data("this is not json".utf8), forKey: "ff.gaps.v1")
+        let store = AppStore(persistence: scratch.defaults)
+        #expect(store.loadError == .corruptGaps)
+        let cloud = CloudSync(defaults: scratch.defaults)
+        ScriptedFetch(.snapshot(emptyFirstSignInRow(at: Date()), serverUpdatedAt: nil)).install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+
+        let restored = await cloud.restoreFromAccount(store: store, userId: "user-1", discardUnreadableCopy: true)
+        #expect(restored == false, "there is nothing in the account to restore (store-2-1)")
+        #expect(store.loadError == .corruptGaps)
+        #expect(store.corruptBlob(for: .corruptGaps) != nil, "the only trace of the record is kept")
+        #expect(uploads.count == 0)
+        #expect(cloud.syncState == .failed(CloudSync.noAccountBackupMessage))
+    }
+
+    // MARK: store-11-2 — sign-out after a launch whose read failed
+
+    /// A device whose record reached `user-1`'s row, relaunched with the read failing.
+    private func backedUpThenRelaunchedOffline() async -> (ScratchDefaults, AppStore, CloudSync, ScriptedFetch, UploadRecorder, ProgressSnapshot) {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        store.gaps = [EngineFixtures.gap("answered", concept: nil)]
+        store.save()
+        let firstLaunch = CloudSync(defaults: scratch.defaults)
+        ScriptedFetch(.none).install(on: firstLaunch)
+        let firstUploads = UploadRecorder()
+        firstUploads.install(on: firstLaunch)
+        await firstLaunch.reconcile(store: store, userId: "user-1", initial: true)
+        #expect(firstUploads.count == 1)
+        let row = store.makeSnapshot()
+
+        // Relaunch: a new coordinator, the same device record and markers.
+        let cloud = CloudSync(defaults: scratch.defaults)
+        let fetch = ScriptedFetch(.failed(SnapshotUndecodable(underlying: "offline stand-in")))
+        fetch.install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+        await cloud.reconcile(store: store, userId: "user-1", initial: true)
+        #expect(cloud.userId == nil, "uploads stay off: the row was not read")
+        #expect(cloud.launchGate(for: "user-1") == .ready)
+        return (scratch, store, cloud, fetch, uploads, row)
+    }
+
+    @Test func aBackedUpDeviceSignsOutAfterAFailedLaunchRead() async {
+        let (scratch, store, cloud, _, uploads, _) = await backedUpThenRelaunchedOffline()
+        defer { withExtendedLifetime(scratch) {} }   // the markers live in its defaults
+        #expect(await cloud.pushForSignOut(store: store),
+                "everything is already in the account, so the network is not needed (store-3-2)")
+        #expect(uploads.count == 0)
+    }
+
+    @Test func signOutUploadsAnAnswerGivenAfterAFailedLaunchReadOnceOnline() async {
+        let (scratch, store, cloud, fetch, uploads, row) = await backedUpThenRelaunchedOffline()
+        defer { withExtendedLifetime(scratch) {} }   // the markers live in its defaults
+        store.gaps.append(EngineFixtures.gap("offline-answer", concept: nil))
+        store.save()
+        store.flush()
+        cloud.progressDidChange(store)
+        #expect(await cloud.pushForSignOut(store: store) == false, "still offline: the answer is not backed up")
+        #expect(uploads.count == 0)
+
+        // Back online: the row is the one this device last wrote.
+        fetch.next = .snapshot(row, serverUpdatedAt: nil)
+        #expect(await cloud.pushForSignOut(store: store), "the sign-out itself re-establishes contact and uploads")
+        #expect(uploads.count == 1)
+        #expect(cloud.userId == "user-1")
+    }
+
+    // MARK: store-11-3 — the latched band travels with θ
+
+    @Test func theLatchedBandTravelsInTheSnapshot() {
+        let edge = Tuning.levelThetaFloor(for: .B1)
+        let h = Tuning.levelHysteresis
+        let phone = AppStore(persistence: nil)
+        phone.abilityTheta = edge + 2 * h
+        phone.abilityTheta = edge - h / 2
+        #expect(phone.latchedLevel == .B1, "reached from above, the band holds (engine-10-2)")
+
+        let restored = AppStore(persistence: nil)
+        restored.apply(snapshot: phone.makeSnapshot())
+        #expect(restored.latchedLevel == phone.latchedLevel, "the same record reports the same band on every device")
+
+        let lowEdge = Tuning.levelThetaFloor(for: .A2)
+        let low = AppStore(persistence: nil)
+        low.abilityTheta = lowEdge - 2 * h
+        low.abilityTheta = lowEdge + h / 2
+        #expect(low.latchedLevel == .A1)
+        let second = AppStore(persistence: nil)
+        second.apply(snapshot: low.makeSnapshot())
+        #expect(second.latchedLevel == .A1)
+
+        // A row from an earlier build carries no band: the bare mapping, not this
+        // device's own history.
+        var old = phone.makeSnapshot()
+        old.latchedLevel = nil
+        let fromOldRow = AppStore(persistence: nil)
+        fromOldRow.abilityTheta = lowEdge - 2 * h
+        fromOldRow.apply(snapshot: old)
+        #expect(fromOldRow.latchedLevel == ConceptSelector.level(forTheta: old.abilityTheta))
+    }
+
+    // MARK: store-11-4 — an applied row gets the content refresh
+
+    private func contentFile(_ items: [FoundationItemContent]) -> FoundationContentFile {
+        FoundationContentFile(version: 2, skills: [FoundationSkillContent(id: "present-irregular",
+                                                                          category: GapCategory.grammar.rawValue,
+                                                                          items: items)])
+    }
+
+    private func item(_ fr: String, note: String = "n") -> FoundationItemContent {
+        FoundationItemContent(fr: fr, en: "e \(fr)", note: note, ex: "x \(fr) y", exEn: "t", blank: fr,
+                              alts: nil, testable: nil)
+    }
+
+    @Test func anAppliedRowCarriesTheContentCorrections() throws {
+        let now = EngineFixtures.now
+        let v1 = contentFile([item("w0"), item("w1"), item("w2")])
+        let writer = AppStore(persistence: nil)
+        writer.gaps = FoundationContentLoader.gaps(from: v1, now: now)
+        writer.localUpdatedAt = now
+        let row = writer.makeSnapshot()
+
+        let store = AppStore(persistence: nil)
+        store.seededContentFile = contentFile([item("w0", note: "fixed"), item("w1"), item("w2"), item("added")])
+        store.apply(snapshot: row)
+        let w0 = try #require(store.gaps.first { $0.frenchWord == "w0" })
+        #expect(w0.explanation == "fixed", "the correction reaches a restored device without a relaunch (engine-10-6)")
+        #expect(store.gaps.contains { $0.frenchWord == "added" }, "items added since are topped up")
+    }
+
+    // MARK: store-11-5 — "Continue offline" when the device is actually offline
+
+    @Test func anOfflineLaunchOnAnEmptyDeviceOffersToContinueOffline() async {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        let cloud = CloudSync(defaults: scratch.defaults)
+        cloud.runsLaunchTimer = false
+        let fetch = ScriptedFetch(.failed(URLError(.notConnectedToInternet)))
+        fetch.install(on: cloud)
+        let uploads = UploadRecorder()
+        uploads.install(on: cloud)
+
+        await cloud.reconcileAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.launchGate(for: "user-1") == .accountUnreachable)
+        #expect(cloud.offersOfflineContinue, "the read failed fast, before the slow-network offer could appear")
+        #expect(cloud.syncState == .failed(CloudSync.offlineWithNothingOnDeviceMessage),
+                "the device holds nothing, so 'progress stays on this device' would be false")
+
+        cloud.continueOfflineAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.launchGate(for: "user-1") == .ready)
+        #expect(cloud.offersOfflineContinue == false)
+        #expect(cloud.userId == nil, "uploads stay off until the row is read")
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).isPending(for: "user-1"))
+
+        // Placed offline; back online the account's real record still wins.
+        store.gaps = [EngineFixtures.gap("offline", concept: nil)]
+        store.save()
+        fetch.next = .snapshot(accountRow(gapId: "account", at: Date().addingTimeInterval(-3600)), serverUpdatedAt: nil)
+        await cloud.reconcile(store: store, userId: "user-1", initial: false)
+        #expect(store.gaps.map(\.id) == ["account"])
+        #expect(uploads.count == 0)
+        #expect(cloud.userId == "user-1")
+    }
+
+    @Test func tryingAgainEndsTheOfflineOffer() async {
+        let scratch = ScratchDefaults()
+        let store = AppStore(persistence: scratch.defaults)
+        store.beginSession(userId: "user-1")
+        let cloud = CloudSync(defaults: scratch.defaults)
+        cloud.runsLaunchTimer = false
+        let fetch = ScriptedFetch(.failed(URLError(.notConnectedToInternet)))
+        fetch.install(on: cloud)
+        UploadRecorder().install(on: cloud)
+        await cloud.reconcileAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.offersOfflineContinue)
+        // Online again: "Try again" reads an empty account and lets the learner in.
+        fetch.next = .none
+        await cloud.reconcileAtLaunch(store: store, userId: "user-1")
+        #expect(cloud.offersOfflineContinue == false)
+        #expect(cloud.launchGate(for: "user-1") == .ready)
+        // A stale tap does nothing.
+        cloud.continueOfflineAtLaunch(store: store, userId: "user-1")
+        #expect(DeferredRestoreMarker(defaults: scratch.defaults).isPending(for: "user-1") == false)
+    }
+}

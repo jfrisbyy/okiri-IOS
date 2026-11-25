@@ -44,10 +44,10 @@ struct DailyPlanEngineTests {
 
         #expect(!grammarLed.isColdStart && !pronunciationLed.isColdStart)
         #expect(grammarLed != pronunciationLed)
-        #expect(grammarLed.items.first?.modality == .reading, "grammar's prior is reading-heavy")
-        #expect(pronunciationLed.items.first?.modality != .reading, "pronunciation's prior is speaking + listening")
+        #expect(grammarLed.minuteItems.first?.modality == .reading, "grammar's prior is reading-heavy")
+        #expect(pronunciationLed.minuteItems.first?.modality != .reading, "pronunciation's prior is speaking + listening")
         func minutes(_ plan: DailyPlan, _ m: LearningModality) -> Int {
-            plan.items.first { $0.modality == m }?.targetMinutes ?? 0
+            plan.minuteItems.first { $0.modality == m }?.targetMinutes ?? 0
         }
         #expect(minutes(grammarLed, .reading) > minutes(pronunciationLed, .reading))
         #expect(minutes(pronunciationLed, .speaking) > minutes(grammarLed, .speaking))
@@ -72,8 +72,9 @@ struct DailyPlanEngineTests {
 
         let empty = engine.makePlan(from: output(store, ranked: []))
         #expect(empty.isColdStart)
-        #expect(Set(empty.items.map { $0.targetMinutes }).count == 1, "even split")
-        #expect(empty.items.count == 3)
+        #expect(Set(empty.minuteItems.map { $0.targetMinutes }).count == 1, "even split")
+        #expect(empty.minuteItems.count == 3)
+        #expect(empty.isLessonPaced, "the post-unlock lessons spine rides along")
 
         let gram = store.concept("gram")!
         let zeroScored = engine.makePlan(from: output(store, ranked: [ScoredConcept(concept: gram, score: 0, isFrontier: false)]))
@@ -88,12 +89,377 @@ struct DailyPlanEngineTests {
         #expect(!selection.rankedConcepts.isEmpty)
     }
 
-    @Test func nothingUnlockedMeansNoPlanRegardlessOfRanking() throws {
+    @Test func nothingChosenMeansNoMinutesRegardlessOfRanking() throws {
         let store = planStore()
         // The plan only allocates to chosen + unlocked modalities: choose none.
         store.preferences = UserPreferences(modalities: [], timeBudget: .light, daysPerWeekGoal: nil)
         let gram = try #require(store.concept("gram"))
         let plan = DailyPlanEngine(store: store).makePlan(from: output(store, ranked: [ScoredConcept(concept: gram, score: 1, isFrontier: false)]))
-        #expect(plan.items.isEmpty && plan.isColdStart)
+        #expect(plan.minuteItems.isEmpty && plan.isColdStart)
+        #expect(plan.unlockItem == nil, "nothing was chosen, so there is nothing to unlock toward")
+        #expect(plan.isLessonPaced, "the lessons spine is the whole plan")
+        #expect(plan.totalMinutes == 0)
+    }
+
+    // MARK: The plan never asks for more time than the learner chose
+
+    @Test func planTotalNeverExceedsTheTimeBudget() throws {
+        let store = planStore()
+        let engine = DailyPlanEngine(store: store)
+        let gram = try #require(store.concept("gram"))
+        let choices: [Set<LearningModality>] = [[.reading], [.reading, .speaking],
+                                                [.reading, .speaking, .listening],
+                                                Set(LearningModality.allCases)]
+        for budget in TimeBudget.allCases {
+            for chosen in choices {
+                store.preferences = UserPreferences(modalities: chosen, timeBudget: budget, daysPerWeekGoal: nil)
+                let tilted = engine.makePlan(from: output(store, ranked: [ScoredConcept(concept: gram, score: 1, isFrontier: false)]))
+                let cold = engine.makePlan(from: output(store, ranked: []))
+                #expect(tilted.totalMinutes <= budget.minutes, "tilted plan fits \(budget.label)")
+                #expect(cold.totalMinutes <= budget.minutes, "cold-start plan fits \(budget.label)")
+                #expect(tilted.totalMinutes > 0 && cold.totalMinutes > 0, "a budget always buys at least one row")
+                #expect(tilted.minuteItems.allSatisfy { $0.targetMinutes >= Tuning.planMinuteBlock })
+                #expect(cold.minuteItems.allSatisfy { $0.targetMinutes >= Tuning.planMinuteBlock })
+                #expect(Set(cold.minuteItems.map { $0.targetMinutes }).count <= 1, "the cold-start split stays even")
+            }
+        }
+    }
+
+    /// The regression: "~10 min" with all four activities chosen used to floor
+    /// every row at five minutes and prescribe twenty — twice what Preferences and
+    /// the Profile quote.
+    @Test func lightBudgetWithEveryActivityStaysInsideTenMinutes() throws {
+        let store = planStore()
+        store.preferences = UserPreferences(modalities: Set(LearningModality.allCases), timeBudget: .light, daysPerWeekGoal: nil)
+        let gram = try #require(store.concept("gram"))
+        let engine = DailyPlanEngine(store: store)
+        let plan = engine.makePlan(from: output(store, ranked: [ScoredConcept(concept: gram, score: 1, isFrontier: false)]))
+        #expect(plan.totalMinutes == TimeBudget.light.minutes)
+        #expect(plan.minuteItems.count == 2, "ten minutes seats two five-minute rows, not four")
+        #expect(plan.minuteItems.first?.modality == .reading, "the highest-share activities are the ones kept")
+
+        let cold = engine.makePlan(from: output(store, ranked: []))
+        #expect(cold.totalMinutes == TimeBudget.light.minutes && cold.minuteItems.count == 2)
+    }
+
+    // MARK: D2 — every chosen activity locked → an explicit unlock item
+
+    /// Real taxonomy with nothing mastered (coverage 0) but Reading recorded as
+    /// open: the higher modalities stay locked until 15 demonstrated minutes.
+    private func readingOpenStore(chosen: Set<LearningModality>) -> AppStore {
+        let s = EngineFixtures.store()
+        s.unlockedModalities.insert(LearningModality.reading.rawValue)
+        s.preferences = UserPreferences(modalities: chosen, timeBudget: .standard, daysPerWeekGoal: nil)
+        return s
+    }
+
+    @Test func allChosenLockedYieldsAnUnlockItemThatLeads() {
+        let s = readingOpenStore(chosen: [.listening, .speaking])
+        #expect(s.readiness(for: .reading) == .unlocked && s.readiness(for: .listening) == .locked)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+
+        let bar = ReadinessConfig.tuning.higherDemonstratedMinutes
+        let unlock = DailyPlanItem.unlock(via: .reading, minutes: bar)
+        #expect(plan.unlockItem == unlock)
+        #expect(plan.items.first == unlock, "the unlock action leads")
+        #expect(unlock.kind == .unlock && unlock.modality == .reading && unlock.target == bar)
+        #expect(unlock.targetMinutes == 0 && unlock.id == "unlock-reading" && unlock.isUnlock)
+        #expect(plan.minuteItems.isEmpty && !plan.isColdStart)
+        #expect(plan.isLessonPaced, "the lessons spine stays")
+        // Order follows LearningModality.allCases: speaking before listening.
+        #expect(plan.rationale == ReadinessCopy.unlockHeadline(for: [.speaking, .listening]))
+        #expect(plan.rationale == "\(bar) min of Reading unlocks Speaking & Listening")
+        // Progress toward the unlock item is lifetime reading minutes.
+        #expect(s.planProgress(for: unlock, now: EngineFixtures.now) == 0)
+        s.recordActivityMinutes(.reading, minutes: 8, now: EngineFixtures.now)
+        #expect(s.planProgress(for: unlock, now: EngineFixtures.now) == 8)
+    }
+
+    @Test func unlockItemDisappearsOnceTheMinutesOpenTheGate() {
+        let s = readingOpenStore(chosen: [.listening])
+        let bar = ReadinessConfig.tuning.higherDemonstratedMinutes
+        s.recordActivityMinutes(.reading, minutes: bar - 1, now: EngineFixtures.now)
+        #expect(s.readiness(for: .listening) == .locked)
+        #expect(DailyPlanEngine(store: s).makePlan(from: output(s, ranked: [])).unlockItem != nil)
+
+        // The promise holds: the demonstrated minutes open the higher modality even
+        // while coverage is below the reading bar (Reading is recorded open, B8).
+        s.recordActivityMinutes(.reading, minutes: 1, now: EngineFixtures.now)
+        #expect(s.readiness(for: .listening) == .unlocked)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.unlockItem == nil)
+        #expect(plan.minuteItems.map { $0.modality } == [.listening])
+        #expect(plan.isLessonPaced)
+    }
+
+    @Test func governorWithMinutesInHoldsWithoutAnUnlockItem() {
+        let s = readingOpenStore(chosen: [.listening])
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        s.recordActivityMinutes(.reading, minutes: ReadinessConfig.tuning.higherDemonstratedMinutes, now: EngineFixtures.now)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.unlockItem == nil, "the minutes are in; only the governor holds the gate")
+        #expect(plan.items.count == 1 && plan.isLessonPaced)
+        #expect(plan.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
+    }
+
+    /// firstrun-11-3: the plan of record caches its rationale for the day, while
+    /// Home's "Next unlock" line reads the governor live and stays silent when the
+    /// rationale is meant to name it. A mid-day governor flip leaves the two
+    /// disagreeing until Home re-plans (HomeView re-plans on `isGovernorActive`);
+    /// this holds the store side of that contract: a re-plan reconciles them.
+    @Test func replanningOnAGovernorFlipKeepsTheRationaleAndNextUnlockInStep() {
+        let s = readingOpenStore(chosen: [.reading, .listening])
+        let now = EngineFixtures.now
+        let calm = s.todaysPlan(now: now)
+        #expect(!s.isGovernorActive)
+        #expect(calm.rationale != ReadinessCopy.governorHeadline(for: [.listening]))
+        #expect(s.homeSurfaces.nextUnlock != nil, "governor off: the live line names the minutes bar")
+
+        // A window of check-in misses: the governor engages mid-day.
+        s.checkInHistory = Array(repeating: false, count: Tuning.governorWindow)
+        #expect(s.isGovernorActive)
+        #expect(s.homeSurfaces.nextUnlock == nil, "the live line defers to the plan's governor rationale")
+        #expect(s.todaysPlan(now: now) == calm, "the cached plan alone would never name the hold")
+        let held = s.recomputePlan(now: now)
+        #expect(held.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
+
+        // Recovery: the governor releases, and the re-planned day drops the review headline.
+        s.checkInHistory = []
+        #expect(!s.isGovernorActive && s.homeSurfaces.nextUnlock != nil)
+        #expect(s.recomputePlan(now: now).rationale != ReadinessCopy.governorHeadline(for: [.listening]))
+    }
+
+    @Test func governorBelowTheBarKeepsTheUnlockItemWithGovernorCopy() {
+        let s = readingOpenStore(chosen: [.listening])
+        s.checkInHistory = [false, false, false, false, true, true]
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.unlockItem != nil)
+        #expect(plan.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
+    }
+
+    // MARK: Post-unlock pacing — the lessons spine sizes to what is waiting
+
+    @Test func lessonsSpineSizesToDueAndCapturedMaterial() {
+        let s = readingOpenStore(chosen: [.reading])
+        let engine = DailyPlanEngine(store: s)
+        let now = EngineFixtures.now
+
+        #expect(engine.lessonTarget(now: now) == Tuning.unlockedLessonsPerDayMin, "nothing waiting → the floor")
+        var plan = engine.makePlan(from: output(s, ranked: []))
+        #expect(plan.lessonItem == .lessons(Tuning.unlockedLessonsPerDayMin))
+        #expect(plan.items.first?.kind == .lessons, "the spine leads the minutes rows")
+        #expect(plan.minuteItems.map { $0.modality } == [.reading])
+
+        s.gapsSinceLastLesson = Tuning.lessonSize + 1
+        #expect(engine.lessonTarget(now: now) == 2, "captures since the last lesson count")
+
+        s.gapsSinceLastLesson = 0
+        s.gaps = (0..<(2 * Tuning.lessonSize)).map { EngineFixtures.gap("due-\($0)", concept: nil, due: now) }
+        #expect(engine.lessonTarget(now: now) == 2, "due-now gaps count")
+
+        // A capture starts due now, so it is already in the due count: the two
+        // never add up (a sum would ask for 4 → the cap here).
+        s.gapsSinceLastLesson = Tuning.lessonSize + 1
+        #expect(engine.lessonTarget(now: now) == 2, "captures already due are not counted twice")
+        s.gapsSinceLastLesson = 0
+
+        s.gaps = (0..<(10 * Tuning.lessonSize)).map { EngineFixtures.gap("due-\($0)", concept: nil, due: now) }
+        #expect(engine.lessonTarget(now: now) == Tuning.foundationLessonsPerDay, "capped at the Foundation pace")
+        plan = engine.makePlan(from: output(s, ranked: []))
+        #expect(plan.lessonItem?.target == Tuning.foundationLessonsPerDay)
+
+        // Not-yet-due gaps do not inflate the spine.
+        s.gaps = (0..<(10 * Tuning.lessonSize)).map { EngineFixtures.gap("later-\($0)", concept: nil, due: now.addingTimeInterval(EngineFixtures.day)) }
+        #expect(engine.lessonTarget(now: now) == Tuning.unlockedLessonsPerDayMin)
+    }
+
+    @Test func lockedReadingKeepsTheFoundationPaceUntouched() {
+        let s = EngineFixtures.store()
+        s.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.items == [.lessons(Tuning.foundationLessonsPerDay)])
+        #expect(plan.unlockItem == nil && plan.minuteItems.isEmpty)
+    }
+
+    // MARK: Governor rationale (Pass 3 F6) once reading is open
+
+    @Test func governorRationaleStaysAfterUnlock() {
+        let s = readingOpenStore(chosen: [.reading])
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.rationale == ReadinessCopy.governorConsolidating)
+        #expect(plan.minuteItems.map { $0.modality } == [.reading], "reading stays open — never re-locked live")
+
+        // A chosen-but-locked activity is named in the governor rationale.
+        s.preferences = UserPreferences(modalities: [.reading, .listening], timeBudget: .standard, daysPerWeekGoal: nil)
+        let mixed = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(mixed.rationale == ReadinessCopy.governorHeadline(for: [.listening]))
+    }
+
+    // MARK: firstrun-10-6 — the Foundation rationale names the governor only when it holds reading
+
+    /// Below the bridge, coverage keeps reading shut and the rest of the Foundation
+    /// card says so ("Unlocks as you build the basics", "N of 14 skills — reading
+    /// opens here"). The plan rationale used to say "Consolidating your base before
+    /// opening reading" whenever the governor was active, blaming it for a gate it
+    /// was not holding.
+    @Test func foundationRationaleBlamesTheGovernorOnlyWhenItHoldsReading() {
+        let s = EngineFixtures.store()
+        s.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive && s.readiness(for: .reading) == .locked && !s.isReadingHeldByGovernor)
+        let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+        #expect(plan.isLessonPaced)
+        #expect(plan.rationale == ReadinessCopy.governorConsolidating)
+        #expect(!plan.rationale.contains("before opening reading"), "coverage, not the governor, holds reading here")
+    }
+
+    // MARK: firstrun-10-5 — the plan rationale says only what the data shows
+
+    @Test func rationaleNeverCallsANeverPractisedSkillAWeakSpot() {
+        let s = planStore()
+        let engine = DailyPlanEngine(store: s)
+        let fresh = EngineFixtures.concept("new-vocab", category: .vocabulary)
+        #expect(fresh.state == .neverObserved)
+        let weak = EngineFixtures.learning("weak-gram", mastery: 0.5, category: .grammar)
+        let uneven = [DailyPlanItem(modality: .reading, targetMinutes: 10), DailyPlanItem(modality: .watching, targetMinutes: 5)]
+
+        let onlyNew = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: fresh, score: 1, isFrontier: true)])
+        #expect(!onlyNew.contains("weak spots"), "\(onlyNew)")
+        #expect(onlyNew == "Today's new skills are vocabulary-heavy, so today leans reading.")
+
+        // The weak spot is the first PRACTISED, still-learning concept — not the frontier one ranked above it.
+        let mixed = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: fresh, score: 1, isFrontier: true),
+                                                           ScoredConcept(concept: weak, score: 0.5, isFrontier: false)])
+        #expect(mixed == "Your weak spots lately are grammar-heavy, so today leans reading.")
+
+        // A mastered concept (ranked for its check-in) is neither a weak spot nor a new skill.
+        let held = EngineFixtures.mastered("held", category: .pronunciation)
+        let checkIn = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: held, score: 1, isFrontier: false)])
+        #expect(checkIn == "Today leans reading.")
+
+        // firstrun-11-1: a band-inferred placement seed reads `.learning` with no answered
+        // evidence. The learner never practised it, so it is not a weak spot either.
+        var inferred = EngineFixtures.concept("seeded-gram", category: .grammar)
+        inferred.alpha += Tuning.placementInferredAlpha
+        inferred.observationCount += Tuning.placementInferredAlpha
+        inferred.inferredObservations += Tuning.placementInferredAlpha
+        #expect(inferred.state == .learning && inferred.testedObservations == 0)
+        let seededFirst = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: inferred, score: 1, isFrontier: false),
+                                                                 ScoredConcept(concept: fresh, score: 0.8, isFrontier: true)])
+        #expect(seededFirst == "Today's new skills are vocabulary-heavy, so today leans reading.")
+        let seededThenWeak = engine.rationale(for: uneven, ranked: [ScoredConcept(concept: inferred, score: 1, isFrontier: false),
+                                                                    ScoredConcept(concept: EngineFixtures.learning("weak-voc", mastery: 0.5, category: .vocabulary),
+                                                                                  score: 0.5, isFrontier: false)])
+        #expect(seededThenWeak == "Your weak spots lately are vocabulary-heavy, so today leans reading.")
+    }
+
+    @Test func rationaleSaysLeansOnlyWhenTheRowsAreUneven() {
+        let s = planStore()
+        let engine = DailyPlanEngine(store: s)
+        let weak = [ScoredConcept(concept: EngineFixtures.learning("w", mastery: 0.5, category: .vocabulary), score: 1, isFrontier: false)]
+        let even = [LearningModality.reading, .watching, .listening].map { DailyPlanItem(modality: $0, targetMinutes: 5) }
+        let flat = engine.rationale(for: even, ranked: weak)
+        #expect(!flat.contains("leans"), "\(flat)")
+        #expect(flat == "Your weak spots lately are vocabulary-heavy — today's an even spread across your activities.")
+
+        let twoLead = [DailyPlanItem(modality: .reading, targetMinutes: 10), DailyPlanItem(modality: .watching, targetMinutes: 10),
+                       DailyPlanItem(modality: .listening, targetMinutes: 5)]
+        #expect(engine.rationale(for: twoLead, ranked: weak) == "Your weak spots lately are vocabulary-heavy, so today leans reading and watching.")
+        let single = [DailyPlanItem(modality: .reading, targetMinutes: 20)]
+        #expect(engine.rationale(for: single, ranked: weak) == "Your weak spots lately are vocabulary-heavy, so today's time goes to reading.")
+        #expect(engine.rationale(for: single, ranked: []) == "Today's time goes to reading.")
+    }
+
+    // MARK: firstrun-10-8 — the plan's and the gate's numbers live in Tuning
+
+    @Test func planAndGateConstantsComeFromTuning() {
+        let plan = DailyPlanConfig.tuning
+        #expect(plan.topConceptCount == Tuning.planTopConceptCount)
+        #expect(plan.observedBlendMax == Tuning.planObservedBlendMax)
+        #expect(plan.observedSmoothing == Tuning.planObservedSmoothing)
+        #expect(plan.uniformFloor == Tuning.planUniformFloor)
+        let gate = ReadinessConfig.tuning
+        #expect(gate.readingUnlock == Tuning.readingUnlockCoverage && gate.readingBridge == Tuning.readingBridgeCoverage)
+        #expect(gate.higherUnlock == Tuning.higherUnlockCoverage && gate.higherDemonstratedMinutes == Tuning.higherDemonstratedMinutes)
+        #expect(TimeBudget.light.minutes == Tuning.timeBudgetLightMinutes)
+        #expect(TimeBudget.standard.minutes == Tuning.timeBudgetStandardMinutes)
+        #expect(TimeBudget.intense.minutes == Tuning.timeBudgetIntenseMinutes)
+        for prior in [Tuning.planPriorVocabulary, Tuning.planPriorGrammar, Tuning.planPriorPronunciation,
+                      Tuning.planPriorPhrasing, Tuning.planPriorRegister] {
+            #expect(abs(prior.values.reduce(0, +) - 1) < 1e-9, "each category prior is a distribution")
+        }
+    }
+
+    // MARK: Codable (D14) — the plan of record survives a relaunch with every item kind
+
+    @Test func planRoundTripsThroughCodable() throws {
+        let plan = DailyPlan(items: [.unlock(via: .reading, minutes: 15), .lessons(2),
+                                     DailyPlanItem(modality: .reading, targetMinutes: 10),
+                                     DailyPlanItem(modality: .listening, targetMinutes: 5)],
+                             rationale: "r", isColdStart: false)
+        let data = try JSONEncoder().encode(plan)
+        let decoded = try JSONDecoder().decode(DailyPlan.self, from: data)
+        #expect(decoded == plan)
+        #expect(decoded.unlockItem?.modality == .reading && decoded.lessonItem?.target == 2)
+        #expect(decoded.minuteItems.map { $0.target } == [10, 5])
+
+        // Tolerant: an item stored before `kind` existed is a minutes item.
+        let legacy = Data(#"{"items":[{"modality":"reading","target":10}],"rationale":"r","isColdStart":true}"#.utf8)
+        let old = try JSONDecoder().decode(DailyPlan.self, from: legacy)
+        #expect(old.items == [DailyPlanItem(modality: .reading, targetMinutes: 10)])
+    }
+
+    @Test func storePersistsAnUnlockItemAcrossRelaunch() {
+        let plan = DailyPlan(items: [.unlock(via: .reading, minutes: 15), .lessons(1)], rationale: "r", isColdStart: false)
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        _ = s.planForToday(now: EngineFixtures.now) { plan }
+        s.flush()
+        #expect(AppStore(persistence: scratch.defaults).dailyPlanOfRecord == plan)
+    }
+
+    // MARK: D14 — the store's plan of record is the engine's plan, once a day
+
+    @Test func todaysPlanIsComputedOnceAndRecomputedOnRequest() {
+        let s = readingOpenStore(chosen: [.reading])
+        let now = EngineFixtures.now
+        let first = s.todaysPlan(now: now)
+        #expect(first == s.dailyPlanOfRecord)
+        #expect(first.minuteItems.map { $0.modality } == [.reading])
+
+        // A preference change alone does not move the plan of record…
+        s.setPreferences(UserPreferences(modalities: [.reading], timeBudget: .intense, daysPerWeekGoal: nil))
+        #expect(s.todaysPlan(now: now.addingTimeInterval(3600)) == first)
+        // …until Home asks for a recompute (a bigger budget → more reading minutes).
+        let recomputed = s.recomputePlan(now: now.addingTimeInterval(3600))
+        #expect(recomputed != first)
+        #expect(recomputed.totalMinutes > first.totalMinutes)
+        #expect(recomputed.minuteItems.map { $0.modality } == [.reading])
+        #expect(s.dailyPlanOfRecord == recomputed)
+        #expect(s.todaysPlan(now: now.addingTimeInterval(7200)) == recomputed, "cached for the rest of the day")
+    }
+
+    // MARK: firstrun-2-4 — every plan carries the lessons spine
+
+    /// Home suppresses its separate "Lesson ready" card whenever the plan already
+    /// carries a `.lessons` row, because both start the same lesson. That is only
+    /// safe if the spine is really always there — locked and unlocked alike.
+    @Test func everyPlanCarriesALessonsSpineSoHomeNeverOffersTheSameLessonTwice() {
+        let now = EngineFixtures.now
+        let foundation = EngineFixtures.store()
+        foundation.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        #expect(foundation.readiness(for: .reading) != .unlocked)
+        let locked = DailyPlanEngine(store: foundation).makePlan(now: now)
+        #expect(locked.isLessonPaced && locked.lessonItem?.target == Tuning.foundationLessonsPerDay)
+
+        for chosen: Set<LearningModality> in [[.reading], [.listening, .speaking], []] {
+            let s = readingOpenStore(chosen: chosen)
+            let plan = DailyPlanEngine(store: s).makePlan(from: output(s, ranked: []))
+            #expect(plan.isLessonPaced, "no lessons spine for chosen = \(chosen)")
+            #expect(plan.lessonItem!.target >= Tuning.unlockedLessonsPerDayMin)
+        }
     }
 }

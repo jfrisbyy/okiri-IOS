@@ -11,62 +11,20 @@ import Foundation
 
 // MARK: - Models
 
-nonisolated struct ScenarioPhrase: Codable, Hashable, Identifiable {
-    var id = UUID()
-    var french: String
-    var english: String
-    var context: String
-
-    private enum CodingKeys: String, CodingKey { case id, french, english, context }
-}
-
-nonisolated struct ScenarioQA: Codable, Hashable, Identifiable {
-    var id = UUID()
-    var question: String
-    var questionEnglish: String
-    var answer: String
-    var answerEnglish: String
-
-    private enum CodingKeys: String, CodingKey { case id, question, questionEnglish, answer, answerEnglish }
-}
-
-nonisolated struct ScenarioTip: Codable, Hashable, Identifiable {
-    var id = UUID()
-    var tip: String
-    var category: String   // "native" | "cultural" | "practical"
-
-    private enum CodingKeys: String, CodingKey { case id, tip, category }
-}
-
-nonisolated struct ScenarioGuide: Codable, Hashable {
-    var title: String
-    var titleFrench: String
-    var summary: String
-    var keyPhrases: [ScenarioPhrase]
-    var questionsAndAnswers: [ScenarioQA]
-    var tips: [ScenarioTip]
-    var nativeExpressions: [ScenarioPhrase]
-}
-
-nonisolated struct SavedScenario: Codable, Hashable, Identifiable {
-    var id: String
-    var query: String
-    var guide: ScenarioGuide
-    var savedAt: Date
-}
+// The guide shape itself (and its tolerant decoding) lives in
+// `Models/ScenarioGuide.swift` so the harness can compile and test the parse.
 
 // MARK: - Generation
 
 nonisolated enum ScenariosService {
-    private static var apiKey: String { Config.EXPO_PUBLIC_OPENROUTER_API_KEY }
-    static var hasKey: Bool { !apiKey.isEmpty }
+    static var hasKey: Bool { TalkModelClient.hasKey }
 
-    /// Build a quick-reference survival guide for the given situation.
-    static func generate(for query: String) async -> ScenarioGuide? {
+    /// Build a quick-reference survival guide for the given situation. Resolves
+    /// to a learner-facing `TalkServiceFailure` (no key / offline / service / bad
+    /// reply) instead of nil so the surface can show the right state (E26).
+    static func generate(for query: String) async -> Result<ScenarioGuide, TalkServiceFailure> {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hasKey, !clean.isEmpty,
-              let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")
-        else { return nil }
+        guard !clean.isEmpty else { return .failure(.badResponse) }
 
         let system = "You are a French language survival guide. Reply ONLY with minified JSON matching this exact shape, no markdown, no extra keys: {\"title\":\"\",\"titleFrench\":\"\",\"summary\":\"\",\"keyPhrases\":[{\"french\":\"\",\"english\":\"\",\"context\":\"\"}],\"questionsAndAnswers\":[{\"question\":\"\",\"questionEnglish\":\"\",\"answer\":\"\",\"answerEnglish\":\"\"}],\"tips\":[{\"tip\":\"\",\"category\":\"native\"}],\"nativeExpressions\":[{\"french\":\"\",\"english\":\"\",\"context\":\"\"}]}"
 
@@ -82,48 +40,28 @@ nonisolated enum ScenariosService {
         Prioritize by usefulness. Keep phrases natural and immediately usable.
         """
 
-        let payload: [String: Any] = [
-            "model": "openai/gpt-4o-mini",
-            "messages": [
-                ["role": "system", "content": system],
-                ["role": "user", "content": user],
-            ],
-            "temperature": 0.4,
-        ]
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 45
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-            let decoded = try JSONDecoder().decode(OpenRouterResponse.self, from: data)
-            guard let content = decoded.choices.first?.message.content else { return nil }
-            return parseGuide(content)
-        } catch {
-            return nil
+        let result = await TalkModelClient.complete(
+            messages: [["role": "system", "content": system], ["role": "user", "content": user]],
+            temperature: Tuning.scenarioGuideTemperature,
+            timeout: Tuning.scenarioGuideTimeout
+        )
+        switch result {
+        case .failure(let failure):
+            return .failure(failure)
+        case .success(let content):
+            guard let guide = ScenarioGuide.parse(content) else { return .failure(.badResponse) }
+            return .success(guide)
         }
-    }
-
-    private static func parseGuide(_ raw: String) -> ScenarioGuide? {
-        guard let start = raw.firstIndex(of: "{"),
-              let end = raw.lastIndex(of: "}") else { return nil }
-        let json = String(raw[start...end])
-        guard let data = json.data(using: .utf8),
-              let guide = try? JSONDecoder().decode(ScenarioGuide.self, from: data),
-              !guide.keyPhrases.isEmpty else { return nil }
-        return guide
     }
 }
 
 // MARK: - Persistence
 
+/// Device-side storage for saved guides. The key itself is `ScenarioStorage`
+/// (Models) so `AppStore` can clear it between learners and back it up with the
+/// rest of the record; this type owns only the encoding.
 nonisolated enum ScenarioStore {
-    private static let key = "ff.savedScenarios.v1"
+    private static let key = ScenarioStorage.defaultsKey
 
     static func load() -> [SavedScenario] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
@@ -132,11 +70,13 @@ nonisolated enum ScenarioStore {
         return (try? decoder.decode([SavedScenario].self, from: data)) ?? []
     }
 
-    static func save(_ scenarios: [SavedScenario]) {
+    /// Encode guides for persistence. The blob itself is written by
+    /// `AppStore.setSavedScenarios`, never here: a direct `UserDefaults` write
+    /// leaves the record looking clean, so it is never uploaded and the next
+    /// reconcile applies the account's older blob over it (store-2-3).
+    static func encoded(_ scenarios: [SavedScenario]) -> Data? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(scenarios) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
+        return try? encoder.encode(scenarios)
     }
 }

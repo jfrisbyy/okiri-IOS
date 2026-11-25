@@ -6,10 +6,20 @@
 //  Sign in with Apple (ID token) and Google (ASWebAuthenticationSession OAuth).
 //  Sessions persist across launches via the Supabase client's own storage.
 //
+//  Sign-out is guarded: the coordinator's `beforeSignOut` hook must confirm the
+//  learner's progress reached the cloud, otherwise `signOut()` throws
+//  `SignOutBlocked` and nothing is torn down until the learner explicitly
+//  forces it.
+//
 
+import Foundation
 import SwiftUI
 import AuthenticationServices
 import Supabase
+import Observation
+
+/// Sign-out was refused because the final progress upload did not succeed.
+nonisolated struct SignOutBlocked: Error, Sendable {}
 
 @MainActor
 @Observable
@@ -20,14 +30,25 @@ final class AuthManager {
     var isLoading = true
     /// True while a sign-in round-trip is in flight.
     var isSigningIn = false
+    /// True while a sign-out (including its backup upload) is in flight.
+    var isSigningOut = false
+    /// True when the learner asked to sign out on this device. A session that ends
+    /// on its own (revoked or expired refresh token) leaves this false, and the
+    /// coordinator then KEEPS the local record instead of wiping unsynced progress
+    /// (store-1-2). Cleared as soon as a session is established again.
+    private(set) var didSignOutExplicitly = false
     var showError = false
     var errorMessage = ""
+    /// Non-nil when the build has no Supabase configuration; sign-in is impossible.
+    let configurationError: String?
 
-    /// Invoked right before the session is torn down on sign-out so a coordinator
-    /// can flush any pending cloud upload while the session is still valid.
-    var beforeSignOut: (() async -> Void)?
+    /// Invoked right before the session is torn down on sign-out so the
+    /// coordinator can flush local state and upload it while the session is
+    /// still valid. Return false when the upload failed; sign-out then throws
+    /// `SignOutBlocked` unless forced.
+    var beforeSignOut: (@MainActor () async -> Bool)?
 
-    private let client = SupabaseManager.client
+    private let client: SupabaseClient?
 
     struct AppUser: Equatable {
         let id: String
@@ -37,11 +58,19 @@ final class AuthManager {
     }
 
     init() {
+        client = SupabaseManager.client
+        configurationError = SupabaseManager.isConfigured ? nil : SupabaseManager.configurationMessage
+        guard let client else {
+            isLoading = false
+            return
+        }
         // Lives for the app's lifetime; AuthManager is a long-lived app-level state.
         Task { [weak self] in
-            guard let self else { return }
-            for await change in self.client.auth.authStateChanges {
-                await self.handle(event: change.event, session: change.session)
+            for await change in client.auth.authStateChanges {
+                guard let self else { return }
+                // The Task inherits the main actor and `handle` is synchronous
+                // on it, so no `await` here (compile-10-2).
+                self.handle(event: change.event, session: change.session)
             }
         }
     }
@@ -52,8 +81,17 @@ final class AuthManager {
         switch event {
         case .initialSession, .signedIn, .tokenRefreshed, .userUpdated:
             if let session {
+                // An EXPIRED stored session counts too: the client emits the
+                // Keychain session as the initial session and refreshes it in the
+                // background, so an offline launch opens the learner's record
+                // instead of the sign-in screen. Never gate this on
+                // `session.isExpired` — a revoked session ends with `.signedOut`
+                // once the refresh reaches the server (store-10-1).
                 user = Self.mapUser(session.user)
+                didSignOutExplicitly = false
             } else {
+                // No session on a refresh/update event means the session ended on
+                // its own — never a learner-initiated sign-out.
                 user = nil
             }
         case .signedOut:
@@ -83,6 +121,7 @@ final class AuthManager {
     /// Complete a native Sign in with Apple using the credential the system
     /// returned. `fullName` is only present on the very first authorization.
     func signInWithApple(idToken: String, fullName: String?) async {
+        guard let client else { setError(SupabaseManager.configurationMessage); return }
         isSigningIn = true
         defer { isSigningIn = false }
         do {
@@ -102,6 +141,7 @@ final class AuthManager {
     // MARK: - Sign in with Google (OAuth web flow)
 
     func signInWithGoogle() async {
+        guard let client else { setError(SupabaseManager.configurationMessage); return }
         isSigningIn = true
         defer { isSigningIn = false }
         do {
@@ -117,10 +157,22 @@ final class AuthManager {
 
     // MARK: - Sign out
 
-    func signOut() async {
-        await beforeSignOut?()
+    /// Back up progress, then end the session. Throws `SignOutBlocked` when the
+    /// backup did not succeed and `force` is false; the session is left intact
+    /// so the learner can retry or explicitly sign out anyway.
+    func signOut(force: Bool = false) async throws {
+        isSigningOut = true
+        defer { isSigningOut = false }
+
+        let backedUp = await beforeSignOut?() ?? true
+        if !backedUp && !force {
+            throw SignOutBlocked()
+        }
+        // From here the sign-out is going through, and it is the learner's own
+        // decision: the coordinator may clear the device record.
+        didSignOutExplicitly = true
         do {
-            try await client.auth.signOut()
+            try await client?.auth.signOut()
         } catch {
             // Local sign-out still proceeds via the auth state change.
         }

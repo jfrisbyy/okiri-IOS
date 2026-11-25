@@ -1,0 +1,194 @@
+[
+ {
+  "group": 1,
+  "concept": "e-muet",
+  "item": "le genou ('au g'nou', 'le g'nou'), l'épicerie ('épic'rie'), les devoirs ('mes d'voirs'), probe 'à demain' ('ad-min')",
+  "reason": "These are new items with reduced-pronunciation claims and English respellings. I believe they are standard metropolitan reductions, but a native speaker should confirm the respellings read naturally to learners."
+ },
+ {
+  "group": 1,
+  "concept": "elision",
+  "item": "probe 'le héros' and item quelqu'un note ('one of the very few places quelque loses its e')",
+  "reason": "New content. Please confirm the aspirated-h probe is a fair diagnostic at A1, and that the quelqu'un note is not overstated (quelqu'une also exists)."
+ },
+ {
+  "group": 1,
+  "concept": "e-muet / accent-marks",
+  "item": "un petit peu alt 'un peu', tout de suite alt 'immédiatement', la leçon alt 'le cours'",
+  "reason": "These alts accept correct non-target translations in the translation tier only (none fits its fill-blank). Please confirm the 'Also accepted' display of these synonyms is acceptable."
+ },
+ {
+  "group": 1,
+  "concept": "all four (pronunciation)",
+  "item": "question formats",
+  "reason": "Every item question tests meaning. The pronunciation point appears only in the notes and the 3 probes. This is an engine design limit that existing pronunciation skills share, not something content can fix."
+ },
+ {
+  "group": 2,
+  "concept": "vowel-contrasts",
+  "item": "ConceptTaxonomy.swift description 'tu / tout, les / lait'",
+  "reason": "Student finding: the concept card still shows les / lait, which the content never teaches. The pair is also unstable in current Parisian speech. I may edit only the staging file, so the lead should change the description in ios/FluentFrenchIOS/Models/ConceptTaxonomy.swift, for example to 'tu / tout, premier / première'. Only the description changes, not the id."
+ },
+ {
+  "group": 2,
+  "concept": "rhythm-and-stress",
+  "item": "rule and notes (stress described as lengthening, mute-e exception, syllabifications such as in-té-ré-SAN, un-nor-di-na-teur-por-TABL)",
+  "reason": "The phonetic respellings are approximations for English speakers. A native-speaker phonetician should confirm they are acceptable, especially the new mute-e exception clause."
+ },
+ {
+  "group": 2,
+  "concept": "il-faut-necessity",
+  "item": "teaching.rule still mentions 'the future is il faudra'",
+  "reason": "I removed the il faudra item as above band, since futur simple is not a prerequisite, but kept it in the rule as passing information. A human should decide whether to keep that mention."
+ },
+ {
+  "group": 3,
+  "concept": "venir-de-recent-past",
+  "item": "teaching.commonMistake: \"'j'ai juste mangé', which usually means 'all I did was eat'\"",
+  "reason": "In speech, 'j'ai juste mangé' can be ambiguous, and some speakers use it for 'I just ate'. A native speaker should confirm that 'usually' is fair wording."
+ },
+ {
+  "group": 3,
+  "concept": "venir-de-recent-past",
+  "item": "alts 'vient de démarrer' (le film) and 'viens de louper' / 'tu viens de louper' (le bus)",
+  "reason": "These alts were added because the learner flagged them. Both are standard in contemporary speech, but démarrer for a film and louper are informal. A native speaker should confirm that accepting them is the right call."
+ },
+ {
+  "group": 3,
+  "concept": "present-ir-re-verbs",
+  "item": "vous attendez ex: 'Bonjour, vous attendez le médecin ? Asseyez-vous, il arrive.'",
+  "reason": "The second clause is new and was added to rule out tu. A native speaker should give a quick naturalness check of 'il arrive' as 'he's on his way'."
+ },
+ {
+  "group": 4,
+  "concept": "etre-en-train-de",
+  "item": "en ce moment (blank 'ce moment')",
+  "reason": "The fill-blank now reads 'Je lis un livre passionnant en _____.' with answer 'ce moment'. This was chosen so that 'actuellement' cannot be a second right answer. A native speaker or the lead should confirm that a 2-word blank inside a fixed 3-word phrase is pedagogically acceptable."
+ },
+ {
+  "group": 4,
+  "concept": "futur-simple",
+  "item": "ce sera tout ?",
+  "reason": "'c'est tout ?' is still graded wrong for 'will that be all?', on purpose: the item teaches ce sera, and 'c'est tout ?' translates 'is that all?'. A native speaker may judge that shop clerks use both interchangeably enough to accept it."
+ },
+ {
+  "group": 4,
+  "concept": "on-pronoun",
+  "item": "teaching.contrast (On a faim. / Nous avons faim.)",
+  "reason": "The agreement point (on est prêts, with the adjective agreeing with the people meant) was removed from the card, not explained, so that A2 learners are not confused. A later concept may want to teach that agreement explicitly."
+ },
+ {
+  "group": 4,
+  "concept": "depuis-pendant-il-y-a",
+  "item": "ça fait une heure",
+  "reason": "The headword is now the standalone 'ça fait une heure' ('it's been an hour'). The example still shows the full ça fait … que + present structure. Please confirm that the standalone headword is the right unit to drill."
+ },
+ {
+  "group": 4,
+  "concept": "futur-simple / near-future (cross-concept)",
+  "item": "glosses using 'will' vs 'going to'",
+  "reason": "This is an engine-level limitation. sidesCollide cannot see that 'X will Y' and 'X is going to Y' are synonyms. This group avoids it by not reusing near-future verbs, but future content (e.g. conditionnel, future-after-quand) may hit it again."
+ },
+ {
+  "group": 5,
+  "concept": "contractions-au-du",
+  "item": "aller aux toilettes",
+  "reason": "Engine issue, not content. In a lesson too small to supply distractors, LessonScheduler.fallbackDistractors can offer 'to go' as a WRONG meaning of 'aller aux toilettes', because sidesCollide does not strip a trailing complement. Engineering should look at this; the item itself is correct."
+ },
+ {
+  "group": 5,
+  "concept": "de-after-negation",
+  "item": "ce ne sont pas des touristes",
+  "reason": "No alts now. A native speaker should confirm that no other translation of 'they're not tourists' needs accepting. The colloquial 'c'est pas des touristes' is deliberately not accepted."
+ },
+ {
+  "group": 5,
+  "concept": "de-after-negation",
+  "item": "teaching commonMistake 'je ne veux pas acheter des fleurs'",
+  "reason": "It is labelled a mistake. de is the standard form after a negated infinitive, but a contrastive 'des' is heard in speech. Confirm the wording is acceptable for A2."
+ },
+ {
+  "group": 5,
+  "concept": "demonstrative-adjectives",
+  "item": "examples cet ami / ces amis pronunciation hints ('sè-ta-mi', 'sé-za-mi')",
+  "reason": "Spelled-out pronunciation hints for these vowels vary in how speakers realise them. A native speaker should confirm they are acceptable."
+ },
+ {
+  "group": 6,
+  "concept": "adverb-formation",
+  "item": "lentement alts ['doucement']",
+  "reason": "doucement means 'gently/softly' as much as 'slowly'. A native speaker should confirm that accepting it for 'slowly' (and in 'Le temps passe _____ quand on attend.') is preferable to tagging the gloss."
+ },
+ {
+  "group": 6,
+  "concept": "adverb-formation",
+  "item": "facilement ex 'Mon frère se fâche facilement.' alts ['aisément']",
+  "reason": "The alt fits the blank, but 'se fâche aisément' is stylistically odd. Confirm, or drop 'aisément' if the fill-blank should not accept it."
+ },
+ {
+  "group": 6,
+  "concept": "comparatives-superlatives",
+  "item": "la plus grande de la classe (blank 'de la classe')",
+  "reason": "'dans la classe' after a superlative is heard in speech, and the item grades it wrong as the teaching intends ('normally de'). Confirm this strictness is acceptable at A2."
+ },
+ {
+  "group": 6,
+  "concept": "comparatives-superlatives",
+  "item": "le plus grand en 'the biggest / the tallest (masculine)'",
+  "reason": "The first side 'the biggest' still admits 'le plus gros' for some nouns. Confirm that the paired 'tallest' side disambiguates enough."
+ },
+ {
+  "group": 7,
+  "concept": "shopping-money-vocab / travel-transport-vocab vs group-8 everyday-transactions",
+  "item": "teaching on par carte / en espèces and on billet vs ticket",
+  "reason": "The group-8 everyday-transactions card (a phrasing concept) also teaches 'par carte or en espèces' and 'un billet de train (not un ticket de train)'. Both cards here need these words as core A2 vocabulary, so I kept them. The duplicated probe fr is removed. The lead or merge step should decide whether the phrasing card can shrink its version or link to these vocabulary concepts."
+ },
+ {
+  "group": 7,
+  "concept": "shopping-money-vocab",
+  "item": "la carte bancaire, alt 'carte bleue'",
+  "reason": "'carte bleue' is everyday metropolitan usage for any bank card, but it began as a brand name (CB). It is accepted, and shown as 'Also accepted', only in translation. A native speaker should confirm they are comfortable with the app advertising it."
+ },
+ {
+  "group": 7,
+  "concept": "daily-routine-vocab",
+  "item": "rentrer à la maison, fill-blank 'Le soir, je _____ à la maison vers sept heures.'",
+  "reason": "With the caption 'I go home', 'rentre' is the idiomatic answer. A learner could still type 'retourne' or 'vais', and both would be graded wrong. They are less idiomatic but not ungrammatical. I accepted that risk rather than add conjugated alts that would leak into translation."
+ },
+ {
+  "group": 8,
+  "concept": "feelings-vocab",
+  "item": "content (en 'happy / pleased', alt heureux)",
+  "reason": "content was re-glossed to collide with common-adjectives heureux 'happy', and heureux is now accepted in the fill-blank and translation for 'Je suis très content de te voir !'. A native speaker should confirm that accepting heureux there (and showing 'Also accepted: heureux') is the right teaching choice."
+ },
+ {
+  "group": 8,
+  "concept": "feelings-vocab",
+  "item": "avoir l'air (en 'to seem / to look (+ adjective)')",
+  "reason": "The gloss tag separates it from ressembler à. A true/false item claiming avoir l'air means 'to look like' is still arguable through avoir l'air de + noun. Check that this is acceptable."
+ },
+ {
+  "group": 8,
+  "concept": "everyday-transactions",
+  "item": "probe 'Vous voulez le ticket ?' (Do you want the receipt?)",
+  "reason": "I believe this is the standard checkout line in metropolitan France. Please confirm it, and that 'Do you have a ticket?' is a fair distractor."
+ },
+ {
+  "group": 8,
+  "concept": "everyday-transactions",
+  "item": "teaching contrast la carte / le menu; l'addition alt 'la note'",
+  "reason": "The contrast was softened to 'le menu is used loosely for the list too'. la note is kept as an accepted restaurant answer while the note calls it the hotel word. Confirm both match current usage."
+ },
+ {
+  "group": 8,
+  "concept": "polite-requests",
+  "item": "c'est gentil alt 'c'est sympa'; vous pourriez alt 'tu pourrais'",
+  "reason": "These are accepted as correct even though the surrounding exchange uses vous, because both are grammatical and natural replies. A register specialist may prefer to reject them in a register concept."
+ },
+ {
+  "group": 8,
+  "concept": "everyday-transactions",
+  "item": "un aller simple",
+  "reason": "There is no longer a duplicate: group-7 travel-transport-vocab's probes are now le quai / Le train est en retard. / J'ai raté mon train, and no file contains 'aller simple'. If group-7 is reverted before merge, the duplicate comes back."
+ }
+]

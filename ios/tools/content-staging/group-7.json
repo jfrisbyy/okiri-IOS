@@ -1,0 +1,946 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "shopping-money-vocab",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "In a shop you need three verbs: coûter (to cost: Ça coûte combien ?), payer (to pay) and essayer (to try on). You pay par carte (by card) or en espèces (in cash): the little words par and en are fixed. When the cashier gives the total, you hear ça fait + the amount: Ça fait douze euros. Watch the false friend la monnaie: it means change (coins, or the money handed back to you), while money in general is l'argent. Food shopping is faire les courses; going round the shops for fun is faire les magasins.",
+        "examples": [
+          {
+            "fr": "Ça coûte combien ?",
+            "en": "How much does it cost?",
+            "note": "The everyday way to ask a price; Combien ça coûte ? means the same."
+          },
+          {
+            "fr": "Je peux payer par carte ?",
+            "en": "Can I pay by card?",
+            "note": "par carte for a card, but en espèces for cash."
+          },
+          {
+            "fr": "Ça fait douze euros, s'il vous plaît.",
+            "en": "That comes to twelve euros, please.",
+            "note": "What the cashier says when giving the total: ça fait + the amount."
+          },
+          {
+            "fr": "Je fais les courses au supermarché le samedi.",
+            "en": "I do the food shopping at the supermarket on Saturdays.",
+            "note": "faire les courses is buying food and everyday things, not shopping for fun."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je n'ai pas de monnaie.",
+            "en": "I don't have any change.",
+            "note": "Not 'I have no money': for that, say Je n'ai pas d'argent."
+          },
+          {
+            "fr": "Je peux payer avec carte ?",
+            "en": "(wrong) Can I pay with card?",
+            "note": "With no article it is par carte; with an article or a possessive, avec ma carte or avec la carte also works."
+          }
+        ],
+        "commonMistake": "English speakers use la monnaie for 'money'; la monnaie is change, and money in general is l'argent: Je n'ai pas d'argent (I have no money) but Je n'ai pas de monnaie (I have no change)."
+      },
+      "probes": [
+        {
+          "fr": "Ça coûte combien ?",
+          "en": "How much does it cost?",
+          "ex": "Ce sac est joli, ça coûte combien ?",
+          "exEn": "This bag is pretty, how much does it cost?",
+          "options": [
+            "What time is it?",
+            "Where is the checkout?",
+            "Can I pay by card?"
+          ]
+        },
+        {
+          "fr": "Je n'ai pas de monnaie.",
+          "en": "I don't have any change.",
+          "ex": "Désolé, je n'ai pas de monnaie, seulement un billet de cinquante euros.",
+          "exEn": "Sorry, I don't have any change, only a fifty-euro note.",
+          "options": [
+            "I don't have any money.",
+            "I don't have a card.",
+            "I don't have a receipt."
+          ]
+        },
+        {
+          "fr": "Je peux l'essayer ?",
+          "en": "Can I try it on?",
+          "ex": "Cette veste me plaît, je peux l'essayer ?",
+          "exEn": "I like this jacket, can I try it on?",
+          "options": [
+            "Can I buy it?",
+            "Can I pay for it?",
+            "Can I exchange it?"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "le prix",
+          "en": "price",
+          "note": "Masculine; the final x is silent, and the word does not change in the plural (les prix).",
+          "ex": "Je regarde toujours le prix avant d'acheter.",
+          "exEn": "I always look at the price before buying.",
+          "diff": "easy",
+          "blank": "prix",
+          "alts": [
+            "prix"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "coûter",
+          "en": "to cost",
+          "note": "Written with û (ça coûte, ils coûtent); ask a price with Ça coûte combien ?",
+          "ex": "Combien coûte ce pull ?",
+          "exEn": "How much does this sweater cost?",
+          "diff": "easy",
+          "blank": "coûte",
+          "alts": [
+            "coûte"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "payer",
+          "en": "to pay",
+          "note": "Pay FOR something takes no extra word in French: payer le pain, not payer pour le pain.",
+          "ex": "Je peux payer par carte ?",
+          "exEn": "Can I pay by card?",
+          "diff": "easy",
+          "blank": "payer",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "en espèces",
+          "en": "in cash",
+          "note": "Fixed phrase with en; en liquide means the same and is a little more casual.",
+          "ex": "Je préfère payer en espèces.",
+          "exEn": "I prefer to pay in cash.",
+          "diff": "okay",
+          "blank": "en espèces",
+          "alts": [
+            "en liquide"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la carte bancaire",
+          "en": "bank card",
+          "note": "Feminine; pay with it par carte, and at the till you often hear just la carte or la carte bleue.",
+          "ex": "J'ai oublié ma carte bancaire à la maison.",
+          "exEn": "I left my bank card at home.",
+          "diff": "okay",
+          "blank": "bancaire",
+          "alts": [
+            "bancaire",
+            "carte bleue"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la monnaie",
+          "en": "change (coins)",
+          "note": "Feminine; a false friend: it is the coins or the money handed back, not money in general (l'argent).",
+          "ex": "Vous avez de la monnaie ?",
+          "exEn": "Do you have any change?",
+          "diff": "okay",
+          "blank": "monnaie",
+          "alts": [
+            "monnaie"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la caisse",
+          "en": "checkout (till)",
+          "note": "Feminine; the person working there is le caissier or la caissière.",
+          "ex": "Il y a beaucoup de monde à la caisse.",
+          "exEn": "There are a lot of people at the checkout.",
+          "diff": "okay",
+          "blank": "caisse",
+          "alts": [
+            "caisse"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la taille",
+          "en": "size (clothes)",
+          "note": "Feminine; it is used for clothes, while shoe size is la pointure.",
+          "ex": "Cette robe est trop petite, il me faut la taille au-dessus.",
+          "exEn": "This dress is too small, I need the next size up.",
+          "diff": "okay",
+          "blank": "taille",
+          "alts": [
+            "taille"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "essayer",
+          "en": "to try on",
+          "note": "Also means 'to try' in general; in a shop it is what you do in the fitting room before buying.",
+          "ex": "Je peux essayer cette veste ?",
+          "exEn": "Can I try on this jacket?",
+          "diff": "easy",
+          "blank": "essayer",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "les soldes",
+          "en": "the sales",
+          "note": "Masculine plural in this sense (les soldes d'été); in France the main sales run at set dates in winter and in summer.",
+          "ex": "J'ai acheté ce manteau pendant les soldes.",
+          "exEn": "I bought this coat in the sales.",
+          "diff": "okay",
+          "blank": "soldes",
+          "alts": [
+            "soldes"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "faire les courses",
+          "en": "to do the shopping",
+          "note": "Buying food and everyday things; going round shops for fun is faire les magasins.",
+          "ex": "Je fais les courses le samedi matin.",
+          "exEn": "I do the shopping on Saturday mornings.",
+          "diff": "okay",
+          "blank": "courses",
+          "alts": [
+            "courses"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le distributeur",
+          "en": "cash machine",
+          "note": "Masculine; short for distributeur de billets, the machine you take money out of.",
+          "ex": "Il y a un distributeur près d'ici ?",
+          "exEn": "Is there a cash machine near here?",
+          "diff": "hard",
+          "blank": "distributeur",
+          "alts": [
+            "distributeur",
+            "distributeur de billets"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "travel-transport-vocab",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "To say how you travel, French uses en when you sit inside the vehicle (en train, en voiture, en avion, en bus, en métro) and à when you ride on it or walk (à vélo, à pied). The verb for taking transport is prendre: je prends le bus, on prend le métro. A ticket for a train or a plane is un billet, while for the metro or a city bus it is usually un ticket. At the station you wait sur le quai, and if the train leaves without you, you have raté (missed) it.",
+        "examples": [
+          {
+            "fr": "Je vais à Lyon en train.",
+            "en": "I'm going to Lyon by train.",
+            "note": "You sit inside the train, so it takes en."
+          },
+          {
+            "fr": "Elle va au travail à vélo.",
+            "en": "She goes to work by bike.",
+            "note": "You ride on a bike, not inside it, so it takes à."
+          },
+          {
+            "fr": "On prend le bus ou le métro ?",
+            "en": "Shall we take the bus or the metro?",
+            "note": "prendre is the verb for using any kind of transport."
+          },
+          {
+            "fr": "Un billet pour Marseille, s'il vous plaît.",
+            "en": "A ticket to Marseille, please.",
+            "note": "billet is the word for a train or plane ticket; pour gives the destination."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je viens à pied.",
+            "en": "I'm coming on foot.",
+            "note": "Walking takes à, like à vélo; en is only for vehicles you sit inside (en voiture)."
+          },
+          {
+            "fr": "un ticket de métro",
+            "en": "a metro ticket",
+            "note": "For the metro and city buses it is un ticket; for trains and planes it is un billet."
+          }
+        ],
+        "commonMistake": "English speakers translate 'by car' or 'by train' with par or avec; French says en voiture, en train, and à pied, à vélo for walking and cycling."
+      },
+      "probes": [
+        {
+          "fr": "le quai",
+          "en": "platform",
+          "ex": "Il y a beaucoup de monde sur le quai.",
+          "exEn": "There are a lot of people on the platform.",
+          "options": [
+            "ticket office",
+            "waiting room",
+            "timetable"
+          ]
+        },
+        {
+          "fr": "Le train est en retard.",
+          "en": "The train is late.",
+          "ex": "Le train est en retard, on va attendre un peu.",
+          "exEn": "The train is late, we'll wait a bit.",
+          "options": [
+            "The train is early.",
+            "The train is cancelled.",
+            "The train is full."
+          ]
+        },
+        {
+          "fr": "J'ai raté mon train.",
+          "en": "I missed my train.",
+          "ex": "J'ai raté mon train, je vais prendre le suivant.",
+          "exEn": "I missed my train, I'll take the next one.",
+          "options": [
+            "I caught my train.",
+            "I changed trains.",
+            "I booked my train."
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "le billet",
+          "en": "ticket (train, plane)",
+          "note": "Masculine; used for trains, planes and concerts (a metro or bus ticket is usually un ticket), and it also means a banknote: un billet de dix euros.",
+          "ex": "J'ai acheté un billet de train pour Bordeaux.",
+          "exEn": "I bought a train ticket to Bordeaux.",
+          "diff": "easy",
+          "blank": "billet",
+          "alts": [
+            "billet"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le quai",
+          "en": "platform",
+          "note": "Masculine; the qu sounds like k, and you wait sur le quai (on the platform).",
+          "ex": "Je vous attends sur le quai.",
+          "exEn": "I'll wait for you on the platform.",
+          "diff": "okay",
+          "blank": "quai",
+          "alts": [
+            "quai"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la valise",
+          "en": "suitcase",
+          "note": "Feminine; faire sa valise means to pack your suitcase.",
+          "ex": "Je fais ma valise ce soir.",
+          "exEn": "I'm packing my suitcase tonight.",
+          "diff": "easy",
+          "blank": "valise",
+          "alts": [
+            "valise"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le vol",
+          "en": "flight",
+          "note": "Masculine; vol also means a theft, but in travel talk it is a flight.",
+          "ex": "Notre vol a deux heures de retard.",
+          "exEn": "Our flight is two hours late.",
+          "diff": "okay",
+          "blank": "vol",
+          "alts": [
+            "vol"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "en retard",
+          "en": "late (behind schedule)",
+          "note": "Often with être (je suis en retard) or arriver (arriver en retard); the opposite is en avance (early).",
+          "ex": "Désolé, je suis en retard à cause des bouchons.",
+          "exEn": "Sorry, I'm late because of the traffic jams.",
+          "diff": "okay",
+          "blank": "retard",
+          "alts": [
+            "retard"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "l'arrêt de bus",
+          "en": "bus stop",
+          "note": "Masculine (un arrêt); the vowel start makes le shrink to l'.",
+          "ex": "On se retrouve à l'arrêt de bus.",
+          "exEn": "We'll meet at the bus stop.",
+          "diff": "okay",
+          "blank": "l'arrêt",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le métro",
+          "en": "metro (underground)",
+          "note": "Masculine; short for le métropolitain, and you go en métro or prendre le métro.",
+          "ex": "Pour aller au musée, c'est plus rapide en métro.",
+          "exEn": "To get to the museum, it's quicker by underground.",
+          "diff": "easy",
+          "blank": "métro",
+          "alts": [
+            "métro"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "à pied",
+          "en": "on foot",
+          "note": "Walking takes à, never en: aller à pied means to walk somewhere.",
+          "ex": "J'y vais à pied, c'est tout près.",
+          "exEn": "I'm going on foot, it's very close.",
+          "diff": "easy",
+          "blank": "pied",
+          "alts": [
+            "pied"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "en voiture",
+          "en": "by car",
+          "note": "Inside a vehicle takes en: en voiture, en train, en avion.",
+          "ex": "Nous partons en vacances en voiture.",
+          "exEn": "We are going on holiday by car.",
+          "diff": "easy",
+          "blank": "voiture",
+          "alts": [
+            "voiture"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le guichet",
+          "en": "ticket office",
+          "note": "Masculine; the counter where you buy tickets or ask for information.",
+          "ex": "Vous pouvez acheter votre billet au guichet.",
+          "exEn": "You can buy your ticket at the ticket office.",
+          "diff": "hard",
+          "blank": "guichet",
+          "alts": [
+            "guichet"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la correspondance",
+          "en": "connection (change of train)",
+          "note": "Feminine; the train or bus you change to on the way, and the time you have to catch it.",
+          "ex": "À Lyon, nous avons une correspondance de vingt minutes.",
+          "exEn": "In Lyon, we have a twenty-minute connection.",
+          "diff": "hard",
+          "blank": "correspondance",
+          "alts": [
+            "correspondance"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "rater",
+          "en": "to miss (a train, a bus)",
+          "note": "Everyday verb; manquer means the same and is a little more formal.",
+          "ex": "Dépêche-toi, on va rater le bus !",
+          "exEn": "Hurry up, we're going to miss the bus!",
+          "diff": "okay",
+          "blank": "rater",
+          "alts": [
+            "manquer"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "health-vocab",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "At the doctor's or the pharmacy, most illnesses are nouns used with avoir: avoir de la fièvre (to have a temperature), avoir un rhume (to have a cold), avoir la grippe (to have the flu). To say how you feel, use se sentir (je me sens fatigué) or aller (je vais mieux). You prendre rendez-vous (make an appointment) chez le médecin, and he or she gives you an ordonnance (prescription) to take to the pharmacy. Watch the false friend: un médicament is a medicine you take, while la médecine is the science doctors study.",
+        "examples": [
+          {
+            "fr": "J'ai de la fièvre depuis deux jours.",
+            "en": "I've had a temperature for two days.",
+            "note": "fièvre is feminine, so 'some fever' is de la; depuis + present for something still going on."
+          },
+          {
+            "fr": "Je ne me sens pas bien.",
+            "en": "I don't feel well.",
+            "note": "se sentir is reflexive, so ne... pas wraps me sens."
+          },
+          {
+            "fr": "Prenez un comprimé le matin et le soir.",
+            "en": "Take one tablet in the morning and one in the evening.",
+            "note": "prendre is the verb for taking medicine, as in English."
+          },
+          {
+            "fr": "Elle a pris rendez-vous chez le médecin.",
+            "en": "She made an appointment at the doctor's.",
+            "note": "prendre rendez-vous is the fixed way to say 'make an appointment'; chez means 'at the place of'."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "un médicament",
+            "en": "a medicine (a drug)",
+            "note": "La médecine is the science: elle fait des études de médecine (she is studying medicine)."
+          },
+          {
+            "fr": "Je suis malade.",
+            "en": "I'm ill.",
+            "note": "malade is an adjective used with être, but the illness itself is a noun used with avoir: j'ai un rhume, j'ai la grippe."
+          }
+        ],
+        "commonMistake": "English speakers call the pills or syrup they take 'une médecine'; what you take is un médicament, and la médecine is the field doctors study."
+      },
+      "probes": [
+        {
+          "fr": "J'ai de la fièvre.",
+          "en": "I have a temperature.",
+          "ex": "J'ai de la fièvre et mal à la gorge.",
+          "exEn": "I have a temperature and a sore throat.",
+          "options": [
+            "I have a cold.",
+            "I have a cough.",
+            "I have the flu."
+          ]
+        },
+        {
+          "fr": "Je voudrais prendre rendez-vous.",
+          "en": "I'd like to make an appointment.",
+          "ex": "Bonjour, je voudrais prendre rendez-vous avec le docteur Martin.",
+          "exEn": "Hello, I'd like to make an appointment with Dr Martin.",
+          "options": [
+            "I'd like to cancel an appointment.",
+            "I'd like to buy some medicine.",
+            "I'd like to see the pharmacist."
+          ]
+        },
+        {
+          "fr": "Vous avez quelque chose contre la toux ?",
+          "en": "Do you have anything for a cough?",
+          "ex": "Bonjour, vous avez quelque chose contre la toux, s'il vous plaît ?",
+          "exEn": "Hello, do you have anything for a cough, please?",
+          "options": [
+            "Do you have anything for a headache?",
+            "Do you have anything for a fever?",
+            "Do you have anything for a sore throat?"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "le rendez-vous",
+          "en": "appointment",
+          "note": "Masculine, with a hyphen; prendre rendez-vous means to make an appointment.",
+          "ex": "J'ai pris rendez-vous chez le dentiste pour lundi.",
+          "exEn": "I've made an appointment at the dentist's for Monday.",
+          "diff": "okay",
+          "blank": "rendez-vous",
+          "alts": [
+            "rendez-vous"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la fièvre",
+          "en": "fever",
+          "note": "Feminine; French says avoir de la fièvre where English says 'have a fever' or 'have a temperature'.",
+          "ex": "Mon fils a de la fièvre depuis hier soir.",
+          "exEn": "My son has had a fever since last night.",
+          "diff": "okay",
+          "blank": "fièvre",
+          "alts": [
+            "fièvre"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le rhume",
+          "en": "cold (illness)",
+          "note": "Masculine; avoir un rhume is to have a cold, while froid is cold as a temperature.",
+          "ex": "J'ai un rhume, je reste à la maison.",
+          "exEn": "I've got a cold, I'm staying at home.",
+          "diff": "okay",
+          "blank": "rhume",
+          "alts": [
+            "rhume"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la grippe",
+          "en": "flu",
+          "note": "Feminine; French says avoir la grippe, with la, just like 'have the flu'.",
+          "ex": "Elle a la grippe, elle ne vient pas au bureau.",
+          "exEn": "She has the flu, she isn't coming to the office.",
+          "diff": "easy",
+          "blank": "grippe",
+          "alts": [
+            "grippe"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tousser",
+          "en": "to cough",
+          "note": "Regular -er verb with a double s; the noun is la toux (a cough).",
+          "ex": "Il tousse beaucoup la nuit.",
+          "exEn": "He coughs a lot at night.",
+          "diff": "okay",
+          "blank": "tousse",
+          "alts": [
+            "tousse"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "malade",
+          "en": "ill (sick)",
+          "note": "Adjective used with être; the same form for masculine and feminine (il est malade, elle est malade).",
+          "ex": "Je ne vais pas à l'école, je suis malade.",
+          "exEn": "I'm not going to school, I'm ill.",
+          "diff": "easy",
+          "blank": "malade",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "le médicament",
+          "en": "medicine (a drug)",
+          "note": "Masculine; a false friend: la médecine is the science, not the pills you take.",
+          "ex": "Prenez ce médicament trois fois par jour.",
+          "exEn": "Take this medicine three times a day.",
+          "diff": "okay",
+          "blank": "médicament",
+          "alts": [
+            "médicament"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "l'ordonnance",
+          "en": "prescription",
+          "note": "Feminine (une ordonnance); the doctor writes it and you take it to the pharmacy.",
+          "ex": "Le médecin m'a donné une ordonnance.",
+          "exEn": "The doctor gave me a prescription.",
+          "diff": "hard",
+          "blank": "ordonnance",
+          "alts": [
+            "ordonnance"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le pharmacien",
+          "en": "pharmacist",
+          "note": "Masculine; a woman is la pharmacienne, and you can ask them for advice about small health problems.",
+          "ex": "Demandez conseil au pharmacien.",
+          "exEn": "Ask the pharmacist for advice.",
+          "diff": "okay",
+          "blank": "pharmacien",
+          "alts": [
+            "pharmacien",
+            "la pharmacienne"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "se sentir",
+          "en": "to feel (well or unwell)",
+          "note": "Reflexive: je me sens, tu te sens, il se sent; follow it with bien, mal or an adjective.",
+          "ex": "Je ne me sens pas très bien ce matin.",
+          "exEn": "I don't feel very well this morning.",
+          "diff": "hard",
+          "blank": "me sens",
+          "alts": [
+            "me sens"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "aller mieux",
+          "en": "to be getting better",
+          "note": "Uses aller, not être: je vais mieux (I'm better), ça va mieux (things are better).",
+          "ex": "Merci, je vais mieux aujourd'hui.",
+          "exEn": "Thanks, I'm better today.",
+          "diff": "okay",
+          "blank": "mieux",
+          "alts": [
+            "mieux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "les urgences",
+          "en": "A&E (emergency department)",
+          "note": "Always plural in this sense; aller aux urgences is to go to A&E.",
+          "ex": "On l'a emmené aux urgences hier soir.",
+          "exEn": "They took him to A&E last night.",
+          "diff": "hard",
+          "blank": "urgences",
+          "alts": [
+            "urgences"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "daily-routine-vocab",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "An ordinary day in French is told mostly with reflexive verbs in the present: je me réveille, je me douche, je me prépare, je pars au travail, je rentre, je me couche, je m'endors. Keep apart the pairs English blurs: se réveiller (to wake up) is not se lever (to get up), and se coucher (to go to bed) is not s'endormir (to fall asleep). The same verb without the pronoun acts on someone or something else: je me réveille (I wake up) but je réveille mon fils (I wake my son). Chores use faire: faire la vaisselle, faire le ménage.",
+        "examples": [
+          {
+            "fr": "Je me réveille à six heures, mais je me lève à six heures et quart.",
+            "en": "I wake up at six, but I get up at a quarter past six.",
+            "note": "Two different moments: se réveiller is opening your eyes, se lever is getting out of bed."
+          },
+          {
+            "fr": "Je me douche, je me prépare et je pars au travail.",
+            "en": "I shower, get ready and leave for work.",
+            "note": "A routine is a chain of present-tense verbs; only the reflexive ones carry me."
+          },
+          {
+            "fr": "Le soir, je me lave les cheveux.",
+            "en": "In the evening, I wash my hair.",
+            "note": "With a body part, French says les, not mes: me already shows whose hair it is."
+          },
+          {
+            "fr": "Je me couche à onze heures, mais je m'endors vers minuit.",
+            "en": "I go to bed at eleven, but I fall asleep around midnight.",
+            "note": "se coucher is lying down in bed; s'endormir is actually falling asleep."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je réveille mon fils à sept heures.",
+            "en": "I wake my son up at seven.",
+            "note": "Without me, réveiller acts on someone else; je me réveille is waking yourself."
+          },
+          {
+            "fr": "Je me lave mes cheveux.",
+            "en": "(wrong) I wash my hair.",
+            "note": "me already says whose hair it is, so the body part takes les: je me lave les cheveux."
+          }
+        ],
+        "commonMistake": "English speakers drop the reflexive pronoun ('je douche à sept heures') because English says 'I shower' with no 'myself'; keep it in every routine verb that has one: je me douche, je me prépare, je m'endors."
+      },
+      "probes": [
+        {
+          "fr": "Je m'endors tard.",
+          "en": "I fall asleep late.",
+          "ex": "Le week-end, je m'endors tard.",
+          "exEn": "At the weekend, I fall asleep late.",
+          "options": [
+            "I go to bed late.",
+            "I wake up late.",
+            "I get up late."
+          ]
+        },
+        {
+          "fr": "Elle se maquille.",
+          "en": "She puts on her make-up.",
+          "ex": "Elle se maquille avant de sortir.",
+          "exEn": "She puts on her make-up before going out.",
+          "options": [
+            "She gets dressed.",
+            "She takes a shower.",
+            "She does her hair."
+          ]
+        },
+        {
+          "fr": "faire la vaisselle",
+          "en": "to do the dishes",
+          "ex": "Ce soir, c'est toi qui fais la vaisselle.",
+          "exEn": "Tonight, you're the one doing the dishes.",
+          "options": [
+            "to do the laundry",
+            "to do the shopping",
+            "to set the table"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "le réveil",
+          "en": "alarm clock",
+          "note": "Masculine; it comes from se réveiller (to wake up), and it sonne (rings) in the morning.",
+          "ex": "Mon réveil sonne à six heures et demie.",
+          "exEn": "My alarm clock goes off at half past six.",
+          "diff": "easy",
+          "blank": "réveil",
+          "alts": [
+            "réveil"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "se doucher",
+          "en": "to shower",
+          "note": "Reflexive: je me douche, tu te douches; prendre une douche (to take a shower) is just as common.",
+          "ex": "Je me douche avant le petit-déjeuner.",
+          "exEn": "I shower before breakfast.",
+          "diff": "okay",
+          "blank": "me douche",
+          "alts": [
+            "me douche",
+            "prendre une douche"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "se raser",
+          "en": "to shave",
+          "note": "Reflexive: il se rase; without se, raser means to shave someone or something else.",
+          "ex": "Mon père se rase tous les jours.",
+          "exEn": "My father shaves every day.",
+          "diff": "okay",
+          "blank": "se rase",
+          "alts": [
+            "se rase"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "se maquiller",
+          "en": "to put on make-up",
+          "note": "Reflexive: elle se maquille; le maquillage is the make-up itself.",
+          "ex": "Elle se maquille devant le miroir.",
+          "exEn": "She puts on her make-up in front of the mirror.",
+          "diff": "hard",
+          "blank": "se maquille",
+          "alts": [
+            "se maquille"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "se préparer",
+          "en": "to get ready",
+          "note": "Reflexive: je me prépare; préparer without me means to prepare something, like a meal.",
+          "ex": "Je me prépare en dix minutes.",
+          "exEn": "I get ready in ten minutes.",
+          "diff": "okay",
+          "blank": "me prépare",
+          "alts": [
+            "me prépare"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "s'endormir",
+          "en": "to fall asleep",
+          "note": "Reflexive and irregular like dormir: je m'endors, il s'endort; se coucher is only going to bed.",
+          "ex": "Le soir, je m'endors très vite.",
+          "exEn": "In the evening, I fall asleep very quickly.",
+          "diff": "hard",
+          "blank": "m'endors",
+          "alts": [
+            "m'endors"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "partir au travail",
+          "en": "to leave for work",
+          "note": "partir is irregular: je pars, tu pars, il part; it is not reflexive.",
+          "ex": "Je pars au travail à huit heures.",
+          "exEn": "I leave for work at eight o'clock.",
+          "diff": "okay",
+          "blank": "pars",
+          "alts": [
+            "pars"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "rentrer à la maison",
+          "en": "to go home",
+          "note": "Here rentrer means going back to where you live, like rentrer chez soi; it is not reflexive.",
+          "ex": "Le soir, je rentre à la maison vers sept heures.",
+          "exEn": "In the evening, I go home at about seven.",
+          "diff": "okay",
+          "blank": "rentre",
+          "alts": [
+            "rentre",
+            "rentrer",
+            "rentrer chez soi",
+            "rentrer chez moi"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "faire la sieste",
+          "en": "to have a nap",
+          "note": "A short sleep after lunch, a habit many people keep at the weekend; faire une sieste is just as correct.",
+          "ex": "Après le déjeuner, mon grand-père fait la sieste.",
+          "exEn": "After lunch, my grandfather has a nap.",
+          "diff": "okay",
+          "blank": "sieste",
+          "alts": [
+            "sieste",
+            "faire une sieste"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "faire le ménage",
+          "en": "to do the housework",
+          "note": "Cleaning the home (dusting, hoovering); not to be confused with faire la vaisselle (doing the dishes).",
+          "ex": "Le samedi, nous faisons le ménage.",
+          "exEn": "On Saturdays, we do the housework.",
+          "diff": "okay",
+          "blank": "ménage",
+          "alts": [
+            "ménage"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "faire la vaisselle",
+          "en": "to do the dishes",
+          "note": "la vaisselle is the dishes themselves; you do it after the meal.",
+          "ex": "Après le dîner, je fais la vaisselle.",
+          "exEn": "After dinner, I do the dishes.",
+          "diff": "okay",
+          "blank": "vaisselle",
+          "alts": [
+            "vaisselle"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "tous les matins",
+          "en": "every morning",
+          "note": "tous les + plural for a habit: tous les matins, tous les soirs.",
+          "ex": "Je bois un café tous les matins.",
+          "exEn": "I drink a coffee every morning.",
+          "diff": "easy",
+          "blank": "matins",
+          "alts": [
+            "matins",
+            "chaque matin"
+          ],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

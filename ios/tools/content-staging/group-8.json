@@ -1,0 +1,1177 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "id": "leisure-sports-vocab",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "Most hobbies hang on three verbs. jouer à + a sport or game: jouer au tennis, jouer aux cartes. jouer de + a musical instrument: jouer de la guitare, jouer du violon. faire de + an activity: faire du vélo, faire de la natation, faire de la randonnée, with du, de la, de l' or des matching the noun. To say what you like, use aimer + le / la + the noun (j'aime la lecture) or + an infinitive (j'aime nager). To say what you did at the weekend, put the same verbs in the passé composé: j'ai joué au tennis, j'ai fait du vélo, je suis allé au cinéma.",
+        "examples": [
+          {
+            "fr": "Je joue au tennis le samedi.",
+            "en": "I play tennis on Saturdays.",
+            "note": "A sport or game takes jouer à, and à + le contracts to au."
+          },
+          {
+            "fr": "Elle joue de la guitare.",
+            "en": "She plays the guitar.",
+            "note": "An instrument takes jouer de: de la guitare, du violon."
+          },
+          {
+            "fr": "Tu fais du sport ? — Oui, je fais de la natation.",
+            "en": "Do you do any sport? — Yes, I swim.",
+            "note": "faire de + the activity is the default way to talk about a sport you do, even where English says 'go' or 'do'."
+          },
+          {
+            "fr": "Ce week-end, j'ai fait du vélo et je suis allé au cinéma.",
+            "en": "This weekend, I went cycling and went to the cinema.",
+            "note": "The weekend story goes in the passé composé: avoir with faire, être with aller."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je vais au travail à vélo.",
+            "en": "I go to work by bike.",
+            "note": "To get somewhere by bike is aller à vélo; faire du vélo is cycling as an activity in its own right."
+          },
+          {
+            "fr": "Je fais du natation.",
+            "en": "(wrong) I go swimming.",
+            "note": "natation is feminine, so the little word is de la: je fais de la natation."
+          }
+        ],
+        "commonMistake": "English speakers use one verb for everything ('play football', 'play the guitar', 'go cycling'); French says jouer à for a sport, jouer de for an instrument, and faire de for an activity: le samedi, je fais du vélo. aller à vélo only says how you get somewhere."
+      },
+      "probes": [
+        {
+          "fr": "la piscine",
+          "en": "swimming pool",
+          "ex": "On va à la piscine samedi ?",
+          "exEn": "Shall we go to the pool on Saturday?",
+          "options": [
+            "gym",
+            "stadium",
+            "beach"
+          ]
+        },
+        {
+          "fr": "Tu fais du sport ?",
+          "en": "Do you do any sport?",
+          "ex": "Tu fais du sport en ce moment ?",
+          "exEn": "Are you doing any sport at the moment?",
+          "options": [
+            "Do you like sport?",
+            "Do you watch sport?",
+            "Are you going to the gym?"
+          ]
+        },
+        {
+          "fr": "Qu'est-ce que tu as fait ce week-end ?",
+          "en": "What did you do at the weekend?",
+          "ex": "Salut ! Qu'est-ce que tu as fait ce week-end ?",
+          "exEn": "Hi! What did you do at the weekend?",
+          "options": [
+            "What are you doing this weekend?",
+            "What do you do at weekends?",
+            "Where did you go last week?"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "les loisirs",
+          "en": "hobbies / leisure activities",
+          "note": "Masculine plural (un loisir); the everyday word, in conversation and on forms, for what you do in your free time.",
+          "ex": "Quels sont tes loisirs ?",
+          "exEn": "What are your hobbies?",
+          "diff": "easy",
+          "blank": "loisirs",
+          "alts": [
+            "loisirs",
+            "passe-temps"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le temps libre",
+          "en": "free time",
+          "note": "Masculine; libre means free as in available, not free of charge, which is gratuit.",
+          "ex": "Qu'est-ce que tu fais pendant ton temps libre ?",
+          "exEn": "What do you do in your free time?",
+          "diff": "okay",
+          "blank": "temps libre",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "faire du vélo",
+          "en": "to go cycling",
+          "note": "faire du + a masculine activity: cycling for its own sake. To get somewhere by bike is aller à vélo; the bike itself is un vélo.",
+          "ex": "Le samedi matin, je fais du vélo avec mon père.",
+          "exEn": "On Saturday mornings, I go cycling with my dad.",
+          "diff": "easy",
+          "blank": "vélo",
+          "alts": [
+            "vélo"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "la natation",
+          "en": "swimming",
+          "note": "Feminine, so faire de la natation; the verb is nager (je nage) and the pool is la piscine.",
+          "ex": "Je fais de la natation le mardi.",
+          "exEn": "I go swimming on Tuesdays.",
+          "diff": "okay",
+          "blank": "natation",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "faire de la randonnée",
+          "en": "to go hiking",
+          "note": "randonnée is feminine, so de la; in casual speech people shorten it to faire de la rando.",
+          "ex": "J'aime faire de la randonnée en montagne.",
+          "exEn": "I like hiking in the mountains.",
+          "diff": "okay",
+          "blank": "faire de la randonnée",
+          "alts": [
+            "faire de la rando"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "courir",
+          "en": "to run",
+          "note": "Irregular: je cours, tu cours, il court, nous courons; the past participle is couru (j'ai couru).",
+          "ex": "Je cours deux fois par semaine.",
+          "exEn": "I run twice a week.",
+          "diff": "okay",
+          "blank": "cours",
+          "alts": [
+            "cours"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "le match",
+          "en": "match / game (sport)",
+          "note": "Masculine, plural les matchs; any competitive game between two sides: un match de foot, un match de tennis.",
+          "ex": "On regarde le match ce soir ?",
+          "exEn": "Shall we watch the game tonight?",
+          "diff": "easy",
+          "blank": "match",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "l'équipe",
+          "en": "team",
+          "note": "Feminine (une équipe), even for a men's team; because it starts with a vowel, 'my team' is mon équipe.",
+          "ex": "Mon équipe a gagné samedi.",
+          "exEn": "My team won on Saturday.",
+          "diff": "easy",
+          "blank": "équipe",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "gagner",
+          "en": "to win",
+          "note": "Regular -er verb that also means to earn (gagner de l'argent); the opposite is perdre, to lose.",
+          "ex": "Lyon a gagné deux à zéro.",
+          "exEn": "Lyon won two-nil.",
+          "diff": "okay",
+          "blank": "gagné",
+          "alts": [
+            "gagné"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "les jeux vidéo",
+          "en": "video games",
+          "note": "vidéo never takes an s here: un jeu vidéo, des jeux vidéo; you play them with jouer à, so jouer aux jeux vidéo.",
+          "ex": "Mon frère joue aux jeux vidéo le soir.",
+          "exEn": "My brother plays video games in the evening.",
+          "diff": "okay",
+          "blank": "jeux vidéo",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la lecture",
+          "en": "reading",
+          "note": "Feminine; a false friend: it means reading, not a lecture, which is un cours or une conférence.",
+          "ex": "J'adore la lecture et le cinéma.",
+          "exEn": "I love reading and films.",
+          "diff": "okay",
+          "blank": "lecture",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "se promener",
+          "en": "to go for a walk",
+          "note": "Reflexive: je me promène (è before a silent ending), nous nous promenons; the noun is une promenade, and se balader is a casual equivalent.",
+          "ex": "Il fait beau, on va se promener ?",
+          "exEn": "It's nice out, shall we go for a walk?",
+          "diff": "okay",
+          "blank": "se promener",
+          "alts": [
+            "se balader",
+            "faire une promenade"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "describing-people",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "Describe someone's build and character with être + adjective (il est mince, elle est timide) and their features with avoir + les + the feature + adjective: il a les cheveux courts, elle a les yeux verts. For what a person has on their face or wears, say avoir une barbe and porter des lunettes. Every adjective agrees with the person: -eux becomes -euse (paresseux, paresseuse), many adjectives in -eur become -euse (travailleur, travailleuse), and some change more (gentil, gentille; roux, rousse). To compare someone with a relative, use ressembler à: il ressemble à sa mère.",
+        "examples": [
+          {
+            "fr": "Elle a les yeux verts et les cheveux longs.",
+            "en": "She has green eyes and long hair.",
+            "note": "avoir + les + feature + adjective: the colour or length comes after the noun."
+          },
+          {
+            "fr": "Mon père est grand et il porte des lunettes.",
+            "en": "My father is tall and wears glasses.",
+            "note": "être for what he is, porter for what he wears."
+          },
+          {
+            "fr": "Ma cousine est drôle mais un peu paresseuse.",
+            "en": "My cousin is funny but a bit lazy.",
+            "note": "drôle already ends in -e, so it does not change for a woman; paresseux becomes paresseuse."
+          },
+          {
+            "fr": "Tu ressembles à ton frère.",
+            "en": "You look like your brother.",
+            "note": "ressembler is always followed by à before the person."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Il est petit. (not Il est court.)",
+            "en": "He is short.",
+            "note": "court is for length (hair, a film, a skirt); a short person is petit."
+          },
+          {
+            "fr": "Elle ressemble à sa mère. (not Elle ressemble sa mère.)",
+            "en": "She looks like her mother.",
+            "note": "ressembler needs à before the person it compares with."
+          }
+        ],
+        "commonMistake": "English speakers leave the adjective in its dictionary form whoever they describe ('ma sœur est paresseux'); when the person is a woman the adjective changes too: paresseuse, gentille, rousse, bavarde."
+      },
+      "probes": [
+        {
+          "fr": "Elle est mince.",
+          "en": "She is slim.",
+          "ex": "Elle est mince et elle a les cheveux longs.",
+          "exEn": "She is slim and has long hair.",
+          "options": [
+            "She is tall.",
+            "She is shy.",
+            "She is short."
+          ]
+        },
+        {
+          "fr": "Il ressemble à son père.",
+          "en": "He looks like his father.",
+          "ex": "Il ressemble à son père : même nez, même sourire.",
+          "exEn": "He looks like his father: same nose, same smile.",
+          "options": [
+            "He looks at his father.",
+            "He is waiting for his father.",
+            "He is talking to his father."
+          ]
+        },
+        {
+          "fr": "Ma sœur est bavard.",
+          "en": "wrong: it should be bavarde, because sœur is feminine",
+          "ask": "Is “Ma sœur est bavard.” right?",
+          "ex": "Ma sœur est bavarde.",
+          "exEn": "My sister is chatty.",
+          "options": [
+            "correct: bavard never changes",
+            "wrong: it should be bavards",
+            "correct: adjectives after être never agree"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "mince",
+          "en": "slim / thin",
+          "note": "Same form for both genders because it already ends in -e; the neutral, polite word for a slim build.",
+          "ex": "Elle est grande et mince.",
+          "exEn": "She is tall and slim.",
+          "diff": "easy",
+          "blank": "mince",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "roux",
+          "en": "red-haired / ginger",
+          "note": "Feminine rousse, plural roux; natural red hair is roux, not rouge: il a les cheveux roux.",
+          "ex": "Sa fille est rousse, comme sa mère.",
+          "exEn": "His daughter has red hair, like her mother.",
+          "diff": "hard",
+          "blank": "rousse",
+          "alts": [
+            "rousse"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "court",
+          "en": "short (in length)",
+          "note": "Feminine courte; it is for length (hair, a film, a skirt), while a short person is petit.",
+          "ex": "Il a les cheveux courts.",
+          "exEn": "He has short hair.",
+          "diff": "okay",
+          "blank": "courts",
+          "alts": [
+            "courts"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "les lunettes",
+          "en": "glasses (spectacles)",
+          "note": "Always feminine plural, even for one pair; sunglasses are des lunettes de soleil, and you porter des lunettes.",
+          "ex": "Mon père porte des lunettes.",
+          "exEn": "My father wears glasses.",
+          "diff": "easy",
+          "blank": "lunettes",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "la barbe",
+          "en": "beard",
+          "note": "Feminine; une moustache is feminine too, and 'he has a beard' is il a une barbe or il porte la barbe.",
+          "ex": "Mon oncle a une barbe grise.",
+          "exEn": "My uncle has a grey beard.",
+          "diff": "easy",
+          "blank": "barbe",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "gentil",
+          "en": "kind",
+          "note": "Feminine gentille, with a double l; the everyday word for a kind, considerate person.",
+          "ex": "Ma grand-mère est très gentille.",
+          "exEn": "My grandmother is very kind.",
+          "diff": "okay",
+          "blank": "gentille",
+          "alts": [
+            "gentille"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "drôle",
+          "en": "funny",
+          "note": "Same form for both genders; before a noun, un drôle de... means an odd... (un drôle de type, an odd guy).",
+          "ex": "Ton copain est vraiment drôle !",
+          "exEn": "Your friend is really funny!",
+          "diff": "easy",
+          "blank": "drôle",
+          "alts": [
+            "marrant"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "timide",
+          "en": "shy",
+          "note": "Same form for both genders; the opposite is sociable (outgoing).",
+          "ex": "Au début, il est un peu timide.",
+          "exEn": "At first, he's a bit shy.",
+          "diff": "easy",
+          "blank": "timide",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "bavard",
+          "en": "talkative / chatty",
+          "note": "Feminine bavarde; related to the verb bavarder, to chat.",
+          "ex": "Ma voisine est très bavarde.",
+          "exEn": "My neighbour is very chatty.",
+          "diff": "okay",
+          "blank": "bavarde",
+          "alts": [
+            "bavarde"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "paresseux",
+          "en": "lazy",
+          "note": "-eux becomes -euse in the feminine (paresseuse); the final x is silent.",
+          "ex": "Mon colocataire est paresseux : il ne fait jamais la vaisselle.",
+          "exEn": "My flatmate is lazy: he never does the washing-up.",
+          "diff": "okay",
+          "blank": "paresseux",
+          "alts": [
+            "fainéant"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "travailleur",
+          "en": "hard-working",
+          "note": "As an adjective it means hard-working; feminine travailleuse, the same -eur / -euse pattern as serveur / serveuse.",
+          "ex": "C'est une étudiante très travailleuse.",
+          "exEn": "She's a very hard-working student.",
+          "diff": "hard",
+          "blank": "travailleuse",
+          "alts": [
+            "travailleuse"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ressembler à",
+          "en": "to look like / to resemble",
+          "note": "Always followed by à, which contracts with le: elle ressemble à sa mère, il ressemble au voisin.",
+          "ex": "Tu ressembles beaucoup à ta mère.",
+          "exEn": "You look a lot like your mother.",
+          "diff": "okay",
+          "blank": "ressembles",
+          "alts": [
+            "ressembles"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "feelings-vocab",
+      "category": "vocabulary",
+      "teaching": {
+        "rule": "Feelings are mostly être + an adjective that agrees with the person who feels them: il est content, elle est contente, ils sont déçus. Give the cause with de + a noun or an infinitive (content de mon travail, fier de toi, triste de partir) or with parce que + a whole clause. To say how someone looks from the outside, use avoir l'air + adjective: tu as l'air triste. Moods take de: être de bonne humeur, de mauvaise humeur. A few feelings are verbs rather than adjectives: s'ennuyer (to be bored), s'inquiéter (to worry).",
+        "examples": [
+          {
+            "fr": "Elle est contente de son nouvel appartement.",
+            "en": "She is pleased with her new flat.",
+            "note": "contente takes -e for a woman, and de introduces what pleases her."
+          },
+          {
+            "fr": "Nous sommes très fiers de toi.",
+            "en": "We are very proud of you.",
+            "note": "Plural subject, so fiers with -s; de + the person you are proud of."
+          },
+          {
+            "fr": "Tu as l'air triste, qu'est-ce qui se passe ?",
+            "en": "You look sad, what's going on?",
+            "note": "avoir l'air + adjective says how someone seems to others, not how they say they feel."
+          },
+          {
+            "fr": "Ne t'inquiète pas, tout va bien.",
+            "en": "Don't worry, everything's fine.",
+            "note": "s'inquiéter is the verb behind inquiet; this is the everyday way to reassure someone."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Je m'ennuie. (not Je suis ennuyé.)",
+            "en": "I'm bored.",
+            "note": "je suis ennuyé means I'm bothered or in an awkward position; to say you are bored use the reflexive verb s'ennuyer."
+          },
+          {
+            "fr": "Il est énervé. (not Il est nerveux.)",
+            "en": "He's annoyed.",
+            "note": "énervé means irritated or worked up; nerveux describes a tense, jumpy person and is not the word for being annoyed."
+          }
+        ],
+        "commonMistake": "English speakers read énervé as 'nervous' and déçu as 'deceived'; énervé means annoyed and déçu means disappointed, so before an exam say je suis stressé, not je suis énervé."
+      },
+      "probes": [
+        {
+          "fr": "Je suis déçu.",
+          "en": "I'm disappointed.",
+          "ex": "Je suis déçu, on a perdu le match.",
+          "exEn": "I'm disappointed, we lost the match.",
+          "options": [
+            "I'm deceived.",
+            "I'm surprised.",
+            "I'm worried."
+          ]
+        },
+        {
+          "fr": "Elle est inquiète.",
+          "en": "She is worried.",
+          "ex": "Elle est inquiète pour son fils.",
+          "exEn": "She is worried about her son.",
+          "options": [
+            "She is annoyed.",
+            "She is proud.",
+            "She is quiet."
+          ]
+        },
+        {
+          "fr": "Il est de mauvaise humeur.",
+          "en": "He's in a bad mood.",
+          "ex": "Ne lui parle pas, il est de mauvaise humeur.",
+          "exEn": "Don't talk to him, he's in a bad mood.",
+          "options": [
+            "He's in a good mood.",
+            "He's in a bad way.",
+            "He has a bad sense of humour."
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "content",
+          "en": "happy / pleased",
+          "note": "Feminine contente; the everyday word for being happy or pleased about something, with de + what pleases you. heureux is the warmer, deeper word.",
+          "ex": "Je suis très content de te voir !",
+          "exEn": "I'm really happy to see you!",
+          "diff": "easy",
+          "blank": "content",
+          "alts": [
+            "heureux"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "triste",
+          "en": "sad",
+          "note": "Same form for both genders; the noun is la tristesse.",
+          "ex": "Elle est triste parce que son chat est malade.",
+          "exEn": "She is sad because her cat is ill.",
+          "diff": "easy",
+          "blank": "triste",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "inquiet",
+          "en": "worried",
+          "note": "Feminine inquiète, with a grave accent; the verb is s'inquiéter, as in ne t'inquiète pas (don't worry).",
+          "ex": "Ma mère est inquiète : il est minuit et mon frère n'est pas rentré.",
+          "exEn": "My mother is worried: it's midnight and my brother isn't home.",
+          "diff": "okay",
+          "blank": "inquiète",
+          "alts": [
+            "inquiète"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "énervé",
+          "en": "annoyed / irritated",
+          "note": "A false friend: énervé means irritated or worked up, not nervous (for nerves before an exam say stressé); much stronger is en colère, angry.",
+          "ex": "Il est énervé parce que son train est en retard.",
+          "exEn": "He's annoyed because his train is late.",
+          "diff": "okay",
+          "blank": "énervé",
+          "alts": [
+            "agacé"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "déçu",
+          "en": "disappointed",
+          "note": "Past participle of décevoir, feminine déçue; a false friend, it never means deceived.",
+          "ex": "Je suis déçu : le concert est annulé.",
+          "exEn": "I'm disappointed: the concert has been cancelled.",
+          "diff": "okay",
+          "blank": "déçu",
+          "alts": [
+            "déçue"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "surpris",
+          "en": "surprised",
+          "note": "Feminine surprise, where the s is now sounded; surpris de + infinitive: surpris de te voir.",
+          "ex": "Elle a été très surprise de me voir.",
+          "exEn": "She was very surprised to see me.",
+          "diff": "okay",
+          "blank": "surprise",
+          "alts": [
+            "surprise"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "fier",
+          "en": "proud",
+          "note": "The final r is pronounced; feminine fière, with a grave accent. fier de + the person or thing.",
+          "ex": "Je suis fier de toi !",
+          "exEn": "I'm proud of you!",
+          "diff": "okay",
+          "blank": "fier",
+          "alts": [
+            "fière"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "jaloux",
+          "en": "jealous",
+          "note": "Feminine jalouse; jaloux de + the person you envy.",
+          "ex": "Il est jaloux de son grand frère.",
+          "exEn": "He's jealous of his big brother.",
+          "diff": "okay",
+          "blank": "jaloux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "de bonne humeur",
+          "en": "in a good mood",
+          "note": "humeur is feminine, hence bonne; the phrase is être de bonne humeur, with de, never dans.",
+          "ex": "Aujourd'hui, Paul est de bonne humeur.",
+          "exEn": "Paul is in a good mood today.",
+          "diff": "okay",
+          "blank": "bonne",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "de mauvaise humeur",
+          "en": "in a bad mood",
+          "note": "The opposite of de bonne humeur; mauvais becomes mauvaise because humeur is feminine.",
+          "ex": "Le matin, je suis souvent de mauvaise humeur.",
+          "exEn": "In the morning, I'm often in a bad mood.",
+          "diff": "okay",
+          "blank": "mauvaise",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "s'ennuyer",
+          "en": "to be bored",
+          "note": "French says it with a reflexive verb: je m'ennuie, tu t'ennuies; je suis ennuyé means I'm bothered, not bored.",
+          "ex": "Je m'ennuie, il n'y a rien à faire.",
+          "exEn": "I'm bored, there's nothing to do.",
+          "diff": "hard",
+          "blank": "m'ennuie",
+          "alts": [
+            "m'ennuie"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "avoir l'air",
+          "en": "to seem / to look (+ adjective)",
+          "note": "avoir l'air + adjective describes how someone seems from the outside; conjugate avoir: elle a l'air, ils ont l'air. To say who someone looks like, use ressembler à.",
+          "ex": "Tu as l'air fatigué, ça va ?",
+          "exEn": "You look tired, are you OK?",
+          "diff": "okay",
+          "blank": "l'air",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "soulagé",
+          "en": "relieved",
+          "note": "Feminine soulagée; it comes from soulager, to relieve.",
+          "ex": "Je suis soulagé : l'examen est fini.",
+          "exEn": "I'm relieved: the exam is over.",
+          "diff": "okay",
+          "blank": "soulagé",
+          "alts": [
+            "soulagée"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "everyday-transactions",
+      "category": "phrasing",
+      "teaching": {
+        "rule": "Shops, cafés and ticket windows run on a handful of fixed lines, and knowing both sides lets you follow the exchange. You say bonjour, then je voudrais... or je vais prendre..., c'est combien ? for the price, c'est tout when you have everything, and l'addition, s'il vous plaît in a restaurant. The staff say Et avec ceci ? (anything else?), Sur place ou à emporter ? and Vous payez comment ?, which you answer with par carte or en espèces. At the station ask for un aller simple or un aller-retour pour + the town. Leave with merci, au revoir.",
+        "examples": [
+          {
+            "fr": "— Bonjour, deux croissants, s'il vous plaît. — Et avec ceci ? — C'est tout, merci.",
+            "en": "— Hello, two croissants, please. — Anything else? — That's all, thanks.",
+            "note": "The bakery exchange in three lines: your request, the assistant's 'anything else?', and your 'that's all'."
+          },
+          {
+            "fr": "Je vais prendre le menu du jour.",
+            "en": "I'll have the set menu of the day.",
+            "note": "Ordering in a restaurant: le menu is a fixed-price set meal, while the full list of dishes is la carte."
+          },
+          {
+            "fr": "— Vous payez comment ? — Par carte.",
+            "en": "— How are you paying? — By card.",
+            "note": "par carte and en espèces are the two answers you need at the till."
+          },
+          {
+            "fr": "Un aller-retour pour Marseille, s'il vous plaît.",
+            "en": "A return to Marseille, please.",
+            "note": "At a ticket window, name the kind of ticket, then pour + the destination."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "un billet de train (not un ticket de train)",
+            "en": "a train ticket",
+            "note": "For trains, planes and concerts the word is un billet; un ticket is for the metro or the bus, and un ticket de caisse is a till receipt."
+          },
+          {
+            "fr": "La carte, s'il vous plaît.",
+            "en": "The menu, please.",
+            "note": "la carte is the standard word for the full list of dishes; le menu strictly means a fixed-price set meal, though many people also use it loosely for the list."
+          }
+        ],
+        "commonMistake": "English speakers wait for the bill to arrive on its own; in a French café or restaurant the waiter usually brings l'addition only when you ask for it, so catch their eye and say l'addition, s'il vous plaît."
+      },
+      "probes": [
+        {
+          "fr": "Vous payez comment ?",
+          "en": "How are you paying?",
+          "ex": "— Ça fait douze euros. Vous payez comment ? — Par carte.",
+          "exEn": "— That's twelve euros. How are you paying? — By card.",
+          "options": [
+            "How much is it?",
+            "Do you need a bag?",
+            "Is that everything?"
+          ]
+        },
+        {
+          "fr": "Vous voulez le ticket ?",
+          "en": "Do you want the receipt?",
+          "ex": "— Vous voulez le ticket ? — Non merci, ça va.",
+          "exEn": "— Do you want the receipt? — No thanks, I'm fine.",
+          "options": [
+            "Do you want a bag?",
+            "Do you have a ticket?",
+            "Do you want your change?"
+          ]
+        },
+        {
+          "fr": "Vous avez choisi ?",
+          "en": "Are you ready to order?",
+          "ex": "Bonsoir, vous avez choisi ?",
+          "exEn": "Good evening, are you ready to order?",
+          "options": [
+            "Have you booked a table?",
+            "Have you paid?",
+            "Did you enjoy your meal?"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "C'est combien ?",
+          "en": "How much is it? / How much does it cost?",
+          "note": "The simplest way to ask a price; name or point at the thing first: ce pull, c'est combien ? At the till, ça fait combien ? asks for the total.",
+          "ex": "Excusez-moi, ce pull, c'est combien ?",
+          "exEn": "Excuse me, how much is this jumper?",
+          "diff": "easy",
+          "blank": "combien",
+          "alts": [
+            "ça coûte combien ?",
+            "combien ça coûte ?",
+            "ça fait combien ?",
+            "combien ça fait ?"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je vais prendre",
+          "en": "I'll have (ordering)",
+          "note": "The usual way to order in a café or restaurant, followed by the dish or drink; je prends is just as common.",
+          "ex": "Pour moi, je vais prendre une salade niçoise.",
+          "exEn": "For me, I'll have a salade niçoise.",
+          "diff": "easy",
+          "blank": "prendre",
+          "alts": [
+            "je prends",
+            "je prendrai"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "l'addition",
+          "en": "the bill (restaurant)",
+          "note": "Feminine; in a café or restaurant you ask for it when you are ready to pay. In a hotel the bill is la note.",
+          "ex": "On peut avoir l'addition, s'il vous plaît ?",
+          "exEn": "Can we have the bill, please?",
+          "diff": "easy",
+          "blank": "l'addition",
+          "alts": [
+            "la note"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Sur place ou à emporter ?",
+          "en": "Eat in or take away?",
+          "note": "What a bakery or fast-food counter asks you; answer sur place (to eat here) or à emporter (to take with you).",
+          "ex": "Bonjour ! Sur place ou à emporter ?",
+          "exEn": "Hello! Eat in or take away?",
+          "diff": "okay",
+          "blank": "à emporter",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je cherche",
+          "en": "I'm looking for",
+          "note": "The usual opening line in a shop once you have said bonjour; chercher takes a direct object, with no word for 'for'.",
+          "ex": "Bonjour, je cherche un cadeau pour ma mère.",
+          "exEn": "Hello, I'm looking for a present for my mother.",
+          "diff": "easy",
+          "blank": "cherche",
+          "alts": [
+            "cherche"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "une table pour deux",
+          "en": "a table for two",
+          "note": "How you ask for a table on arrival at a restaurant; give the number of people after pour.",
+          "ex": "Bonsoir, une table pour deux, s'il vous plaît.",
+          "exEn": "Good evening, a table for two, please.",
+          "diff": "easy",
+          "blank": "pour deux",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "Et avec ceci ?",
+          "en": "Anything else?",
+          "note": "The shop assistant's line after you have asked for something; Et avec ça ? is the same, a little more casual.",
+          "ex": "— Une baguette, s'il vous plaît. — Et avec ceci ?",
+          "exEn": "— A baguette, please. — Anything else?",
+          "diff": "okay",
+          "blank": "Et avec ceci",
+          "alts": [
+            "et avec ça ?"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "C'est tout.",
+          "en": "That's all.",
+          "note": "The answer to Et avec ceci ? once you have everything; add merci: c'est tout, merci.",
+          "ex": "Non merci, c'est tout.",
+          "exEn": "No thanks, that's all.",
+          "diff": "easy",
+          "blank": "tout",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un aller simple",
+          "en": "a one-way ticket / a single",
+          "note": "Masculine; un aller is the outward journey, so simple means one way only.",
+          "ex": "Un aller simple pour Lyon, s'il vous plaît.",
+          "exEn": "A single to Lyon, please.",
+          "diff": "okay",
+          "blank": "aller simple",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un aller-retour",
+          "en": "a return ticket / a round trip",
+          "note": "Masculine, with a hyphen: there and back; the plural is des allers-retours.",
+          "ex": "Je voudrais un aller-retour pour Bordeaux.",
+          "exEn": "I'd like a return ticket to Bordeaux.",
+          "diff": "okay",
+          "blank": "aller-retour",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "Je regarde, merci.",
+          "en": "I'm just looking, thanks.",
+          "note": "The polite way to answer a shop assistant's Je peux vous aider ? when you only want to browse; je regarde seulement means the same.",
+          "ex": "— Je peux vous aider ? — Non merci, je regarde.",
+          "exEn": "— Can I help you? — No thanks, I'm just looking.",
+          "diff": "okay",
+          "blank": "regarde",
+          "alts": [
+            "je regarde seulement"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "Gardez la monnaie.",
+          "en": "Keep the change.",
+          "note": "la monnaie is the change you get back (or coins in general); gardez is the vous command of garder, to keep.",
+          "ex": "Voilà vingt euros, gardez la monnaie.",
+          "exEn": "Here's twenty euros, keep the change.",
+          "diff": "okay",
+          "blank": "monnaie",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "par carte",
+          "en": "by card",
+          "note": "The usual answer to Vous payez comment ?; the other one is en espèces, in cash.",
+          "ex": "— Vous payez comment ? — Par carte, s'il vous plaît.",
+          "exEn": "— How are you paying? — By card, please.",
+          "diff": "easy",
+          "blank": "carte",
+          "alts": [
+            "par carte bancaire"
+          ],
+          "testable": true
+        }
+      ]
+    },
+    {
+      "id": "polite-requests",
+      "category": "register",
+      "teaching": {
+        "rule": "French softens a request in three layers you can stack. First, the conditional: je voudrais instead of je veux, est-ce que je pourrais instead of je peux, vous pourriez instead of vous pouvez. Second, a question instead of an order: Vous pourriez fermer la porte ? rather than Fermez la porte ! Third, a cushion around it: excusez-moi before, s'il vous plaît, si possible or merci d'avance after. The more you ask of a stranger, the more layers you add, and a negative question (vous n'auriez pas... ?) is softer still. The same conditional softens a request among friends: tu pourrais m'aider ?",
+        "examples": [
+          {
+            "fr": "Je voudrais deux baguettes, s'il vous plaît.",
+            "en": "I'd like two baguettes, please.",
+            "note": "Conditional plus s'il vous plaît: the everyday shop request."
+          },
+          {
+            "fr": "Vous pourriez m'appeler un taxi ?",
+            "en": "Could you call me a taxi?",
+            "note": "Statement word order with a rising voice: the usual spoken way to ask a stranger to do something."
+          },
+          {
+            "fr": "Est-ce que je pourrais vous poser une question ?",
+            "en": "Could I ask you a question?",
+            "note": "Asking permission: est-ce que + je pourrais + an infinitive."
+          },
+          {
+            "fr": "Tu pourrais me passer le sel ?",
+            "en": "Could you pass me the salt?",
+            "note": "Among friends the conditional still softens: tu pourrais sounds warmer than tu peux."
+          }
+        ],
+        "contrast": [
+          {
+            "fr": "Fermez la porte, s'il vous plaît.",
+            "en": "Close the door, please.",
+            "note": "An instruction made polite by s'il vous plaît: fine from a teacher or on a sign, but to a stranger Vous pourriez fermer la porte ? sounds less like an order."
+          },
+          {
+            "fr": "Est-ce que je pourrais avoir de l'eau ? (softer than Je peux avoir de l'eau ?)",
+            "en": "Could I have some water?",
+            "note": "Both are correct; the conditional pourrais adds the distance English gets from 'could'."
+          }
+        ],
+        "commonMistake": "English speakers lean on 'please' and put s'il vous plaît after a bare command ('Répétez, s'il vous plaît'); to a stranger that still sounds like an instruction, so turn it into a question in the conditional: Vous pourriez répéter, s'il vous plaît ?"
+      },
+      "probes": [
+        {
+          "fr": "Je voudrais deux billets pour ce soir.",
+          "en": "polite and normal: je voudrais is the standard way to ask",
+          "ask": "How does “Je voudrais deux billets pour ce soir.” sound at a ticket office?",
+          "ex": "Bonjour, je voudrais deux billets pour ce soir.",
+          "exEn": "Hello, I'd like two tickets for tonight.",
+          "options": [
+            "old-fashioned: people now just say je veux",
+            "too formal: je voudrais belongs in letters and emails",
+            "abrupt: it needs est-ce que to be polite"
+          ]
+        },
+        {
+          "fr": "Fermez la porte !",
+          "en": "an order: a request would be Vous pourriez fermer la porte ?",
+          "ask": "Said to a stranger, what is “Fermez la porte !”?",
+          "ex": "Fermez la porte !",
+          "exEn": "Close the door!",
+          "options": [
+            "a polite request: the vous form is enough to make it polite",
+            "a soft request: the imperative is gentler than a question",
+            "a question: it asks whether the door is shut"
+          ]
+        },
+        {
+          "fr": "Ça vous dérange si je m'assois ici ?",
+          "en": "Do you mind if I sit here?",
+          "ex": "Pardon, ça vous dérange si je m'assois ici ?",
+          "exEn": "Excuse me, do you mind if I sit here?",
+          "options": [
+            "Can you sit here?",
+            "Does this seat bother you?",
+            "Would you like to sit here?"
+          ]
+        }
+      ],
+      "items": [
+        {
+          "fr": "je voudrais",
+          "en": "I would like",
+          "note": "The conditional of vouloir: it turns 'I want' into a polite 'I would like', the default for ordering and asking.",
+          "ex": "Je voudrais un renseignement, s'il vous plaît.",
+          "exEn": "I'd like some information, please.",
+          "diff": "easy",
+          "blank": "voudrais",
+          "alts": [
+            "voudrais",
+            "j'aimerais"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "je pourrais",
+          "en": "could I",
+          "note": "The conditional of pouvoir asks permission gently, with an infinitive after it; say it with a rising voice, after est-ce que, or more formally as pourrais-je.",
+          "ex": "Bonjour, est-ce que je pourrais parler à Madame Martin ?",
+          "exEn": "Hello, could I speak to Madame Martin?",
+          "diff": "okay",
+          "blank": "je pourrais",
+          "alts": [
+            "est-ce que je pourrais",
+            "pourrais-je"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous pourriez",
+          "en": "could you",
+          "note": "The spoken polite request: statement word order with a rising voice; pourriez-vous, verb first, is the more formal version, and tu pourrais is the same request to a friend.",
+          "ex": "Pardon, vous pourriez parler plus lentement ?",
+          "exEn": "Sorry, could you speak more slowly?",
+          "diff": "okay",
+          "blank": "vous pourriez",
+          "alts": [
+            "pourriez-vous",
+            "tu pourrais",
+            "est-ce que vous pourriez"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ça vous dérange si",
+          "en": "do you mind if",
+          "note": "déranger means to disturb; ça vous gêne si and ça vous ennuie si mean the same. If you don't mind, answer non, pas du tout (no, not at all).",
+          "ex": "Ça vous dérange si j'ouvre la fenêtre ?",
+          "exEn": "Do you mind if I open the window?",
+          "diff": "okay",
+          "blank": "Ça vous dérange si",
+          "alts": [
+            "ça vous gêne si",
+            "ça vous ennuie si",
+            "ça te dérange si"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "vous n'auriez pas",
+          "en": "would you happen to have",
+          "note": "A negative question in the conditional is one of the softest ways to ask for something, because it is easy to say no to.",
+          "ex": "Excusez-moi, vous n'auriez pas l'heure ?",
+          "exEn": "Excuse me, would you happen to have the time?",
+          "diff": "hard",
+          "blank": "n'auriez",
+          "alts": [
+            "auriez-vous"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "si possible",
+          "en": "if possible",
+          "note": "Added at the end, it turns a wish into a gentle request that leaves the other person room to refuse.",
+          "ex": "Une table près de la fenêtre, si possible.",
+          "exEn": "A table by the window, if possible.",
+          "diff": "easy",
+          "blank": "si possible",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "un service",
+          "en": "a favour",
+          "note": "demander un service is to ask a favour, and rendre service à quelqu'un is to do someone one.",
+          "ex": "Je pourrais vous demander un service ?",
+          "exEn": "Could I ask you a favour?",
+          "diff": "okay",
+          "blank": "service",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "je voudrais savoir",
+          "en": "I'd like to know",
+          "note": "A polite frame for asking for information; the question after it starts with si (if), où, quand..., with no est-ce que.",
+          "ex": "Je voudrais savoir si le musée est ouvert lundi.",
+          "exEn": "I'd like to know if the museum is open on Monday.",
+          "diff": "okay",
+          "blank": "savoir",
+          "alts": [],
+          "testable": true
+        },
+        {
+          "fr": "merci d'avance",
+          "en": "thanks in advance",
+          "note": "Closes a request politely, especially at the end of a message or an email; merci par avance means the same.",
+          "ex": "Merci d'avance pour votre aide.",
+          "exEn": "Thanks in advance for your help.",
+          "diff": "okay",
+          "blank": "Merci d'avance",
+          "alts": [
+            "merci par avance"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "volontiers",
+          "en": "gladly (accepting an offer)",
+          "note": "A warm yes to an offer or an invitation; avec plaisir means much the same.",
+          "ex": "— Vous voulez un café ? — Volontiers, merci.",
+          "exEn": "— Would you like a coffee? — Gladly, thank you.",
+          "diff": "okay",
+          "blank": "Volontiers",
+          "alts": [
+            "avec plaisir"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "ce serait possible",
+          "en": "would it be possible",
+          "note": "The conditional of être turns c'est possible into a gentle request; follow it with de + an infinitive. In casual speech you also hear ça serait possible.",
+          "ex": "Ce serait possible de changer de chambre ?",
+          "exEn": "Would it be possible to change rooms?",
+          "diff": "okay",
+          "blank": "serait",
+          "alts": [
+            "ça serait possible",
+            "est-ce que ce serait possible",
+            "serait-il possible"
+          ],
+          "testable": true
+        },
+        {
+          "fr": "c'est gentil",
+          "en": "that's kind (of you)",
+          "note": "Thanks someone for a favour or an offer; add très and de votre part for more warmth: c'est très gentil de votre part. c'est très aimable is a slightly more formal way to say it.",
+          "ex": "— Je vous aide avec votre valise ? — Oh merci, c'est gentil !",
+          "exEn": "— Shall I help you with your suitcase? — Oh thank you, that's kind of you!",
+          "diff": "easy",
+          "blank": "c'est gentil",
+          "alts": [
+            "c'est sympa",
+            "c'est très gentil",
+            "c'est très aimable"
+          ],
+          "testable": true
+        }
+      ]
+    }
+  ]
+}

@@ -90,6 +90,9 @@ nonisolated struct SelectionRequest: Hashable {
 /// Retention buckets as the Retention screen tabs name them.
 nonisolated enum RetentionBucket: String, Hashable, Codable, CaseIterable {
     case atRisk, fading, fresh, mastered
+    /// Never reviewed: no recall evidence yet (B4). Listed, never "reviewed now" —
+    /// new material is taught by the lesson, not drilled as retention.
+    case new
 
     var label: String {
         switch self {
@@ -97,6 +100,7 @@ nonisolated enum RetentionBucket: String, Hashable, Codable, CaseIterable {
         case .fading: return "Fading"
         case .fresh: return "Fresh"
         case .mastered: return "Mastered"
+        case .new: return "New"
         }
     }
 }
@@ -112,6 +116,9 @@ nonisolated enum SelectionScope: Hashable {
     case reviewQueue
     /// Gaps overdue by more than a day (Deck "Review Critical Gaps").
     case critical
+    /// Everything "Due now" — `AppStore.dueNow(at:)`: unmastered gaps at or past their
+    /// review time plus mastered gaps due for a check (Deck "Review due now", D13).
+    case dueNow
     /// All active gaps (Deck "Start Practice").
     case mixed
     /// A retention bucket (Retention "Review these now").
@@ -128,6 +135,7 @@ nonisolated enum SelectionScope: Hashable {
         case .dueInCategory(let c): return c.label
         case .reviewQueue: return "Spaced Repetition"
         case .critical: return "Critical Gaps"
+        case .dueNow: return "Due now"
         case .mixed: return "Mixed Practice"
         case .retention(let b): return b.label
         case .errorPattern: return "Error pattern"
@@ -143,6 +151,10 @@ nonisolated enum SelectedItemRole: String, Hashable, Codable {
     case target
     /// Interleaved review (smart), or any item of a scoped / capstone selection.
     case review
+    /// A check-in on a concept that was MASTERED when the lesson was selected: a
+    /// miss weighs `Tuning.checkInMissWeight`, and the outcome feeds the concept's
+    /// adaptive check-in interval and the retention governor (Pass 3 F4/F6).
+    case checkIn
     /// A one-item blind-spot probe for a never-observed frontier concept.
     case probe
 }
@@ -179,11 +191,21 @@ nonisolated struct SelectionOutput: Hashable {
     var rankedConcepts: [ScoredConcept]
     /// The learner's current ability band as the ranker sees it (theta → CEFR).
     var learnerLevel: CEFRLevel
+    /// In-session concept release (Pass 3 F7): after this many consecutive first-try
+    /// correct answers on one concept the lesson drops that concept's remaining items
+    /// and backfills from review. Read from `Tuning.conceptReleaseStreak`.
+    var conceptReleaseStreak: Int = Tuning.conceptReleaseStreak
+    /// Concepts in this selection that have stalled (`Concept.isStalled`): the lesson
+    /// re-shows their skill card before practice (Package B15).
+    var stalledConceptIds: [String] = []
+    /// The retention governor was active when this selection was made (Pass 3 F6).
+    var governorActive: Bool = false
 
     var mode: SelectionMode { request.mode }
     var isEmpty: Bool { items.isEmpty }
     var gapIds: [String] { items.map { $0.gapId } }
     var probeItem: SelectedItem? { items.first { $0.role == .probe } }
+    var checkInItems: [SelectedItem] { items.filter { $0.role == .checkIn } }
     var reasonsByGapId: [String: String] {
         var out: [String: String] = [:]
         for item in items { out[item.gapId] = item.reason }

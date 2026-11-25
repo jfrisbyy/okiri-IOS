@@ -24,15 +24,50 @@ nonisolated struct AssessmentQuestion: Identifiable, Hashable {
     let prompt: String
     let french: String
     let english: String
-    let options: [String]
+    /// Answer choices. Re-shuffled every time the item is presented (D6), so the
+    /// correct answer never sits in a fixed slot; `id` is unchanged by a shuffle.
+    var options: [String]
     let correctAnswer: String
     let explanation: String
     let exampleSentence: String
     let exampleTranslation: String
     /// Base concept this item is evidence of (for seeding mastery), if any.
     let conceptId: String?
+    /// True for items built from a concept's content probes. A probe is a diagnostic
+    /// cloze ("___ gare" → "la"), so `french`/`english` are a stem and its missing
+    /// token — NOT a headword and its meaning. Missing one must therefore never be
+    /// turned into a deck card; the concept is seeded from real content instead
+    /// (`AssessmentService.gaps(forMissed:)`).
+    var isProbe: Bool = false
 
     var level: CEFRLevel { AssessmentService.level(forBand: band) }
+
+    /// The same item (same `id`) with its options in a fresh random order.
+    func presented<G: RandomNumberGenerator>(using generator: inout G) -> AssessmentQuestion {
+        var copy = self
+        copy.options.shuffle(using: &generator)
+        return copy
+    }
+}
+
+/// The placement's source of randomness: the system generator in the app, a
+/// SplitMix64 stream when a seed is given (tests and the headless driver replay
+/// the exact same staircase).
+nonisolated struct PlacementRandom: RandomNumberGenerator {
+    private var state: UInt64?
+    private var system = SystemRandomNumberGenerator()
+
+    init(seed: UInt64? = nil) { state = seed }
+
+    mutating func next() -> UInt64 {
+        guard var s = state else { return system.next() }
+        s &+= 0x9E37_79B9_7F4A_7C15
+        state = s
+        var z = s
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
 }
 
 // MARK: - Result
@@ -44,7 +79,14 @@ nonisolated struct PlacementResult {
     var grammarBand: Int
     var estimatedLevel: CEFRLevel
     var isTrueBeginner: Bool
-    /// Base concepts the learner demonstrably knows → seed as mastered.
+    /// Concepts the learner DEMONSTRABLY knows — asked
+    /// `Tuning.placementProbesPerConcept` items and answered every one — at or below
+    /// the band their category cleared, seeded as (provisional) mastery. Never
+    /// contains a concept the learner missed an item on (Pass 3 F5), never one that
+    /// was only inferred from its band (B9), and never one above the band the
+    /// placement read for its category. Not limited to the A1 base set: an A2
+    /// learner spends the whole budget on A2 probes and has nothing else to seed
+    /// (`PlacementEngine.seededConceptIds`).
     var masteredConceptIds: [String]
     /// Gaps built from the items the learner missed → seed as things to teach.
     var missedGaps: [GapItem]
@@ -52,6 +94,48 @@ nonisolated struct PlacementResult {
     var askedCount: Int
     /// How many were answered correctly.
     var correctCount: Int
+    /// Placement seeds are PROVISIONAL: they read as mastered but are verified by a
+    /// first check-in after `Tuning.seedVerificationDays` (Pass 3 F5 / B7).
+    var seedsAreProvisional: Bool = true
+    /// Concepts the learner missed at least one item on (excluded from the seeds).
+    var missedConceptIds: [String] = []
+    /// Base concepts at or below a cleared band that were NOT fully probed (asked
+    /// fewer than `Tuning.placementProbesPerConcept` items, or never) and not missed.
+    /// Seeded as a `.learning` head start (`Tuning.placementInferredAlpha`), never
+    /// as mastery — they rank first as targets and never count toward coverage.
+    var inferredConceptIds: [String] = []
+    /// Items asked per concept, so the store can tell the tiers apart.
+    var askedCounts: [String: Int] = [:]
+    /// The lowest band each category was MISSED at; a category never missed is absent.
+    var lowestMissedBand: [GapCategory: Int] = [:]
+
+    /// The category the evidence shows AHEAD of the other, or nil. A cleared band is
+    /// a floor, not a ceiling: above A1 the bank holds little vocabulary, so a
+    /// learner who answers every vocabulary item correctly can still clear only band
+    /// 1 while grammar clears band 4. Saying "your grammar is ahead of your
+    /// vocabulary" to that learner is false (firstrun-10-1), so a lead needs the gap
+    /// in bands AND a real miss in the trailing category at or below the leader's band.
+    var leadingCategory: GapCategory? {
+        func leads(_ band: Int, over other: Int, trailing: GapCategory) -> Bool {
+            guard band > other + 1, let miss = lowestMissedBand[trailing] else { return false }
+            return miss <= band
+        }
+        if leads(vocabBand, over: grammarBand, trailing: .grammar) { return .vocabulary }
+        if leads(grammarBand, over: vocabBand, trailing: .vocabulary) { return .grammar }
+        return nil
+    }
+
+    /// Items the staircase asked on a concept (0 when it never came up).
+    func askedCount(for conceptId: String) -> Int {
+        askedCounts[conceptId] ?? 0
+    }
+
+    /// Concepts asked the full probe budget with no miss — the only ones that can be
+    /// seeded as mastered.
+    var fullyProbedConceptIds: Set<String> {
+        let missed = Set(missedConceptIds)
+        return Set(askedCounts.filter { $0.value >= Tuning.placementProbesPerConcept && !missed.contains($0.key) }.keys)
+    }
 }
 
 // MARK: - Adaptive engine
@@ -64,34 +148,156 @@ nonisolated struct PlacementEngine {
     private(set) var missed: [AssessmentQuestion] = []
     private(set) var correctCount: Int = 0
 
-    /// Current target band (staircase position).
-    private var band: Int = 2
-    /// Consecutive misses at the lowest band → graceful "true beginner" bottom-out.
-    private var lowestBandMisses: Int = 0
+    /// Current target band (staircase position); starts at `Tuning.placementStartBand` (firstrun-11-8).
+    private var band: Int = Tuning.placementStartBand
+    /// Consecutive misses at the lowest band, PER CATEGORY. The test estimates
+    /// vocabulary and grammar separately (a false beginner typically has one and
+    /// not the other), so bottoming out is per category too: a category that has
+    /// missed `Tuning.placementBottomOutMisses` lowest-band items in a row is not
+    /// asked again, and the learner is a true beginner only once EVERY category
+    /// in the bank has bottomed out. Any correct answer in a category resets its
+    /// counter (D7).
+    private var lowestBandMisses: [GapCategory: Int] = [:]
     /// Whether the learner self-declared a complete beginner (skip → full Foundation).
     private(set) var declaredBeginner: Bool = false
+    /// Random choice among equally good items and option order (D6).
+    private var random: PlacementRandom
 
-    private let minItems = 6
-    private let maxItems = 12
-    private let minBand = 1
-    private let maxBand = 4
+    /// Fewest / most items the staircase asks (`Tuning.placementMinItems` / `placementMaxItems`);
+    /// the progress bar reads these.
+    let minItems = Tuning.placementMinItems
+    let maxItems = Tuning.placementMaxItems
+    /// Items asked per concept before a "knows it" read is trusted (Pass 3 F5).
+    let probesPerConcept = Tuning.placementProbesPerConcept
+    /// Lowest-band misses in a row that bottom a category out.
+    let bottomOutMisses = Tuning.placementBottomOutMisses
+    /// The staircase's band range (firstrun-11-8).
+    private let minBand = Tuning.placementMinBand
+    private let maxBand = Tuning.placementMaxBand
 
-    init(bank: [AssessmentQuestion] = AssessmentService.bank) {
+    /// `seed` makes the staircase fully reproducible (tests, the headless driver);
+    /// the app leaves it nil.
+    init(bank: [AssessmentQuestion] = AssessmentService.bank, seed: UInt64? = nil) {
         self.bank = bank
+        self.random = PlacementRandom(seed: seed)
+    }
+
+    /// Categories that have bottomed out at the lowest band.
+    var bottomedOutCategories: Set<GapCategory> {
+        Set(lowestBandMisses.filter { $0.value >= bottomOutMisses }.keys)
+    }
+
+    /// True once every category the bank holds has bottomed out — nothing is left
+    /// to learn from asking; the learner starts from the beginning.
+    private var hasBottomedOut: Bool {
+        let categories = Set(bank.map { $0.category })
+        guard !categories.isEmpty else { return false }
+        return categories.isSubset(of: bottomedOutCategories)
+    }
+
+    /// Items already asked on a concept.
+    func askedCount(for conceptId: String) -> Int {
+        asked.filter { $0.conceptId == conceptId }.count
+    }
+
+    /// Items the bank still holds for a concept that have not been asked.
+    private func unaskedCount(for conceptId: String) -> Int {
+        let askedIds = Set(asked.map { $0.id })
+        return bank.filter { $0.conceptId == conceptId && !askedIds.contains($0.id) }.count
+    }
+
+    /// Concepts with at least one missed item — never seeded as mastered.
+    var missedConceptIds: Set<String> {
+        Set(missed.compactMap { $0.conceptId })
+    }
+
+    /// Concepts asked the full probe budget (`probesPerConcept`) with no miss — a
+    /// trusted "knows it" read (Pass 3 F5).
+    var fullyProbedConceptIds: Set<String> {
+        var counts: [String: Int] = [:]
+        for q in asked { if let cid = q.conceptId { counts[cid, default: 0] += 1 } }
+        let missedConcepts = missedConceptIds
+        return Set(counts.filter { $0.value >= probesPerConcept && !missedConcepts.contains($0.key) }.keys)
+    }
+
+    /// The staircase band as it stands (tests read this to check the concept-level step).
+    var currentBand: Int { band }
+
+    /// True while the last item was a correct answer on a concept that still has
+    /// unasked items inside its probe budget — the read on it is not finished.
+    private var isMidProbe: Bool {
+        guard let last = asked.last, let cid = last.conceptId, !missed.contains(last) else { return false }
+        return askedCount(for: cid) < probesPerConcept && unaskedCount(for: cid) > 0
+    }
+
+    /// True while some category the bank can still ask about has neither cleared a
+    /// band nor bottomed out: the placement has no read on it yet, and stopping now
+    /// would report "nothing cleared" for a category it simply never measured.
+    private var hasUnreadCategory: Bool {
+        let askedIds = Set(asked.map { $0.id })
+        let bottomed = bottomedOutCategories
+        let askable = Set(bank.filter { !askedIds.contains($0.id) && !bottomed.contains($0.category) }.map { $0.category })
+        return askable.contains { clearedBand(for: $0) == 0 }
+    }
+
+    /// A random item among the highest-band ones in `items` (nil when empty).
+    private mutating func highestBandItem(in items: [AssessmentQuestion]) -> AssessmentQuestion? {
+        guard let top = items.map({ $0.band }).max() else { return nil }
+        return items.filter { $0.band == top }.randomElement(using: &random)
     }
 
     /// The next item to present, or nil when the test should stop.
     mutating func next() -> AssessmentQuestion? {
         if declaredBeginner { return nil }
         if asked.count >= maxItems { return nil }
-        if lowestBandMisses >= 2 { return nil }          // bottomed out → true beginner
-        if asked.count >= minItems && hasStabilized() { return nil }
+        if hasBottomedOut { return nil }                 // every category bottomed out → true beginner
+        // A concept mid-probe is finished before the test stops (firstrun-10-1): the
+        // stability check used to cut off the third item of a concept the learner was
+        // answering cleanly, so the read it was gathering never counted. With band-2
+        // vocabulary in the bank that cut an A1 learner's only vocabulary read in half
+        // the runs. `maxItems` still bounds the test.
+        // Nor does it stop on stability while a category it is still asking has no
+        // read at all (firstrun-10-1, re-opened by the A2 content merge): with A2
+        // vocabulary and grammar probes in the bank, a false beginner's first items
+        // go to band-2 concepts, and the staircase could settle after
+        // `placementMinItems` with one or two band-1 vocabulary answers — too few to
+        // clear the band — so a learner who knows A1 vocabulary read as a true
+        // beginner in 3 of 24 runs. A true beginner still stops early: a category
+        // that bottoms out is no longer unread, and `maxItems` bounds the rest.
+        if asked.count >= minItems && hasStabilized() && !isMidProbe && !hasUnreadCategory { return nil }
 
         // Pick an unused item closest to the current band, alternating category
-        // so we gather evidence on both vocab and grammar.
+        // so we gather evidence on both vocab and grammar. Among equally good
+        // items the choice is random, and every item is presented with freshly
+        // shuffled options (D6) — two learners, or two retakes, never see the
+        // same sequence. A category that has bottomed out is never asked again.
         let askedIds = Set(asked.map { $0.id })
-        let pool = bank.filter { !askedIds.contains($0.id) }
+        let bottomed = bottomedOutCategories
+        let pool = bank.filter { !askedIds.contains($0.id) && !bottomed.contains($0.category) }
         guard !pool.isEmpty else { return nil }
+
+        // Pass 3 F5: one correct answer is not a read on a concept. Keep probing the
+        // concept just answered correctly — up to `probesPerConcept` items — before
+        // moving on. A missed concept is already excluded from the seeds, so there is
+        // nothing more to learn by asking it again.
+        // The follow-up is the concept's HIGHEST-band unasked item (firstrun-10-1): a
+        // concept that also holds a hand item a band up (a B1 grammar concept with a
+        // band-4 item) used to spend its whole budget on its own band, so the band
+        // above could never gather the `placementThinBandMinItems` answers that clear
+        // it and a perfect run stopped at B1. Probing upward after a correct answer is
+        // the staircase's own direction; the vouched band still takes the LOWEST.
+        if let last = asked.last, let cid = last.conceptId, !missed.contains(last),
+           askedCount(for: cid) < probesPerConcept,
+           let more = highestBandItem(in: pool.filter({ $0.conceptId == cid })) {
+            return more.presented(using: &random)
+        }
+        // Never ask a concept beyond its probe budget or one already missed.
+        let missedConcepts = missedConceptIds
+        let open = pool.filter { q in
+            guard let cid = q.conceptId else { return true }
+            return !missedConcepts.contains(cid) && askedCount(for: cid) < probesPerConcept
+        }
+        let candidates = open.isEmpty ? pool : open
 
         let preferredCategory: GapCategory? = {
             let vocabAsked = asked.filter { $0.category == .vocabulary }.count
@@ -101,45 +307,75 @@ nonisolated struct PlacementEngine {
         }()
 
         func pick(in band: Int) -> AssessmentQuestion? {
-            let atBand = pool.filter { $0.band == band }
-            if let c = preferredCategory, let m = atBand.first(where: { $0.category == c }) { return m }
-            return atBand.first
+            let atBand = candidates.filter { $0.band == band }
+            if let c = preferredCategory, let m = atBand.filter({ $0.category == c }).randomElement(using: &random) { return m }
+            return atBand.randomElement(using: &random)
         }
         // Search outward from the target band.
         for delta in 0...maxBand {
-            if let m = pick(in: band + delta) { return m }
-            if delta > 0, let m = pick(in: band - delta) { return m }
+            if let m = pick(in: band + delta) { return m.presented(using: &random) }
+            if delta > 0, let m = pick(in: band - delta) { return m.presented(using: &random) }
         }
-        return pool.first
+        return candidates.randomElement(using: &random)?.presented(using: &random)
     }
 
+    /// Record an answer. The staircase steps at the CONCEPT level (B9): DOWN once on
+    /// a concept's first miss, UP once when a concept completes its probes clean —
+    /// `probesPerConcept` items, or every item the bank holds for it when that is
+    /// fewer. Three correct answers on one concept are one step, not three. An item
+    /// with no concept is its own one-item concept and steps immediately.
     mutating func record(_ q: AssessmentQuestion, correct: Bool) {
+        let firstMissOnConcept = q.conceptId.map { !missedConceptIds.contains($0) } ?? true
         asked.append(q)
         if correct {
             correctCount += 1
-            band = min(maxBand, band + 1)       // staircase up
-            if q.band > minBand { lowestBandMisses = 0 }
+            lowestBandMisses[q.category] = 0                       // any correct answer resets its category's bottom-out counter (D7)
         } else {
             missed.append(q)
-            band = max(minBand, band - 1)       // staircase down
-            if q.band <= minBand { lowestBandMisses += 1 } else { lowestBandMisses = 0 }
+            if q.band <= minBand { lowestBandMisses[q.category, default: 0] += 1 } else { lowestBandMisses[q.category] = 0 }
+        }
+        guard let cid = q.conceptId else {
+            band = correct ? min(maxBand, band + 1) : max(minBand, band - 1)
+            return
+        }
+        if !correct {
+            if firstMissOnConcept { band = max(minBand, band - 1) }          // staircase down, once per concept
+        } else if askedCount(for: cid) >= probesPerConcept || unaskedCount(for: cid) == 0 {
+            band = min(maxBand, band + 1)                                    // staircase up: concept complete, clean
         }
     }
 
     /// Route straight to full Foundation.
     mutating func declareBeginner() { declaredBeginner = true }
 
-    /// Stable once the staircase is bouncing within one band of itself — i.e. the
-    /// last few answers alternate correct/incorrect near the same band.
+    /// Bands of the last `n` DISTINCT concepts asked (most recent first). Repeats
+    /// of one concept are one entry, so probing a concept three times never
+    /// counts as three stable readings.
+    private func recentConceptBands(_ n: Int) -> [Int] {
+        var seen = Set<String>()
+        var bands: [Int] = []
+        for q in asked.reversed() {
+            let key = q.conceptId ?? q.id.uuidString
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            bands.append(q.band)
+            if bands.count == n { break }
+        }
+        return bands
+    }
+
+    /// Stable once the staircase is bouncing within one band of itself across the
+    /// last four DISTINCT concepts.
     private func hasStabilized() -> Bool {
-        guard asked.count >= 4 else { return false }
-        let recent = asked.suffix(4)
-        let bands = recent.map { $0.band }
-        guard let lo = bands.min(), let hi = bands.max() else { return false }
+        let bands = recentConceptBands(4)
+        guard bands.count >= 4, let lo = bands.min(), let hi = bands.max() else { return false }
         return hi - lo <= 1
     }
 
-    func result() -> PlacementResult {
+    /// `items` is the Foundation content lookup used to seed a real headword for a
+    /// concept whose probe was missed (see `AssessmentService.gaps(forMissed:)`);
+    /// the app takes the bundled default, tests inject synthetic content.
+    func result(items: (String) -> [FoundationItemContent] = { FoundationContentLoader.items(for: $0) }) -> PlacementResult {
         if declaredBeginner {
             return PlacementResult(
                 vocabBand: 0, grammarBand: 0, estimatedLevel: .A1, isTrueBeginner: true,
@@ -152,26 +388,117 @@ nonisolated struct PlacementEngine {
         let beginner = topBand == 0
         let level = beginner ? .A1 : AssessmentService.level(forBand: topBand)
 
+        let missedConcepts = missedConceptIds
+        let fullyProbed = fullyProbedConceptIds
+        var askedCounts: [String: Int] = [:]
+        for q in asked { if let cid = q.conceptId { askedCounts[cid, default: 0] += 1 } }
+        var lowestMissed: [GapCategory: Int] = [:]
+        for q in missed { lowestMissed[q.category] = min(lowestMissed[q.category] ?? q.band, q.band) }
+        // Two tiers (B9): a concept asked the full probe budget clean, at or below
+        // its category's cleared band, is seeded as (provisional) mastery; a BASE
+        // concept at or below the cleared bands that was not fully probed is only an
+        // inferred head start.
+        let inBand = AssessmentService.masteredConcepts(vocabBand: vocab, grammarBand: grammar, excluding: missedConcepts)
+        let mastered = seededConceptIds(fullyProbed: fullyProbed, vocabBand: vocab, grammarBand: grammar)
+        let inferred = inBand.filter { !fullyProbed.contains($0) }
         return PlacementResult(
             vocabBand: vocab,
             grammarBand: grammar,
             estimatedLevel: level,
             isTrueBeginner: beginner,
-            masteredConceptIds: AssessmentService.masteredConcepts(vocabBand: vocab, grammarBand: grammar),
-            missedGaps: AssessmentService.gaps(forMissed: missed),
+            masteredConceptIds: mastered,
+            missedGaps: AssessmentService.gaps(forMissed: missed, items: items),
             askedCount: asked.count,
-            correctCount: correctCount
+            correctCount: correctCount,
+            seedsAreProvisional: true,
+            missedConceptIds: missedConcepts.sorted(),
+            inferredConceptIds: inferred,
+            askedCounts: askedCounts,
+            lowestMissedBand: lowestMissed
         )
     }
 
+    /// The concepts a placement seeds as provisional mastery: every taxonomy concept
+    /// the learner was asked the full probe budget on with no miss (Pass 3 F5),
+    /// whose CEFR band is at or below the band its category cleared.
+    ///
+    /// This used to be the fully probed concepts inside `ConceptTaxonomy.baseConceptIds`
+    /// only, and every base concept is A1. The staircase starts at band 2 and steps
+    /// down only on a miss, so once the bank held A2 vocabulary as well as A2 grammar
+    /// probes, a learner who knows A2 spent the whole budget on A2 concepts, never
+    /// touched band 1, and was seeded with nothing — 0 of 16 deterministic A2 runs,
+    /// and an all-correct learner the same (firstrun-10-1, re-opened by the A2
+    /// content merge; spec §7.1 names this fix: extend the seeding tier beyond the
+    /// base set). Seeding what was VERIFIED at the learner's own band is the honest
+    /// read of that evidence. The seed is still only a guess until a check-in
+    /// confirms it (`AppStore.seedMastered` marks it `isProvisional`), and it never
+    /// counts toward coverage before then.
+    ///
+    /// The band cap reads the concept's TAXONOMY level, not its items' bands: a
+    /// concept whose items sat below its level (a hand item filed a band low) proves
+    /// only the band it was asked at, and a concept above the placed band earns no
+    /// mastery credit there (D6 §3: mastery credit only inside the learner's band).
+    /// The category is the one its items were scored in, the same category the
+    /// cleared band was read from; anything outside grammar and vocabulary is never
+    /// seeded, as a text test cannot judge it.
+    private func seededConceptIds(fullyProbed: Set<String>, vocabBand: Int, grammarBand: Int) -> [String] {
+        let levels = Dictionary(ConceptTaxonomy.seed().map { ($0.id, $0.cefrLevel) }, uniquingKeysWith: { a, _ in a })
+        return fullyProbed.filter { cid in
+            guard let level = levels[cid],
+                  let category = asked.first(where: { $0.conceptId == cid })?.category else { return false }
+            let cleared: Int
+            switch category {
+            case .vocabulary: cleared = vocabBand
+            case .grammar: cleared = grammarBand
+            default: return false
+            }
+            return AssessmentService.bandForLevel(level) <= cleared
+        }.sorted()
+    }
+
     /// Highest band b such that every tested band ≤ b was answered ≥50% correctly.
+    /// A band with fewer than `probesPerConcept` items asked is inconclusive on its
+    /// own (one lucky answer is not a cleared band) — unless a concept of this
+    /// category was fully probed clean at or above it: three clean items on one
+    /// concept are a trusted read of that concept's band even when its items were
+    /// spread over two bands (a band-2 hand item plus two band-1 content probes),
+    /// so a learner who demonstrably knows a concept never reads as a true beginner.
+    /// How many items the BANK holds at a category/band — the ceiling on how much
+    /// evidence the staircase could ever gather there.
+    private func bankSupply(category: GapCategory, band: Int) -> Int {
+        bank.filter { $0.category == category && $0.band == band }.count
+    }
+
     private func clearedBand(for category: GapCategory) -> Int {
+        let fullyProbed = fullyProbedConceptIds
+        // The band a fully probed concept vouches for: the LOWEST band among its
+        // items (conservative — a frequency-banded hand item never inflates it).
+        var vouchedBand = 0
+        for cid in fullyProbed {
+            let bands = asked.filter { $0.category == category && $0.conceptId == cid }.map { $0.band }
+            if let low = bands.min() { vouchedBand = max(vouchedBand, low) }
+        }
         var cleared = 0
         for b in minBand...maxBand {
             let pool = asked.filter { $0.category == category && $0.band == b }
-            guard !pool.isEmpty else { continue }                 // untested band — skip, keep going
             let hit = pool.filter { !missed.contains($0) }.count
-            if Double(hit) / Double(pool.count) >= 0.5 { cleared = b } else { break }
+            guard pool.count >= probesPerConcept else {
+                if b <= vouchedBand {
+                    cleared = b                                             // a trusted concept read covers this band
+                } else if bankSupply(category: category, band: b) < probesPerConcept,
+                          hit == pool.count, hit >= Tuning.placementThinBandMinItems {
+                    // A band the BANK ITSELF cannot probe in full — the top band holds
+                    // only a couple of hand-written items (no taxonomy concept reaches
+                    // B2), so `probesPerConcept` of them can never be asked and the band
+                    // could never be cleared however well the learner answers: the
+                    // placement could only ever report B1. A CLEAN sweep of at least
+                    // `placementThinBandMinItems` of them clears it. One lucky answer
+                    // still does not, and a band the bank CAN probe in full is unaffected.
+                    cleared = b
+                }
+                continue                                                    // otherwise untested / thin — skip, keep going
+            }
+            if Double(hit) / Double(pool.count) >= Tuning.placementBandClearRatio || b <= vouchedBand { cleared = b } else { break }
         }
         return cleared
     }
@@ -191,12 +518,17 @@ nonisolated enum AssessmentService {
         }
     }
 
-    /// Base concepts the learner demonstrably knows, from the cleared bands. We only
-    /// seed grammar + vocabulary (a text test can't fairly judge pronunciation,
-    /// phrasing or register), leaving those never-observed for Foundation.
-    static func masteredConcepts(vocabBand: Int, grammarBand: Int) -> [String] {
+    /// Base concepts at or below the cleared bands. We only consider grammar +
+    /// vocabulary (a text test can't fairly judge pronunciation, phrasing or
+    /// register), leaving those never-observed for Foundation. A concept the learner
+    /// missed an item on is never included, whatever its band (Pass 3 F5). The
+    /// engine takes the inferred tier (`PlacementResult.inferredConceptIds`) from
+    /// this list: the base concepts here that were not fully probed. The mastered
+    /// tier is read from the evidence instead, and is not limited to the base set
+    /// (`PlacementEngine.seededConceptIds`, firstrun-10-1).
+    static func masteredConcepts(vocabBand: Int, grammarBand: Int, excluding missed: Set<String> = []) -> [String] {
         ConceptTaxonomy.seed().compactMap { concept in
-            guard ConceptTaxonomy.baseConceptIds.contains(concept.id) else { return nil }
+            guard ConceptTaxonomy.baseConceptIds.contains(concept.id), !missed.contains(concept.id) else { return nil }
             let conceptBand = bandForLevel(concept.cefrLevel)
             switch concept.category {
             case .vocabulary:
@@ -209,7 +541,7 @@ nonisolated enum AssessmentService {
         }
     }
 
-    private static func bandForLevel(_ level: CEFRLevel) -> Int {
+    static func bandForLevel(_ level: CEFRLevel) -> Int {
         switch level {
         case .A1: return 1
         case .A2: return 2
@@ -218,37 +550,180 @@ nonisolated enum AssessmentService {
         }
     }
 
-    /// Build gap items from the questions the learner missed.
-    static func gaps(forMissed missed: [AssessmentQuestion]) -> [GapItem] {
-        let now = Date()
-        return missed.map { q in
-            GapItem(
-                id: UUID().uuidString,
-                frenchWord: q.french,
-                englishTranslation: q.english,
-                explanation: q.explanation,
-                exampleSentence: q.exampleSentence,
-                exampleTranslation: q.exampleTranslation,
-                pronunciation: nil,
-                sourceType: .foundation,
-                category: q.category,
-                difficulty: .hard,
-                reviewCount: 0,
-                consecutiveCorrect: 0,
-                lastReviewedAt: nil,
-                nextReviewAt: now,
-                masteredAt: nil,
-                createdAt: now,
-                cefrLevel: q.level,
-                easeFactor: 2.5,
-                currentInterval: 0,
-                irtDifficulty: Double(q.band) * 0.6 - 0.8,
-                fsrs: nil,
-                originalContext: nil,
-                confusionLinks: [],
-                conceptId: q.conceptId
-            )
+    // MARK: - Content probes as placement items (B9 / D6)
+
+    /// Placement items built from a concept's content-v2 probes (three real
+    /// multiple-choice items per concept). The banked bank alone holds one or two
+    /// items for most concepts, so the `Tuning.placementProbesPerConcept` read that
+    /// seeds mastery is only reachable when these are added:
+    /// `PlacementEngine(bank: AssessmentService.bank + AssessmentService.contentBank(...))`.
+    /// Only grammar and vocabulary concepts are used (the same categories the seeds
+    /// cover). Nothing is authored here: stem, answer, distractors and example are
+    /// the content's own.
+    static func questions(fromProbes probes: [FoundationProbeContent], for concept: Concept) -> [AssessmentQuestion] {
+        guard concept.category == .grammar || concept.category == .vocabulary else { return [] }
+        let band = bandForLevel(concept.cefrLevel)
+        return probes.compactMap { probe in
+            guard !probe.fr.isEmpty, !probe.en.isEmpty, !probe.options.isEmpty else { return nil }
+            // A probe whose answer is a claim about the French (a pronunciation, a
+            // placement rule) carries its own stem: the meaning stem would ask a
+            // question its options never answer.
+            let authored = (probe.ask ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let prompt = !authored.isEmpty
+                ? authored
+                : (probe.fr.contains("___") ? "Fill in the blank: “\(probe.fr)”" : "What does “\(probe.fr)” mean?")
+            var item = q(band, concept.category, prompt, probe.fr, probe.en, probe.options, probe.en,
+                         "", probe.ex, probe.exEn, concept.id)
+            item.isProbe = true          // a cloze stem is not a headword — never seed a card from it
+            return item
         }
+    }
+
+    /// The content-probe bank for a taxonomy: every grammar / vocabulary concept's
+    /// probes as placement items, `probes` being the content lookup
+    /// (`FoundationContentLoader.probes(for:)` in the app, synthetic in tests).
+    static func contentBank(concepts: [Concept], probes: (String) -> [FoundationProbeContent]) -> [AssessmentQuestion] {
+        concepts.flatMap { questions(fromProbes: probes($0.id), for: $0) }
+    }
+
+    /// The bank the placement screen runs on (D6 / B9): the content probes for every
+    /// grammar / vocabulary concept (three real items each, so the staircase's
+    /// `Tuning.placementProbesPerConcept` rule has material), with the hand-written
+    /// items kept ONLY where content is missing — a concept with no usable probes,
+    /// a band no probe reaches (band 4 has no taxonomy concept), or an item tied to
+    /// no concept. With a complete content file the hand-written items never show.
+    ///
+    /// A band is "reached" PER CATEGORY (firstrun-10-1): the staircase reads
+    /// vocabulary and grammar separately, so A2 grammar probes say nothing about A2
+    /// vocabulary. Measured over all categories, the A2 grammar content counted band 2
+    /// as covered and dropped the three band-2 vocabulary hand items, leaving the
+    /// shipped bank with no band-2 vocabulary at all — an A2-level learner then read
+    /// "Vocabulary: Just starting" and was seeded as a knower less often than an
+    /// A1-only one.
+    static func placementBank(concepts: [Concept], probes: (String) -> [FoundationProbeContent]) -> [AssessmentQuestion] {
+        let content = contentBank(concepts: concepts, probes: probes)
+        let coveredConcepts = Set(content.compactMap { $0.conceptId })
+        let coveredBands = Set(content.map { BandKey(category: $0.category, band: $0.band) })
+        let fallback = bank.filter { q in
+            guard let cid = q.conceptId else { return true }
+            return !coveredConcepts.contains(cid)
+                || !coveredBands.contains(BandKey(category: q.category, band: q.band))
+        }
+        return content + fallback
+    }
+
+    /// A category's band — the unit `placementBank` measures content coverage in.
+    private struct BandKey: Hashable {
+        let category: GapCategory
+        let band: Int
+    }
+
+    /// Build gap items from the questions the learner missed. Like every gap the
+    /// store creates they start with an FSRS state due now (B4), so a missed
+    /// placement item is on the schedule from day one.
+    ///
+    /// A PROBE is never turned into a card. Its `french`/`english` are a cloze stem
+    /// and the token that fills it ("___ gare" / "la"), so seeding it would put a
+    /// blank on the front of a deck card and a bare French word on its "meaning"
+    /// side, and the lesson would ask "What does '___ gare' mean?". Instead the
+    /// concept the probe diagnosed is seeded from its REAL content items — a
+    /// headword with a meaning, an example and a verified blank —
+    /// `Tuning.placementMissSeedItems` of them, marked `.hard` and due now. Hand-bank
+    /// items ARE headword items: one is seeded as its concept's content item with the
+    /// same headword when there is one, and as itself only when there is not
+    /// (firstrun-11-5).
+    ///
+    /// `items` is the content lookup (the bundled file by default; tests inject).
+    /// A concept with no content simply seeds nothing: it is already in
+    /// `missedConceptIds`, so it is excluded from the mastery seeds and — when it is
+    /// a base concept — the first-run Foundation slice teaches it anyway.
+    static func gaps(forMissed missed: [AssessmentQuestion], now: Date = Date(),
+                     items: (String) -> [FoundationItemContent] = { FoundationContentLoader.items(for: $0) }) -> [GapItem] {
+        var result: [GapItem] = []
+        var seenHeadwords = Set<String>()
+        var seededConcepts = Set<String>()
+        for q in missed {
+            guard q.isProbe else {
+                let key = FoundationSeeder.headwordKey(q.french)
+                guard !key.isEmpty, !seenHeadwords.contains(key) else { continue }
+                seenHeadwords.insert(key)
+                // firstrun-11-5: when the concept's own content holds the same headword,
+                // seed THAT item — its taxonomy category and level, its blank, its stable
+                // content id — exactly as the probe path does. The Foundation slices skip
+                // a headword already in the deck, so a hand-built card seeded here would
+                // stand in for the content item for good.
+                let concept = q.conceptId.flatMap { taxonomyConcepts[$0] }
+                if let concept,
+                   let match = items(concept.id).enumerated().first(where: {
+                       FoundationSeeder.headwordKey($0.element.fr) == key && !$0.element.en.isEmpty
+                   }) {
+                    result.append(FoundationContentLoader.gap(from: match.element, conceptId: concept.id, index: match.offset,
+                                                              category: concept.category, level: concept.cefrLevel,
+                                                              difficulty: .hard, now: now))
+                } else {
+                    result.append(gap(forMissed: q, concept: concept, now: now))
+                }
+                continue
+            }
+            guard let cid = q.conceptId, !seededConcepts.contains(cid) else { continue }
+            seededConcepts.insert(cid)
+            let content = items(cid)
+            var taken = 0
+            for (idx, item) in content.enumerated() where taken < Tuning.placementMissSeedItems {
+                guard item.isTestable, !item.fr.isEmpty, !item.en.isEmpty else { continue }
+                let key = FoundationSeeder.headwordKey(item.fr)
+                guard !seenHeadwords.contains(key) else { continue }
+                seenHeadwords.insert(key)
+                result.append(FoundationContentLoader.gap(from: item, conceptId: cid, index: idx,
+                                                          category: q.category, level: q.level,
+                                                          difficulty: .hard, now: now))
+                taken += 1
+            }
+        }
+        return result
+    }
+
+    /// The taxonomy's concepts by id: a missed hand item files under its concept's
+    /// category and level, not the placement item's (firstrun-11-5).
+    private static let taxonomyConcepts: [String: Concept] = Dictionary(
+        ConceptTaxonomy.seed().map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+    /// A gap built from a hand-bank placement item the learner missed (a real
+    /// headword → meaning pair) whose concept has no content item for it. It files
+    /// under the concept's taxonomy category and level when the item names one
+    /// (firstrun-11-5), and its difficulty is the one a content card of that level
+    /// marked `.hard` gets (firstrun-11-8).
+    private static func gap(forMissed q: AssessmentQuestion, concept: Concept?, now: Date) -> GapItem {
+        let category = concept?.category ?? q.category
+        let level = concept?.cefrLevel ?? q.level
+        var gap = GapItem(
+            id: UUID().uuidString,
+            frenchWord: q.french,
+            englishTranslation: q.english,
+            explanation: q.explanation,
+            exampleSentence: q.exampleSentence,
+            exampleTranslation: q.exampleTranslation,
+            pronunciation: nil,
+            sourceType: .foundation,
+            category: category,
+            difficulty: .hard,
+            reviewCount: 0,
+            consecutiveCorrect: 0,
+            lastReviewedAt: nil,
+            nextReviewAt: now,
+            masteredAt: nil,
+            createdAt: now,
+            cefrLevel: level,
+            easeFactor: 2.5,
+            currentInterval: 0,
+            irtDifficulty: FoundationContentLoader.irtDifficulty(level: level, difficulty: .hard),   // firstrun-11-8
+            fsrs: nil,
+            originalContext: nil,
+            confusionLinks: [],
+            conceptId: q.conceptId
+        )
+        gap.fsrs = FSRS.makeUnseenState(now: now)
+        return gap
     }
 
     // MARK: - Banked item bank (curated, lightweight recognition)

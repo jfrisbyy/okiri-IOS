@@ -16,12 +16,19 @@ nonisolated enum ReviewGrade: Int {
     case easy = 4
 }
 
+/// How an answer was produced. The store derives the FSRS grade and the concept
+/// evidence weight from this (`Tuning.gradeMapping`, `Tuning.formatEvidenceWeight`)
+/// so recognition and production are never scored alike.
+nonisolated enum AnswerFormat: String, Codable, CaseIterable {
+    case multipleChoice, fillBlank, trueFalse, translation, arrange, match, probe, speaking, converse
+}
+
 nonisolated enum FSRS {
-    /// Target recall probability when scheduling the next review.
-    static let requestRetention: Double = 0.9
-    /// Decay constant for the power forgetting curve.
+    /// Target recall probability when scheduling the next review (lives in Tuning, engine-11-6).
+    static var requestRetention: Double { Tuning.fsrsRequestRetention }
+    /// Decay constant for the power forgetting curve (FSRS algorithm constant).
     static let decay: Double = -0.5
-    static let factor: Double = 19.0 / 81.0
+    static let factor: Double = 19.0 / 81.0   // FSRS algorithm constant: 0.9^(1/decay) − 1, so R = 0.9 at t = S
 
     static func makeInitialState(grade: ReviewGrade, now: Date = Date()) -> FsrsState {
         let difficulty = initialDifficulty(grade: grade)
@@ -37,11 +44,25 @@ nonisolated enum FSRS {
         )
     }
 
+    /// The schedule a gap the learner has NEVER been asked starts from: the `.again`
+    /// stability and difficulty (a new item is fragile and due immediately), but with
+    /// ZERO reps and ZERO lapses — nobody has answered it, so nobody has missed it.
+    /// `lapses` is what the copy layer reads for "you've missed this N×" and for the
+    /// lesson headline's "you've slipped on it N times"; seeding it at 1 told a
+    /// brand-new learner they had already slipped on every item of their first lesson.
+    static func makeUnseenState(now: Date = Date()) -> FsrsState {
+        var state = makeInitialState(grade: .again, now: now)
+        state.reps = 0
+        state.lapses = 0
+        state.dueAt = now
+        return state
+    }
+
     /// Probability of recall right now given elapsed days since last review.
     static func retrievability(state: FsrsState, now: Date = Date()) -> Double {
         guard let last = state.lastReviewAt else { return 1.0 }
         let elapsedDays = max(0, now.timeIntervalSince(last) / 86_400)
-        let base = 1 + factor * (elapsedDays / max(0.1, state.stability))
+        let base = 1 + factor * (elapsedDays / max(Tuning.fsrsRetrievabilityStabilityFloor, state.stability))
         return pow(base, decay)
     }
 
@@ -51,10 +72,21 @@ nonisolated enum FSRS {
 
         let r = retrievability(state: state, now: now)
         var difficulty = nextDifficulty(current: state.difficulty, grade: grade)
-        difficulty = min(10, max(1, difficulty))
+        difficulty = min(Tuning.fsrsDifficultyRange.upperBound, max(Tuning.fsrsDifficultyRange.lowerBound, difficulty))
 
         let newStability: Double
-        if grade == .again {
+        if state.reps == 0 {
+            // The FIRST answer on a card nobody has answered yet (every gap the app
+            // creates starts from `makeUnseenState`). It used to be scored as a second
+            // review of a failed card — stability 0.4 grown by the success term — so a
+            // first-try production answer came back in 16 hours, barely later than a
+            // true/false, and `Tuning.fsrsInitialStability` reached no real gap
+            // (engine-10-8). The first interval is now ordered by grade, as the format
+            // mapping intends. Difficulty still steps from the unseen state rather than
+            // jumping to the grade's initial difficulty: from that lower difficulty the
+            // growth term compounds an easy chain to years within five reviews.
+            newStability = initialStability(grade: grade)
+        } else if grade == .again {
             newStability = lapseStability(difficulty: difficulty, stability: state.stability, retrievability: r)
         } else {
             newStability = successStability(difficulty: difficulty, stability: state.stability, retrievability: r, grade: grade)
@@ -74,37 +106,62 @@ nonisolated enum FSRS {
     // MARK: - Internal curve math
 
     private static func initialDifficulty(grade: ReviewGrade) -> Double {
-        let d = 5.0 - (Double(grade.rawValue) - 3.0) * 1.0
+        let step = Double(grade.rawValue) - Double(ReviewGrade.good.rawValue)
+        let d = Tuning.fsrsNeutralDifficulty - step * Tuning.fsrsInitialDifficultyStep
         return min(10, max(1, d))
     }
 
     private static func initialStability(grade: ReviewGrade) -> Double {
-        switch grade {
-        case .again: return 0.4
-        case .hard: return 1.2
-        case .good: return 2.6
-        case .easy: return 5.8
-        }
+        Tuning.fsrsInitialStability(for: grade)
     }
 
+    /// Difficulty steps away from `.good` by grade; a `.good` answer also drifts
+    /// toward `Tuning.fsrsDifficultyMeanReversion`, so a card that keeps being
+    /// answered well eases instead of ratcheting up forever on its past lapses.
     private static func nextDifficulty(current: Double, grade: ReviewGrade) -> Double {
-        current - 0.1 * (Double(grade.rawValue) - 3.0)
+        let step = Double(grade.rawValue) - Double(ReviewGrade.good.rawValue)
+        var d = current - Tuning.fsrsDifficultyStep * step
+        if grade == .good {
+            d += (Tuning.fsrsDifficultyMeanReversion - d) * Tuning.fsrsDifficultyReversionRate
+        }
+        return d
     }
 
+    /// Success growth: stability grows by a term that is larger for easier cards
+    /// (headroom below `Tuning.fsrsGrowthDifficultyCeiling`) and for recalls that
+    /// were hard-won (low retrievability), scaled by `Tuning.fsrsGrowthRate` and
+    /// shaped by the grade (`fsrsHardPenalty` / `fsrsEasyBonus`).
     private static func successStability(difficulty: Double, stability: Double, retrievability: Double, grade: ReviewGrade) -> Double {
-        let hardPenalty = grade == .hard ? 0.8 : 1.0
-        let easyBonus = grade == .easy ? 1.3 : 1.0
-        let growth = exp(0.4 * (11 - difficulty)) * (1 + (1 - retrievability) * 2)
-        return stability * (1 + growth * 0.1 * hardPenalty * easyBonus)
+        let hardPenalty = grade == .hard ? Tuning.fsrsHardPenalty : 1.0
+        let easyBonus = grade == .easy ? Tuning.fsrsEasyBonus : 1.0
+        let headroom = exp(Tuning.fsrsGrowthScale * (Tuning.fsrsGrowthDifficultyCeiling - difficulty))
+        let recallBoost = 1 + (1 - retrievability) * Tuning.fsrsGrowthRetrievabilityWeight
+        let growth = headroom * recallBoost
+        return stability * (1 + growth * Tuning.fsrsGrowthRate * hardPenalty * easyBonus)
     }
 
-    private static func lapseStability(difficulty: Double, stability: Double, retrievability: Double) -> Double {
-        let s = 1.5 * pow(stability, 0.2) * exp(0.2 * (11 - difficulty))
-        return max(0.2, min(s, stability))
+    /// Multiplicative, monotone lapse: the new stability is a fraction (< 1) of the
+    /// old one, so a miss ALWAYS comes back sooner than a hit. Harder cards lose
+    /// more; a lapse when recall was already unlikely (low retrievability) is the
+    /// expected outcome and keeps more. The ratio is capped below 1 and the result
+    /// floored at `Tuning.fsrsMinStability`.
+    ///
+    /// The fraction alone has no absolute bound, so a well-drilled card (stability
+    /// grows past 150 days after ~10 successful reviews) was rescheduled 77 days out
+    /// the moment the learner proved they had forgotten it, and no other path brings
+    /// it back: it is not due, not a review candidate, and its retrievability stays
+    /// near 1 for weeks. `Tuning.fsrsPostLapseMaxDays` bounds how long a forgotten
+    /// card can hide; the cap only ever SHORTENS the interval, so the lapse stays
+    /// strictly sooner than the success it replaced (engine-8-2).
+    static func lapseStability(difficulty: Double, stability: Double, retrievability: Double) -> Double {
+        let difficultyShape = pow(1 - Tuning.fsrsLapseDifficultyShape, difficulty - Tuning.fsrsNeutralDifficulty)
+        let retrievabilityShape = 1 + Tuning.fsrsLapseRetrievabilityShape * (1 - min(1, max(0, retrievability)))
+        let ratio = min(Tuning.fsrsLapseMaxRatio, Tuning.fsrsLapseFactorBase * difficultyShape * retrievabilityShape)
+        return max(Tuning.fsrsMinStability, min(stability * ratio, Tuning.fsrsPostLapseMaxDays))
     }
 
     private static func nextInterval(stability: Double) -> Double {
         let interval = (stability / factor) * (pow(requestRetention, 1 / decay) - 1)
-        return max(0.4, interval)
+        return max(Tuning.fsrsMinIntervalDays, interval)   // engine-11-6
     }
 }

@@ -12,8 +12,11 @@
 //  without reloading — playback position and speed carry over seamlessly.
 //
 
+import Foundation
 import SwiftUI
+import UIKit
 import WebKit
+import Observation
 
 @MainActor
 @Observable
@@ -92,10 +95,10 @@ final class YouTubePlayerController {
             try {
               send({ type: 'time', current: p.getCurrentTime(), duration: p.getDuration(), state: p.getPlayerState() });
             } catch(e) {}
-          }, 250);
+          }, \(Tuning.youTubeTimePollMilliseconds));
         }
       }
-      var finder = setInterval(function() { setup(); if (ready) clearInterval(finder); }, 300);
+      var finder = setInterval(function() { setup(); if (ready) clearInterval(finder); }, \(Tuning.youTubePlayerFinderMilliseconds));
     })();
     true;
     """
@@ -152,6 +155,15 @@ struct YouTubeEmbedView: UIViewRepresentable {
         let wv = controller.webView!
         wv.removeFromSuperview()
         wv.translatesAutoresizingMaskIntoConstraints = false
+        // YouTube's own chrome is hidden (controls=0) and the app draws its own
+        // labelled transport controls, so the page's invisible buttons must not
+        // reach VoiceOver; the host view supplies the accessible name.
+        wv.accessibilityElementsHidden = true
+        // With the only subtree hidden there would be nothing left for VoiceOver
+        // to focus, so the container itself becomes the element that the SwiftUI
+        // `.accessibilityLabel("Video: …")` names.
+        container.isAccessibilityElement = true
+        container.accessibilityTraits = .image
         container.addSubview(wv)
         NSLayoutConstraint.activate([
             wv.leadingAnchor.constraint(equalTo: container.leadingAnchor),

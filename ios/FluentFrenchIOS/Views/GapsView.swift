@@ -4,6 +4,8 @@
 //
 //  Visual weakness map: learning gaps broken down by category with retention
 //  health and counts. Tapping a category launches a focused lesson on it.
+//  Counts read learner-visible gaps only (probes excluded, A13); the due number
+//  is `store.dueNow` (D13); an empty category explains itself (C23).
 //
 
 import SwiftUI
@@ -11,7 +13,11 @@ import SwiftUI
 struct GapsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    /// 1 at the default text size; the square category badge grows with it.
+    @ScaledMetric private var typeScale: CGFloat = 1
     @State private var scopedLesson: AssembledLesson? = nil
+    /// The selector's headline when a tapped category had nothing to offer.
+    @State private var emptyHeadline: String? = nil
 
     /// Display statistics only. Which gaps a tap practices is the selector's call
     /// (scoped request on the category) — no candidate set is built here.
@@ -21,28 +27,34 @@ struct GapsView: View {
         let active: Int
         let mastered: Int
         let due: Int
+        /// Active gaps with at least one review — the evidence behind `retention`.
+        let reviewed: Int
         let retention: Int
     }
 
     private var stats: [CategoryStat] {
-        GapCategory.allCases.map { cat in
-            let all = store.gaps.filter { $0.category == cat }
+        let dueNow = store.dueNow
+        return GapCategory.allCases.map { cat in
+            let all = store.gaps.filter { $0.category == cat && !$0.isProbe }
             let active = all.filter { !$0.isMastered }
             let mastered = all.filter { $0.isMastered }
-            let due = (store.dueGaps + store.criticalGaps).filter { $0.category == cat }
+            let due = dueNow.filter { $0.category == cat }
+            // Recall is averaged over reviewed gaps only: a never-answered seed has
+            // given no evidence and must not read as "at risk" (B4).
+            let reviewed = active.filter { !$0.isNew }
             let retention: Int
-            if active.isEmpty {
-                retention = all.isEmpty ? 100 : 100
+            if reviewed.isEmpty {
+                retention = 100
             } else {
-                let avg = active.map { $0.retrievability }.reduce(0, +) / Double(active.count)
+                let avg = reviewed.map { $0.retrievability }.reduce(0, +) / Double(reviewed.count)
                 retention = Int((avg * 100).rounded())
             }
             return CategoryStat(category: cat, active: active.count, mastered: mastered.count,
-                                due: due.count, retention: retention)
+                                due: due.count, reviewed: reviewed.count, retention: retention)
         }
     }
 
-    private var totalActive: Int { store.activeGaps.count }
+    private var totalActive: Int { store.visibleGaps.count }
     private var totalMastered: Int { store.masteredGaps.count }
 
     var body: some View {
@@ -64,12 +76,33 @@ struct GapsView: View {
         .fullScreenCover(item: $scopedLesson) { lesson in
             LessonView(gaps: lesson.gaps, assembled: lesson)
         }
+        .alert("Nothing to practice", isPresented: Binding(
+            get: { emptyHeadline != nil },
+            set: { if !$0 { emptyHeadline = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(emptyHeadline ?? "")
+        }
+    }
+
+    /// Declare intent only; when the selector has nothing for this category the
+    /// learner sees its headline instead of a dead tap (C23). `dueOnly` is the
+    /// scope behind a card whose only remaining work is mastery checks: the same
+    /// pool the "N due now" badge counts (`store.dueNow`, D13).
+    private func practice(_ category: GapCategory, dueOnly: Bool = false) {
+        Haptics.select()
+        let scope: SelectionScope = dueOnly ? .dueInCategory(category) : .category(category)
+        switch LessonPipeline(store: store).outcome(for: scope) {
+        case .lesson(let lesson): scopedLesson = lesson
+        case .empty(let headline): emptyHeadline = headline
+        }
     }
 
     private var header: some View {
         ResourceHeader(
             gradient: Theme.primaryGradient,
-            title: "Gap Map",
+            title: HomeCopy.progressTitle,
             subtitle: "Where you're strong, where to focus",
             onBack: { dismiss() }
         )
@@ -77,11 +110,11 @@ struct GapsView: View {
 
     private var overviewCard: some View {
         HStack(spacing: 12) {
-            overviewStat(value: "\(totalActive)", label: "Active gaps", tint: Theme.primary, icon: "target")
+            overviewStat(value: "\(totalActive)", label: HomeCopy.toLearnLabel, tint: Theme.primary, icon: "target")
             Rectangle().fill(Theme.border).frame(width: 1, height: 44)
             overviewStat(value: "\(totalMastered)", label: "Mastered", tint: Theme.success, icon: "checkmark.seal.fill")
             Rectangle().fill(Theme.border).frame(width: 1, height: 44)
-            overviewStat(value: "\(store.overallRetention)%", label: "Retention", tint: Theme.secondary, icon: "brain.head.profile")
+            overviewStat(value: store.hasRetentionEvidence ? "\(store.overallRetention)%" : "—", label: "Retention", tint: Theme.secondary, icon: "brain.head.profile")
         }
         .padding(18)
         .frame(maxWidth: .infinity)
@@ -93,36 +126,63 @@ struct GapsView: View {
 
     private func overviewStat(value: String, label: String, tint: Color, icon: String) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(tint)
-            Text(value).font(.system(size: 20, weight: .heavy)).foregroundStyle(Theme.text)
-            Text(label).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            Image(systemName: icon).scaledFont(15).foregroundStyle(tint).accessibilityHidden(true)
+            Text(value).scaledFont(20, weight: .heavy).foregroundStyle(Theme.text)
+                .minimumScaleFactor(0.6).lineLimit(1)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private func categoryCard(_ stat: CategoryStat) -> some View {
+        let showsDue = store.showsDueCount
         let total = max(stat.active + stat.mastered, 1)
         let masteryProgress = Double(stat.mastered) / Double(total)
         let healthLabel: String
         let healthColor: Color
-        if stat.active == 0 { healthLabel = "All clear"; healthColor = Theme.success }
-        else if stat.retention >= 70 { healthLabel = "Healthy"; healthColor = Theme.success }
-        else if stat.retention >= 50 { healthLabel = "Needs attention"; healthColor = Theme.warning }
+        // No gaps of this category at all — nothing seeded, nothing captured, nothing
+        // scheduled. There is no evidence to be green about, so this must NOT read
+        // "All clear": a day-one learner has never been asked to pronounce anything.
+        if stat.active == 0 && stat.mastered == 0 && stat.due == 0 {
+            healthLabel = "Not started"; healthColor = Theme.textSecondary
+        }
+        // Nothing unmastered left, but the schedule still wants some checks back:
+        // "All clear" would contradict the "N due now" line right below it.
+        else if stat.active == 0 && stat.due > 0 { healthLabel = "Due for a check"; healthColor = Theme.warning }
+        else if stat.active == 0 { healthLabel = "All clear"; healthColor = Theme.success }
+        // Never reviewed: no recall evidence yet, so no health claim either (D19).
+        else if stat.reviewed == 0 { healthLabel = "New"; healthColor = Theme.primary }
+        else if stat.retention >= Tuning.gapHealthHealthyFloor { healthLabel = "Healthy"; healthColor = Theme.success }
+        else if stat.retention >= Tuning.gapHealthAttentionFloor { healthLabel = "Needs attention"; healthColor = Theme.warning }
         else { healthLabel = "At risk"; healthColor = Theme.error }
 
         return Button {
-            guard stat.active > 0 else { return }
-            Haptics.select()
-            scopedLesson = LessonPipeline(store: store).lesson(for: .category(stat.category))
+            // A card that says "N due now" has to be startable. When everything
+            // unmastered is gone, those N are mastery checks the schedule wants
+            // back (B3) — practise exactly that pool instead of claiming the
+            // category is empty one line under the badge.
+            if stat.active > 0 {
+                practice(stat.category)
+            } else if stat.due > 0 {
+                practice(stat.category, dueOnly: true)
+            } else {
+                emptyHeadline = "Nothing in \(stat.category.label) yet — capture words while reading or speaking, or keep going with your lessons."
+            }
         } label: {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 12) {
-                    Image(systemName: icon(stat.category)).font(.system(size: 18)).foregroundStyle(stat.category.color)
-                        .frame(width: 44, height: 44).background(stat.category.color.opacity(0.1)).clipShape(.rect(cornerRadius: 12))
+                    Image(systemName: icon(stat.category)).scaledFont(18).foregroundStyle(stat.category.color)
+                        .frame(width: Theme.minimumHitTarget * typeScale, height: Theme.minimumHitTarget * typeScale)
+                        .background(stat.category.color.opacity(0.1)).clipShape(.rect(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(stat.category.color.opacity(0.16), lineWidth: 0.5))
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(stat.category.label).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
-                        Text("\(stat.active) active · \(stat.mastered) mastered").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Text(stat.category.label).scaledFont(16, weight: .semibold).foregroundStyle(Theme.text)
+                        Text(HomeCopy.categoryCounts(toLearn: stat.active, mastered: stat.mastered))
+                            .scaledFont(12).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
                     Pill(text: healthLabel, color: healthColor)
@@ -135,22 +195,28 @@ struct GapsView: View {
                     }
                 }
                 .frame(height: 5)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(stat.category.label) mastery")
+                .accessibilityValue("\(stat.mastered) of \(stat.active + stat.mastered) mastered")
 
                 HStack {
-                    if stat.due > 0 {
+                    // "Due" only once any card has been reviewed (UX-15,
+                    // `AppStore.showsDueCount`): before that it is the seeded batch.
+                    if stat.due > 0 && showsDue {
                         HStack(spacing: 4) {
-                            Image(systemName: "clock.fill").font(.system(size: 10))
-                            Text("\(stat.due) due to review").font(.system(size: 12, weight: .medium))
+                            Image(systemName: "clock.fill").scaledFont(10).accessibilityHidden(true)
+                            Text("\(stat.due) due now").font(.caption.weight(.medium))
                         }
                         .foregroundStyle(Theme.warning)
                     } else {
-                        Text("\(stat.retention)% retention").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        Text(stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention)% retention")
+                            .scaledFont(12).foregroundStyle(Theme.textSecondary)
                     }
                     Spacer()
-                    if stat.active > 0 {
+                    if stat.active > 0 || stat.due > 0 {
                         HStack(spacing: 4) {
-                            Text("Practice").font(.system(size: 12, weight: .semibold))
-                            Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold))
+                            Text(stat.active > 0 ? "Practice" : "Review").scaledFont(12, weight: .semibold)
+                            Image(systemName: "arrow.right").scaledFont(10, weight: .bold).accessibilityHidden(true)
                         }
                         .foregroundStyle(stat.category.color)
                     }
@@ -165,6 +231,13 @@ struct GapsView: View {
         }
         .buttonStyle(.plain)
         .pressable()
+        .accessibilityLabel("\(stat.category.label): \(HomeCopy.categoryCounts(toLearn: stat.active, mastered: stat.mastered, separator: ", ")), \(healthLabel)")
+        .accessibilityValue(stat.due > 0 && showsDue
+                            ? "\(stat.due) due now"
+                            : (stat.reviewed == 0 ? "No reviews yet" : "\(stat.retention) percent retention"))
+        .accessibilityHint(stat.active > 0 ? "Starts a focused lesson."
+                           : (stat.due > 0 ? "Starts the mastery checks that are due."
+                              : "Nothing to practice here yet."))
     }
 
     private func icon(_ c: GapCategory) -> String {

@@ -8,6 +8,7 @@
 //  both curated library pieces and live news articles.
 //
 
+import Foundation
 import SwiftUI
 
 // MARK: - Library reader
@@ -34,16 +35,21 @@ struct ArticleReaderView: View {
     var body: some View {
         WordReader(
             title: article.title,
-            subtitle: "\(article.source) · \(article.timeAgo)",
-            level: .B1,
-            tint: Color(hex: article.category.hex),
-            categoryLabel: article.category.label,
-            regionLabel: article.region.label,
-            regionEmoji: article.region.emoji,
+            // No time for a sample that was never published (read-10-6).
+            subtitle: article.timeAgo.map { "\(article.source) · \($0)" } ?? article.source,
+            level: article.level,
+            levelLabel: article.levelLabel,
+            tint: article.category.map { Color(hex: $0.hex) } ?? Theme.primary,
+            categoryLabel: article.category?.label,
+            regionLabel: article.region?.label,
+            regionEmoji: article.region?.emoji,
             imageUrl: article.imageUrl,
-            summary: article.summary,
+            summary: article.contextSummary,
             text: article.body,
-            sourceTab: "read"
+            sourceTab: "read",
+            sourceUrl: article.url,
+            sourceName: article.source,
+            isExcerpt: article.isExcerpt
         )
     }
 }
@@ -55,6 +61,9 @@ private enum BlockKind { case heading, paragraph, bullet, numbered }
 private struct Token: Identifiable, Hashable {
     let id: Int
     let text: String
+    /// True when this word starts a sentence, so its capital is punctuation
+    /// rather than a name and the headword rule may un-capitalise it (read-5-1).
+    let opensSentence: Bool
 }
 
 private struct ContentBlock: Identifiable {
@@ -76,10 +85,23 @@ private struct GlossTarget: Identifiable {
 struct WordReader: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Body text is sized per block, so the reader needs a `Font` value rather
+    /// than the `.scaledFont` modifier (one environment read for every word).
+    @Environment(\.sizeCategory) private var sizeCategory
+    /// 1 at the default text size; the hero image and the round chrome grow
+    /// with it so scaled text keeps its designed proportions.
+    @ScaledMetric private var typeScale: CGFloat = 1
+
+    /// The hero grows with the text size but stops before it swallows the screen.
+    private var heroScale: CGFloat { min(max(typeScale, 1), 1.6) }
 
     let title: String
     var subtitle: String? = nil
+    /// The level captures from this text are filed under (E7).
     let level: CEFRLevel
+    /// What the level pill says — "≈ B1" when the level is an estimate.
+    var levelLabel: String? = nil
     let tint: Color
     var categoryLabel: String? = nil
     var regionLabel: String? = nil
@@ -88,6 +110,13 @@ struct WordReader: View {
     var summary: String? = nil
     let text: String
     let sourceTab: String
+    /// The story's web address, when there is one to send the reader to.
+    var sourceUrl: String? = nil
+    /// Who published it — named in the excerpt note and the source link.
+    var sourceName: String? = nil
+    /// True when `text` is the opening excerpt a news service hands out rather
+    /// than the whole piece; the reader says so instead of implying it is all.
+    var isExcerpt: Bool = false
 
     // Selection state
     @State private var target: GlossTarget? = nil
@@ -95,12 +124,17 @@ struct WordReader: View {
     @State private var selectionMode = false
     @State private var anchorId: Int? = nil
     @State private var focusId: Int? = nil
-    @State private var anchorBlock: Int? = nil
-    @State private var clearTask: Task<Void, Never>? = nil
+    /// The token-id range the current selection may cover: the sentence it
+    /// started in (token ids run through the whole article, so without this a
+    /// drag could sweep paragraphs into one "word").
+    @State private var anchorSpan: ClosedRange<Int>? = nil
     @State private var tokenFrames: [Int: CGRect] = [:]
 
     private var blocks: [ContentBlock] { Self.parse(text) }
-    private var keyVocab: [String] { Self.keyVocabulary(from: text) }
+    /// The words this piece offers to look up and save. The rule lives in the
+    /// engine (`KeyVocabulary`): elisions split off, names dropped — a chip is
+    /// one tap from a deck card, so it has to be a headword (read-4-1).
+    private var keyVocab: [String] { KeyVocabulary.words(in: text) }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -112,9 +146,14 @@ struct WordReader: View {
                     VStack(alignment: .leading, spacing: Space.lg) {
                         meta
                         if let summary, !summary.isEmpty { contextBox(summary) }
-                        hintRow
-                        articleBody
-                        keyVocabSection
+                        if blocks.isEmpty {
+                            emptyBody
+                        } else {
+                            hintRow
+                            articleBody
+                            if isExcerpt { excerptNote }
+                            keyVocabSection
+                        }
                         if !savedTerms.isEmpty { savedFooter }
                         Color.clear.frame(height: 24)
                     }
@@ -129,12 +168,20 @@ struct WordReader: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        // The story is read aloud from inside this screen; leaving it must not
+        // leave a five-paragraph narration playing over the rest of the app.
+        .onDisappear { NaturalVoice.shared.stop() }
         .sheet(item: $target) { t in
             GlossSheet(
                 term: t.term,
                 context: t.context,
                 sourceTab: sourceTab,
+                sourceLevel: level,
+                // Under its own key here; the sheet adds the deck's article forms
+                // ("le matin" for "matin") once the gloss shows the meanings agree
+                // (read-10-5, read-11-5).
                 alreadySaved: savedTerms.contains(t.term.lowercased())
+                    || KeyVocabulary.isSaved(t.term, in: store.savedHeadwordKeys())
             ) {
                 savedTerms.insert(t.term.lowercased())
             }
@@ -147,21 +194,26 @@ struct WordReader: View {
     // MARK: Hero
 
     private var hero: some View {
-        Color(Theme.backgroundTertiary)
-            .frame(height: 300)
+        Theme.backgroundTertiary
+            .frame(height: 300 * heroScale)
             .overlay {
                 if let imageUrl, let url = URL(string: imageUrl) {
                     AsyncImage(url: url) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: {
                         LinearGradient(colors: [tint.opacity(0.85), tint], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            .overlay { Image(systemName: "newspaper.fill").font(.system(size: 44)).foregroundStyle(.white.opacity(0.5)) }
+                            .overlay {
+                                Image(systemName: "newspaper.fill").scaledFont(44).foregroundStyle(.white.opacity(0.5))
+                                    .accessibilityHidden(true)
+                            }
                     }
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 } else {
                     LinearGradient(colors: [tint.opacity(0.9), tint], startPoint: .topLeading, endPoint: .bottomTrailing)
                         .overlay {
-                            Image(systemName: "book.pages.fill").font(.system(size: 50)).foregroundStyle(.white.opacity(0.4))
+                            Image(systemName: "book.pages.fill").scaledFont(50).foregroundStyle(.white.opacity(0.4))
+                                .accessibilityHidden(true)
                         }
                 }
             }
@@ -175,29 +227,32 @@ struct WordReader: View {
                     HStack(spacing: 6) {
                         if let categoryLabel {
                             Text(categoryLabel.uppercased())
-                                .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                                .scaledFont(10, weight: .bold).foregroundStyle(.white)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(tint).clipShape(.capsule)
                         }
-                        Text(level.rawValue)
-                            .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        Text(levelLabel ?? level.rawValue)
+                            .scaledFont(10, weight: .bold).foregroundStyle(.white)
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.white.opacity(0.22)).clipShape(.capsule)
                         if let regionLabel {
                             HStack(spacing: 3) {
-                                if let regionEmoji { Text(regionEmoji).font(.system(size: 10)) }
-                                Text(regionLabel).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+                                if let regionEmoji { Text(regionEmoji).scaledFont(10) }
+                                Text(regionLabel).scaledFont(10, weight: .semibold).foregroundStyle(.white)
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.black.opacity(0.3)).clipShape(.capsule)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                     Text(title)
-                        .font(.serifDisplay(27, weight: .bold)).foregroundStyle(.white)
+                        .scaledSerifDisplay(27, weight: .bold).foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
                         .shadow(color: .black.opacity(0.4), radius: 8, y: 2)
+                        .accessibilityAddTraits(.isHeader)
                     if let subtitle {
-                        Text(subtitle).font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                        Text(subtitle).scaledFont(13, weight: .medium).foregroundStyle(.white.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.horizontal, Space.xl).padding(.bottom, 20)
@@ -212,15 +267,21 @@ struct WordReader: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .scaledFont(17, weight: .bold).foregroundStyle(.white)
+                    .frame(width: 38 * Theme.chromeScale(typeScale), height: 38 * Theme.chromeScale(typeScale))
                     .background(.black.opacity(0.32)).clipShape(.circle)
                     .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 0.5))
+                    .minimumHitTarget()
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Back")
+            .accessibilityHint("Returns to the previous screen")
             Spacer()
-            SpeakButton(text: text, size: 38)
-                .background(.black.opacity(0.32), in: .circle)
+            // Nothing to read aloud when the story arrived without text.
+            if !blocks.isEmpty {
+                SpeakButton(text: text, size: 38)
+                    .background(.black.opacity(0.32), in: .circle)
+            }
         }
         .padding(.horizontal, Space.lg)
         .padding(.top, 8)
@@ -230,7 +291,7 @@ struct WordReader: View {
 
     private var meta: some View {
         HStack(spacing: 8) {
-            Pill(text: level.rawValue, color: tint, filled: true)
+            Pill(text: levelLabel ?? level.rawValue, color: tint, filled: true)
             if let categoryLabel { Pill(text: categoryLabel, color: tint) }
             Spacer()
         }
@@ -239,10 +300,11 @@ struct WordReader: View {
     private func contextBox(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Context", systemImage: "text.alignleft")
-                .font(.system(size: 12, weight: .bold)).foregroundStyle(tint)
-            Text(text).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                .scaledFont(12, weight: .bold).foregroundStyle(tint)
+            Text(text).scaledFont(15, weight: .medium).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .accessibilityElement(children: .combine)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Space.lg)
         .background(tint.opacity(0.07))
@@ -254,18 +316,85 @@ struct WordReader: View {
 
     private var hintRow: some View {
         HStack(spacing: 6) {
-            Image(systemName: "hand.tap.fill").font(.system(size: 11)).foregroundStyle(tint)
-            Text("Tap any word to translate · Drag across words for phrases")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "hand.tap.fill").scaledFont(11).foregroundStyle(tint)
+                .accessibilityHidden(true)
+            Text("Tap any word to translate · Drag across up to \(Tuning.maxCaptureWords) words for a phrase")
+                .scaledFont(12, weight: .medium).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: Source
+
+    /// A way out to the original story. Nothing at all when there is no URL —
+    /// curated pieces are complete and have no "elsewhere" to point at.
+    @ViewBuilder
+    private var sourceLink: some View {
+        if let sourceUrl, let url = URL(string: sourceUrl) {
+            Link(destination: url) {
+                HStack(spacing: 6) {
+                    Text("Read the full story").scaledFont(14, weight: .semibold)
+                    Image(systemName: "arrow.up.right").scaledFont(11, weight: .bold)
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(tint)
+                .padding(.horizontal, Space.lg)
+                .frame(minHeight: Theme.minimumHitTarget)
+                .background(tint.opacity(0.1))
+                .clipShape(.capsule)
+            }
+            .accessibilityLabel(sourceName.map { "Read the full story at \($0)" } ?? "Read the full story")
+            .accessibilityHint("Opens the original article outside the app")
+        }
+    }
+
+    /// Says plainly that the text above stops early, so a reader does not take
+    /// a mid-sentence cut for the end of the piece.
+    private var excerptNote: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Label(
+                "This is the opening excerpt \(sourceName ?? "the news service") shares — the story continues on their site.",
+                systemImage: "text.append"
+            )
+            .scaledFont(13, weight: .medium).foregroundStyle(Theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            sourceLink
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Space.lg)
+        .background(Theme.backgroundSecondary)
+        .clipShape(.rect(cornerRadius: Radius.card))
+    }
+
+    /// A story whose text never arrived. Rare — the feed drops textless
+    /// headlines — but a reader must never meet a blank page with no reason.
+    private var emptyBody: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            Label("No text available for this story", systemImage: "doc.text.magnifyingglass")
+                .scaledFont(15, weight: .bold).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The news service didn't send anything to read here, so there are no words to tap.")
+                .scaledFont(14).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            sourceLink
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Space.lg)
+        .background(Theme.backgroundSecondary)
+        .clipShape(.rect(cornerRadius: Radius.card))
     }
 
     // MARK: Body
 
     private var articleBody: some View {
-        VStack(alignment: .leading, spacing: Space.lg) {
+        // The deck's headwords, read ONCE for the whole body: a word saved in an
+        // earlier session is underlined the first time this story is opened, and
+        // the per-word test stays a set lookup (read-6-3).
+        let savedKeys = store.savedHeadwordKeys()
+        return VStack(alignment: .leading, spacing: Space.lg) {
             ForEach(blocks) { block in
-                blockView(block)
+                blockView(block, savedKeys: savedKeys)
             }
         }
         .coordinateSpace(.named("reader"))
@@ -276,45 +405,62 @@ struct WordReader: View {
     }
 
     @ViewBuilder
-    private func blockView(_ block: ContentBlock) -> some View {
+    private func blockView(_ block: ContentBlock, savedKeys: Set<String>) -> some View {
         switch block.kind {
         case .heading:
             HStack(alignment: .top, spacing: 10) {
                 RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 4)
-                tokenFlow(block, size: 20, weight: .bold, color: Theme.text)
+                tokenFlow(block, size: 20, weight: .bold, color: Theme.text, savedKeys: savedKeys)
             }
             .padding(.top, 4)
         case .bullet:
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(tint).frame(width: 6, height: 6).padding(.top, 9)
-                tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
+                tokenFlow(block, size: 17, weight: .regular, color: Theme.text, savedKeys: savedKeys)
             }
         case .numbered:
             HStack(alignment: .top, spacing: 10) {
                 Text("\(block.number ?? 1)")
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 22, height: 22).background(tint).clipShape(.circle)
-                tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
+                    .scaledFont(13, weight: .bold).foregroundStyle(.white)
+                    .frame(width: 22 * Theme.chromeScale(typeScale), height: 22 * Theme.chromeScale(typeScale)).background(tint).clipShape(.circle)
+                tokenFlow(block, size: 17, weight: .regular, color: Theme.text, savedKeys: savedKeys)
             }
         case .paragraph:
-            tokenFlow(block, size: 17, weight: .regular, color: Theme.text)
+            tokenFlow(block, size: 17, weight: .regular, color: Theme.text, savedKeys: savedKeys)
         }
     }
 
-    private func tokenFlow(_ block: ContentBlock, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
+    private func tokenFlow(_ block: ContentBlock, size: CGFloat, weight: Font.Weight, color: Color,
+                           savedKeys: Set<String>) -> some View {
         FlowLayout(spacing: 5, lineSpacing: 7) {
             ForEach(block.tokens) { token in
-                tokenView(token, blockId: block.id, size: size, weight: weight, color: color)
+                tokenView(token, blockId: block.id, size: size, weight: weight, color: color,
+                          savedKeys: savedKeys)
             }
         }
     }
 
-    private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color) -> some View {
+    @ViewBuilder
+    private func tokenView(_ token: Token, blockId: Int, size: CGFloat, weight: Font.Weight, color: Color,
+                           savedKeys: Set<String>) -> some View {
+        // The word as the deck would keep it, so the underline below marks a
+        // saved word wherever it is met: "l'énergie" in the body and the
+        // "énergie" chip are the same card (read-5-1).
+        let headword = KeyVocabulary.headword(for: token.text, opensSentence: token.opensSentence)
+        // "2030" or "%" is text, not a word: it gets no tap, no button trait and
+        // no "opens the translation" promise the reader cannot keep.
+        let lookupable = Self.isLookupable(headword)
         let highlighted = isHighlighted(token.id)
-        let saved = savedTerms.contains(Self.clean(token.text).lowercased()) && !Self.clean(token.text).isEmpty
+        // Saved in THIS reading, or already in the deck from an earlier one — a word
+        // the learner owns is marked wherever it is met (read-6-3).
+        // Only the word's own key: before the tap there is no meaning to tell the
+        // deck's "l'été" (summer) from "été" (been), so an article form is left to
+        // the word sheet (read-11-5).
+        let saved = lookupable && (savedTerms.contains(headword.lowercased())
+                                   || KeyVocabulary.isSaved(headword, in: savedKeys))
         let bg: Color = highlighted ? tint.opacity(0.3) : (saved ? Theme.primaryLight : .clear)
-        return Text(token.text)
-            .font(.system(size: size, weight: weight))
+        let wordView = Text(token.text)
+            .font(Theme.scaledFontValue(size, weight: weight, for: sizeCategory))
             .foregroundStyle(highlighted ? Theme.text : color)
             .padding(.horizontal, 2.5).padding(.vertical, 1)
             .background(bg)
@@ -333,7 +479,21 @@ struct WordReader: View {
                     )
                 }
             }
+        // Each word is its own control: VoiceOver announces it as a button and
+        // says what activating it does.
+        let control = wordView
             .onTapGesture { handleTap(token: token, blockId: blockId) }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens the translation")
+        // The underline that marks a saved word gets said in words — but only
+        // for saved words, so the reader is not read out as a wall of values.
+        if !lookupable {
+            wordView
+        } else if saved {
+            control.accessibilityValue("Saved to \(HomeCopy.myWordsTitle)")
+        } else {
+            control
+        }
     }
 
     private func isHighlighted(_ id: Int) -> Bool {
@@ -346,26 +506,33 @@ struct WordReader: View {
     @ViewBuilder
     private var keyVocabSection: some View {
         if !keyVocab.isEmpty {
+            let savedKeys = store.savedHeadwordKeys()
             VStack(alignment: .leading, spacing: Space.md) {
                 SectionHeader(title: "Key Vocabulary", trailing: "\(keyVocab.count) words")
                 FlowLayout(spacing: 8, lineSpacing: 8) {
                     ForEach(keyVocab, id: \.self) { word in
                         let saved = savedTerms.contains(word.lowercased())
+                            || KeyVocabulary.isSaved(word, in: savedKeys)
                         Button {
                             Haptics.tap()
-                            target = GlossTarget(term: word, context: text)
+                            present(term: word)
                         } label: {
                             HStack(spacing: 5) {
-                                Text(word).font(.system(size: 14, weight: .semibold))
+                                Text(word).scaledFont(14, weight: .semibold)
                                 Image(systemName: saved ? "checkmark.circle.fill" : "plus.circle")
-                                    .font(.system(size: 12))
+                                    .scaledFont(12)
+                                    .accessibilityHidden(true)
                             }
                             .foregroundStyle(saved ? Theme.success : tint)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(saved ? Theme.successLight : tint.opacity(0.1))
                             .clipShape(.capsule)
+                            .frame(minHeight: Theme.minimumHitTarget)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(word)
+                        .accessibilityValue(saved ? "Saved to \(HomeCopy.myWordsTitle)" : "")
+                        .accessibilityHint(saved ? "Opens the word again" : "Opens the translation and lets you save it")
                     }
                 }
             }
@@ -374,9 +541,9 @@ struct WordReader: View {
     }
 
     private var savedFooter: some View {
-        Label("\(savedTerms.count) word\(savedTerms.count == 1 ? "" : "s") added to your deck",
+        Label("\(savedTerms.count) word\(savedTerms.count == 1 ? "" : "s") added to \(HomeCopy.myWordsTitle)",
               systemImage: "checkmark.seal.fill")
-            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.success)
+            .scaledFont(13, weight: .semibold).foregroundStyle(Theme.success)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .background(Theme.successLight).clipShape(.capsule)
@@ -388,16 +555,19 @@ struct WordReader: View {
         VStack {
             Spacer()
             HStack(spacing: 8) {
-                Image(systemName: "text.cursor").font(.system(size: 13, weight: .bold))
+                Image(systemName: "text.cursor").scaledFont(13, weight: .bold)
+                    .accessibilityHidden(true)
                 Text("Drag across words to build a phrase")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
+                    .multilineTextAlignment(.center)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 16).padding(.vertical, 11)
             .background(Theme.text.opacity(0.92)).clipShape(.capsule)
             .softLift(radius: 12, y: 4, strength: 2)
             .padding(.bottom, 36)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Reduce Motion: the hint fades in instead of sliding up.
+            .transition(reduceMotion ? AnyTransition.opacity : .move(edge: .bottom).combined(with: .opacity))
         }
         .allowsHitTesting(false)
     }
@@ -405,14 +575,14 @@ struct WordReader: View {
     // MARK: Gesture handlers
 
     private func handleTap(token: Token, blockId: Int) {
-        present(term: Self.clean(token.text))
+        present(term: token.text, opensSentence: token.opensSentence, at: token.id)
     }
 
     /// Long-press-then-drag: hold briefly, then sweep your finger across the
     /// text to highlight a continuous phrase. The short hold lets the article
     /// scroll normally without being mistaken for a selection.
     private var phraseDragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.16)
+        LongPressGesture(minimumDuration: Tuning.readerPhraseHoldSeconds)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("reader")))
             .onChanged { value in
                 if case .second(true, let drag) = value, let drag {
@@ -428,21 +598,57 @@ struct WordReader: View {
             }
     }
 
-    /// Grow the highlighted range to include whichever word the finger is over.
+    /// Grow the highlighted range to include whichever word the finger is over —
+    /// but only as far as a phrase a deck card can be made of: at most
+    /// `Tuning.maxCaptureWords` words, and never past the end of the sentence the
+    /// selection started in. A sweep down the article stops growing instead of
+    /// building a paragraph-long "word".
     private func updateSelection(at point: CGPoint) {
         guard let id = tokenId(at: point) else { return }
         if !selectionMode {
             Haptics.select()
-            clearTask?.cancel()
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            let span = selectableSpan(containing: id)
+            withAnimation(Theme.motion(.spring(response: 0.25, dampingFraction: 0.85), reduceMotion: reduceMotion)) {
                 selectionMode = true
                 anchorId = id
                 focusId = id
+                anchorSpan = span
             }
-        } else if focusId != id {
-            Haptics.tap()
-            withAnimation(.easeOut(duration: 0.12)) { focusId = id }
+        } else if let anchor = anchorId {
+            let clamped = clampedFocus(anchor: anchor, candidate: id)
+            if focusId != clamped {
+                Haptics.tap()
+                withAnimation(Theme.motion(.easeOut(duration: 0.12), reduceMotion: reduceMotion)) { focusId = clamped }
+            }
         }
+    }
+
+    /// How far the highlight may reach from `anchor` toward `candidate`: inside
+    /// the anchor's own sentence and no wider than `Tuning.maxCaptureWords`.
+    private func clampedFocus(anchor: Int, candidate: Int) -> Int {
+        let span = anchorSpan ?? anchor...anchor
+        let inParagraph = min(max(candidate, span.lowerBound), span.upperBound)
+        let reach = max(0, Tuning.maxCaptureWords - 1)
+        return inParagraph > anchor ? min(inParagraph, anchor + reach) : max(inParagraph, anchor - reach)
+    }
+
+    /// The token-id range a selection started at `id` may cover: the SENTENCE it
+    /// sits in, inside its own paragraph. The highlight stops visibly at the full
+    /// stop instead of sweeping into the next sentence and building a term the
+    /// deck would then have to refuse.
+    private func selectableSpan(containing id: Int) -> ClosedRange<Int>? {
+        for block in blocks {
+            guard let first = block.tokens.first?.id, let last = block.tokens.last?.id,
+                  id >= first, id <= last else { continue }
+            var lower = first
+            var upper = last
+            for token in block.tokens {
+                guard CaptureBuilder.endsSentence(token.text) else { continue }
+                if token.id < id { lower = token.id + 1 } else { upper = token.id; break }
+            }
+            return lower...upper
+        }
+        return nil
     }
 
     /// On lift, translate the highlighted phrase (or single word).
@@ -451,9 +657,14 @@ struct WordReader: View {
             endSelection(); return
         }
         let lo = min(a, f), hi = max(a, f)
-        let term = lo == hi ? tokenText(lo) : Self.phrase(in: blocks, from: lo, to: hi)
         endSelection()
-        present(term: term)
+        // A one-word selection is a tap by another name and takes the same
+        // headword rule; a phrase is kept exactly as it was swept.
+        if lo == hi, let hit = token(withId: lo) {
+            present(term: hit.text, opensSentence: hit.opensSentence, at: lo)
+        } else if lo != hi {
+            present(term: Self.phrase(in: blocks, from: lo, to: hi), at: lo)
+        }
     }
 
     /// Find the token under a point, falling back to the nearest word on the
@@ -469,34 +680,49 @@ struct WordReader: View {
         return best
     }
 
-    private func tokenText(_ id: Int) -> String {
+    private func token(withId id: Int) -> Token? {
         for block in blocks {
-            for t in block.tokens where t.id == id { return Self.clean(t.text) }
+            for t in block.tokens where t.id == id { return t }
         }
-        return ""
+        return nil
     }
 
-    private func present(term: String) {
-        let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
-        target = GlossTarget(term: clean, context: text)
+    /// Open the gloss for a term with the sentence it was met in as context
+    /// (E5) — never the whole article. `tokenId` is where the learner tapped or
+    /// started the sweep; a Key Vocabulary chip has none and takes the first
+    /// sentence the word appears in.
+    private func present(term: String, opensSentence: Bool = false, at tokenId: Int? = nil) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One word goes through the SAME headword rule as a Key Vocabulary chip,
+        // so a body tap on "d'experts" and the "experts" chip save one card
+        // rather than two (read-5-1). A swept phrase is left as selected.
+        let clean = trimmed.contains(where: { $0.isWhitespace })
+            ? trimmed
+            : KeyVocabulary.headword(for: trimmed, opensSentence: opensSentence)
+        // A bare number ("2030") or a stray symbol ("%", "€") has no meaning to
+        // look up and must never become a deck card, so it is not a term at all —
+        // and neither is a run of text longer than a phrase (the drag is clamped,
+        // this is the backstop).
+        guard Self.isLookupable(clean), CaptureBuilder.isAcceptableHeadword(clean) else { return }
+        // The sentence of THIS copy of the word, not the first sentence that has
+        // one: count the copies before the tapped token and take that match
+        // (read-10-7).
+        let context: String
+        if let tokenId {
+            let before = SentenceExtractor.occurrences(of: clean, in: Self.bodyText(in: blocks, before: tokenId))
+            context = SentenceExtractor.sentence(containing: clean, in: text, occurrence: before)
+        } else {
+            context = SentenceExtractor.sentence(containing: clean, in: text)
+        }
+        target = GlossTarget(term: clean, context: context)
     }
 
     private func endSelection() {
-        clearTask?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(Theme.motion(.easeOut(duration: 0.2), reduceMotion: reduceMotion)) {
             selectionMode = false
             anchorId = nil
             focusId = nil
-            anchorBlock = nil
-        }
-    }
-
-    private func scheduleAutoClear() {
-        clearTask?.cancel()
-        clearTask = Task {
-            try? await Task.sleep(for: .seconds(4))
-            if !Task.isCancelled { endSelection() }
+            anchorSpan = nil
         }
     }
 
@@ -529,15 +755,33 @@ struct WordReader: View {
                 kind = .heading
             }
 
-            let words = content.split(separator: " ").map(String.init)
+            // Split on every whitespace, the no-break spaces of French typography
+            // included (read-11-3). The first word of a line opens a sentence;
+            // after that, whichever word follows a full stop does.
+            let words = KeyVocabulary.readerTokens(inLine: content)
             guard !words.isEmpty else { continue }
-            let tokens = words.map { w -> Token in
-                let t = Token(id: tokenId, text: w); tokenId += 1; return t
+            var tokens: [Token] = []
+            for word in words {
+                tokens.append(Token(id: tokenId, text: word.text, opensSentence: word.opensSentence))
+                tokenId += 1
             }
             blocks.append(ContentBlock(id: blockId, kind: kind, number: number, tokens: tokens))
             blockId += 1
         }
         return blocks
+    }
+
+    /// The body's words before token `id`, one line per block — the same words, in
+    /// the same lines, that `SentenceExtractor` reads in the article text, so the
+    /// matches counted here index its sentences (read-10-7).
+    fileprivate static func bodyText(in blocks: [ContentBlock], before id: Int) -> String {
+        var lines: [String] = []
+        for block in blocks {
+            let words = block.tokens.filter { $0.id < id }.map(\.text)
+            guard !words.isEmpty else { break }
+            lines.append(words.joined(separator: " "))
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Join the raw token texts in a contiguous id range into a phrase.
@@ -552,29 +796,11 @@ struct WordReader: View {
         return joined.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:«»\"'()—–…"))
     }
 
-    static func clean(_ s: String) -> String {
-        s.trimmingCharacters(in: CharacterSet(charactersIn: " .,!?;:«»\"'()—–…0123456789\n\t"))
-    }
-
-    private static let stopwords: Set<String> = [
-        "dans", "pour", "avec", "cette", "leur", "leurs", "vous", "nous", "elles",
-        "comme", "mais", "donc", "alors", "aussi", "plus", "très", "être", "avoir",
-        "fait", "tout", "tous", "toute", "toutes", "sans", "sous", "entre", "depuis",
-        "selon", "après", "avant", "pendant", "lorsque", "parce", "quand", "encore",
-    ]
-
-    /// A handful of notable words from the body for the key-vocabulary section.
-    static func keyVocabulary(from text: String) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for raw in text.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
-            let word = clean(String(raw))
-            let lower = word.lowercased()
-            guard word.count >= 6, !stopwords.contains(lower), seen.insert(lower).inserted else { continue }
-            result.append(word)
-            if result.count >= 12 { break }
-        }
-        return result
+    /// True when a token is something the dictionary could answer for: it has at
+    /// least one letter. Numbers, punctuation runs and lone symbols are text the
+    /// reader shows but never offers to translate.
+    static func isLookupable(_ s: String) -> Bool {
+        s.contains { $0.isLetter }
     }
 }
 
@@ -627,20 +853,28 @@ struct FlowLayout: Layout {
 
 // MARK: - Gloss popover (live translation + capture)
 
+/// The reader's word sheet. Every lookup outcome is explicit — loading
+/// (bounded by `Tuning.glossTimeoutSeconds`), a real gloss, or a named failure
+/// with a retry — and Save is disabled until there is something real to save.
+/// When the lookup fails the learner can still "Save now, translate later": the
+/// gap is stored with the sentence and `needsTranslation`, never a placeholder,
+/// and the store fills the meaning in the next time a lookup succeeds (E4).
 struct GlossSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     let term: String
+    /// The sentence the word was met in (`SentenceExtractor`), used for the lookup and the capture context.
     let context: String
     let sourceTab: String
+    /// The level of the text the word came from (nil → the learner's level).
+    var sourceLevel: CEFRLevel? = nil
     let alreadySaved: Bool
     var onSave: () -> Void
 
-    @State private var gloss: WordGloss? = nil
-    @State private var isLoading = true
+    @State private var lookup: LookupState = .loading
+    @State private var attempt = 0
     @State private var note = ""
-    @State private var saved = false
     @State private var path: [WordRoute] = []
 
     var body: some View {
@@ -652,9 +886,25 @@ struct GlossSheet: View {
                         accent: Theme.primary,
                         sourceType: .reading,
                         sourceTab: sourceTab,
-                        onPush: { path.append($0) }
+                        onPush: { path.append($0) },
+                        sourceLevel: sourceLevel
                     )
                 }
+        }
+    }
+
+    /// What Save would store right now: the gloss (with the learner's note), or —
+    /// after a failed lookup — the bare word with its sentence for later.
+    private var draft: CaptureDraft? {
+        switch lookup {
+        case .loading:
+            return nil
+        case .loaded(let g):
+            return CaptureDraft(gloss: g, sourceType: .reading, sourceTab: sourceTab,
+                                contextSentence: context, sourceLevel: sourceLevel, note: note)
+        case .failed:
+            return CaptureDraft(untranslated: term, sourceType: .reading, sourceTab: sourceTab,
+                                contextSentence: context, sourceLevel: sourceLevel, note: note)
         }
     }
 
@@ -662,10 +912,14 @@ struct GlossSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.lg) {
                 header
-                if isLoading {
-                    loadingState
-                } else if let gloss {
+                switch lookup {
+                case .loading:
+                    LookupLoadingView(accent: Theme.primary)
+                case .loaded(let gloss):
                     glossContent(gloss)
+                case .failed(let failure):
+                    LookupUnavailableView(failure: failure, accent: Theme.primary, onRetry: { attempt += 1 })
+                    if !context.isEmpty { contextBlock }
                 }
                 noteField
                 Color.clear.frame(height: 8)
@@ -676,17 +930,18 @@ struct GlossSheet: View {
         .background(Theme.background)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) { saveBar }
-        .task { await loadGloss() }
+        .task(id: attempt) { await loadGloss() }
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(term)
-                    .font(.serifDisplay(term.count > 22 ? 22 : 28, weight: .bold))
+                    .scaledSerifDisplay(term.count > 22 ? 22 : 28, weight: .bold)
                     .foregroundStyle(Theme.primary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let g = gloss, !g.pronunciation.isEmpty {
+                    .accessibilityAddTraits(.isHeader)
+                if let g = lookup.gloss, !g.pronunciation.isEmpty {
                     PhoneticLine(text: g.pronunciation)
                 }
             }
@@ -695,38 +950,24 @@ struct GlossSheet: View {
         }
     }
 
-    private var loadingState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SkeletonBlock(width: 160, height: 18)
-            SkeletonBlock(height: 14)
-            SkeletonBlock(width: 220, height: 14)
-            HStack(spacing: 6) {
-                ProgressView().tint(Theme.primary).scaleEffect(0.8)
-                Text(TranslationService.hasKey ? "Translating…" : "Preparing…")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-            }
-            .padding(.top, 4)
-        }
-    }
-
     private func glossContent(_ g: WordGloss) -> some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("MEANING").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
-                Text(g.translation).font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("MEANING").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
+                Text(g.translation).font(.headline).foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
             GlossRichDetail(gloss: g, accent: Theme.primary, onTermTap: { path.append(WordRoute(term: $0, context: "")) })
             if !g.example.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text("Example").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.secondary)
+                        Text("Example").font(.caption.weight(.bold)).foregroundStyle(Theme.secondary)
                         SpeakButton(text: g.example, size: 28)
                     }
-                    Text(g.example).font(.system(size: 16, weight: .medium)).italic().foregroundStyle(Theme.text)
+                    Text(g.example).font(.body.weight(.medium)).italic().foregroundStyle(Theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                     if !g.exampleTranslation.isEmpty {
-                        Text(g.exampleTranslation).font(.system(size: 14)).foregroundStyle(Theme.textMuted)
+                        Text(g.exampleTranslation).font(.subheadline).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -735,14 +976,25 @@ struct GlossSheet: View {
                 .background(Theme.secondaryLight)
                 .clipShape(.rect(cornerRadius: Radius.card))
             }
+            if !context.isEmpty, g.example != context { contextBlock }
         }
+    }
+
+    /// The sentence the word was met in — what gets saved as context.
+    private var contextBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("WHERE YOU MET IT").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
+            Text(context).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var noteField: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("PERSONAL NOTE").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
+            Text("PERSONAL NOTE").font(.caption.weight(.bold)).foregroundStyle(Theme.textSecondary)
             TextField("Add a memory hook (optional)", text: $note, axis: .vertical)
-                .font(.system(size: 15))
+                .font(.body)
                 .lineLimit(1...3)
                 .padding(12)
                 .background(Theme.card)
@@ -752,79 +1004,38 @@ struct GlossSheet: View {
     }
 
     private var saveBar: some View {
-        Button {
-            capture()
-        } label: {
-            Label(saved || alreadySaved ? "Saved to deck" : "Save to my deck",
-                  systemImage: saved || alreadySaved ? "checkmark.circle.fill" : "plus.circle.fill")
-                .font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
-                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                .background(saved || alreadySaved ? Theme.success : Theme.primary)
-                .clipShape(.rect(cornerRadius: 14))
+        SaveToDeckButton(draft: draft, accent: Theme.primary, alreadySaved: isAlreadySaved, isBusy: lookup == .loading) { outcome in
+            if case .saved = outcome {
+                onSave()
+                DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.glossSavedDismissDelaySeconds) { dismiss() }
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(saved || alreadySaved)
         .padding(.horizontal, Space.xl)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
+    /// Saved under the word's own key, or under an article form the deck holds
+    /// WITH THE SAME MEANING: "matin" (morning) is the deck's "le matin"
+    /// (read-10-5), "été" (been) is not its "l'été" (summer) (read-11-5).
+    private var isAlreadySaved: Bool {
+        if alreadySaved { return true }
+        guard let gloss = lookup.gloss else { return false }
+        let saved = store.savedHeadwordMeanings()
+        // The card would be saved under the gloss's own term, so ask about both.
+        return [term, gloss.term].contains { KeyVocabulary.isSaved($0, meaning: gloss.translation, in: saved) }
+    }
+
     private func loadGloss() async {
-        isLoading = true
-        gloss = await TranslationService.gloss(for: term, context: context)
-        isLoading = false
+        lookup = .loading
+        let result = await TranslationService.lookup(term: term, context: context)
+        lookup = LookupState(result)
+        // A successful lookup proves the service is reachable: fill in any
+        // captures that were saved offline (E4).
+        if case .gloss = result, !store.pendingTranslations.isEmpty {
+            await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:))
+        }
     }
-
-    private func capture() {
-        guard !saved && !alreadySaved else { return }
-        Haptics.success()
-        let now = Date()
-        let g = gloss
-        let pron = (g?.pronunciation.isEmpty == false) ? g?.pronunciation : nil
-        let translation = g?.translation.isEmpty == false ? g!.translation : "(tap to translate)"
-        let explanationParts = [g?.explanation, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : "Note: \(note)"]
-            .compactMap { $0 }.filter { !$0.isEmpty }
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: term,
-            englishTranslation: translation,
-            explanation: explanationParts.joined(separator: " · ").ifEmpty("Captured while reading."),
-            exampleSentence: g?.example.ifEmpty(term) ?? term,
-            exampleTranslation: g?.exampleTranslation ?? "",
-            pronunciation: pron,
-            sourceType: .reading,
-            category: term.contains(" ") ? .phrasing : .vocabulary,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: .A2,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: context, translation: nil, sourceTab: sourceTab, capturedAt: now, reExposureCount: 0),
-            confusionLinks: [],
-            partOfSpeech: g?.partOfSpeech.ifEmpty(nil) ?? nil,
-            gender: g?.gender.ifEmpty(nil) ?? nil,
-            article: g?.article.ifEmpty(nil) ?? nil,
-            baseForm: g?.baseForm.ifEmpty(nil) ?? nil,
-            register: g?.register.ifEmpty(nil) ?? nil,
-            relatedWords: (g?.relatedWords.isEmpty == false) ? g?.relatedWords : nil
-        )
-        store.addGap(gap)
-        saved = true
-        onSave()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismiss() }
-    }
-}
-
-private extension String {
-    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
-    func ifEmpty(_ fallback: String?) -> String? { isEmpty ? fallback : self }
 }
 
 // MARK: - On-device notice
@@ -833,12 +1044,15 @@ struct CameraNotice: View {
     let text: String
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "info.circle.fill").foregroundStyle(Theme.textMuted)
-            Text(text).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            Image(systemName: "info.circle.fill").foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+            Text(text).scaledFont(12).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.backgroundSecondary)
         .clipShape(.rect(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
     }
 }

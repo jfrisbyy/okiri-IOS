@@ -12,6 +12,21 @@ import Foundation
 nonisolated enum ListeningDifficulty: String, Codable, CaseIterable {
     case beginner, intermediate, advanced
     var label: String { rawValue.capitalized }
+
+    /// The CEFR band this difficulty spans (used to match dialogues to the
+    /// learner's level — the shelf order and "Your level" / "Stretch" labels).
+    var cefrLevels: [CEFRLevel] {
+        switch self {
+        case .beginner: return [.A1, .A2]
+        case .intermediate: return [.B1, .B2]
+        case .advanced: return [.C1, .C2]
+        }
+    }
+
+    /// The level a line captured from a dialogue of this difficulty is filed under
+    /// (E7): the band's entry level, so a capture is never marked harder than the
+    /// dialogue it came from.
+    var captureLevel: CEFRLevel { cefrLevels[0] }
 }
 
 nonisolated enum ListeningType: String, Codable, CaseIterable {
@@ -162,7 +177,7 @@ nonisolated enum ListeningData {
             difficulty: .intermediate, type: .dialogue, durationSeconds: 50, category: "social",
             turns: [
                 t("A", "Qu'est-ce que tu vas prendre comme entrée ?", "What are you going to have as a starter?"),
-                t("B", "Je hésite entre la soupe à l'oignon et la salade de chèvre chaud.", "I'm torn between the onion soup and the warm goat cheese salad."),
+                t("B", "J'hésite entre la soupe à l'oignon et la salade de chèvre chaud.", "I'm torn between the onion soup and the warm goat cheese salad."),
                 t("A", "Prends la soupe, elle est excellente ici.", "Get the soup, it's excellent here."),
                 t("B", "Bonne idée. Et toi, tu as choisi ton plat ?", "Good idea. And you, have you chosen your dish?"),
                 t("A", "Oui, je vais prendre le magret de canard.", "Yes, I'm going to have the duck breast."),

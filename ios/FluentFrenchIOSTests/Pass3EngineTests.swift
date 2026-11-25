@@ -1,0 +1,1482 @@
+//
+//  Pass3EngineTests.swift
+//  FluentFrenchIOSTests
+//
+//  Package B part 2 — the Pass 3 engine amendments at the unit level:
+//  B5 decayed evidence + raw observations, B6 doubled check-in misses, B7 the
+//  adaptive check-in schedule, B8 the retention governor, B9 placement probes and
+//  provisional seeds, B10 lesson-paced Foundation days, B11 the release-streak
+//  hint, B12 eligibility needs something to teach, B13 content probes, B14 engine
+//  metrics, B15 stall remediation, and the content-v2 loader.
+//
+
+import Foundation
+import Testing
+@testable import FluentFrenchIOS
+
+@MainActor
+struct Pass3EngineTests {
+    private let now = EngineFixtures.now
+    private let day = EngineFixtures.day
+
+    private func decayed(_ x: Double) -> Double { 1 + (x - 1) * Tuning.evidenceRecency }
+
+    // MARK: B5 — threshold, raw observations, decay
+
+    @Test func conceptStateUsesTheThresholdAndRawObservations() {
+        var c = EngineFixtures.concept("c", alpha: 4, beta: 1)   // mastery 0.8, observations 3
+        #expect(c.state == .learning, "under the observation floor")
+        c.observationCount = Tuning.minObservations
+        #expect(c.state == .mastered)
+        c.alpha = 3   // exactly the threshold
+        #expect(c.mastery == Tuning.masteryThreshold && c.state == .mastered)
+        c.alpha = 2.9
+        #expect(c.state == .learning)
+        c.observationCount = 0
+        c.alpha = 40
+        #expect(c.state == .neverObserved, "no raw observations → untested, whatever alpha says")
+        c.observationCount = 0.5
+        #expect(c.state == .learning, "any evidence at all counts as observed")
+    }
+
+    @Test func conceptDecodeMigratesObservationCountAndDefaultsNewFields() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let legacy = """
+        {"id":"x","name":"X","category":"grammar","cefrLevel":"A1","prerequisites":[],"description":"d",
+         "alpha":9,"beta":1,"lastTestedAt":null,"lastTaughtSession":null,"newlyUnlocked":false}
+        """
+        let migrated = try decoder.decode(Concept.self, from: Data(legacy.utf8))
+        #expect(migrated.observationCount == 8, "max(0, alpha + beta − 2)")
+        #expect(migrated.state == .mastered)
+        #expect(!migrated.isProvisional && migrated.nextCheckInAt == nil && migrated.checkInIntervalDays == nil)
+        #expect(migrated.stallAttempts == 0 && migrated.lastTaughtState == nil)
+        #expect(migrated.lapsedAt == nil)
+
+        var full = EngineFixtures.mastered("y")
+        full.observationCount = 2
+        full.isProvisional = true
+        full.nextCheckInAt = now
+        full.checkInIntervalDays = 3
+        full.stallAttempts = 2
+        full.lastTaughtState = .learning
+        full.lapsedAt = now
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let round = try decoder.decode(Concept.self, from: encoder.encode(full))
+        #expect(round == full)
+        #expect(round.observationCount == 2, "an explicit count is authoritative, never re-derived")
+    }
+
+    @Test func evidenceDecaysBeforeEachObservationAndMasteryIsScheduledForACheckIn() {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("c")], gaps: [])
+        var expectedAlpha = 1.0
+        for i in 1...Int(Tuning.minObservations) {
+            s.recordConceptAnswer(conceptId: "c", correct: true, now: now.addingTimeInterval(Double(i)))
+            expectedAlpha = decayed(expectedAlpha) + 1
+            let c = s.concept("c")!
+            #expect(abs(c.alpha - expectedAlpha) < 1e-9)
+            #expect(c.beta == 1)
+            #expect(c.observationCount == Double(i), "raw observations never decay")
+        }
+        let mastered = s.concept("c")!
+        #expect(mastered.state == .mastered)
+        #expect(mastered.checkInIntervalDays == Tuning.checkInInitialDays)
+        #expect(mastered.nextCheckInAt == now.addingTimeInterval(Tuning.minObservations).addingTimeInterval(Tuning.checkInInitialDays * day),
+                "newly mastered → first check-in a week out")
+        #expect(!mastered.isProvisional)
+
+        // Old evidence fades: a long run of misses after a long run of hits reads as not-known.
+        for _ in 0..<6 { s.recordConceptAnswer(conceptId: "c", correct: false, now: now) }
+        #expect(s.concept("c")!.state == .learning)
+        #expect(s.concept("c")!.nextCheckInAt == nil, "losing mastery clears the check-in schedule")
+        let snapshot = s.concept("c")!
+        s.recordConceptAnswer(conceptId: "c", correct: true, weight: 0, now: now)
+        #expect(s.concept("c")! == snapshot, "zero weight is a no-op")
+        #expect(s.concept("c")!.observationCount == Tuning.minObservations + 6)
+    }
+
+    /// engine-8-3: mastery that practice earned and a missed check-in then took away
+    /// is marked as a lapse, so the selector comes back to re-teach it; earning it
+    /// again clears the mark. A placement seed that fails is a guess that was wrong,
+    /// not a lapse, and is never marked.
+    @Test func losingPractisedMasteryMarksALapseAndReEarningItClearsIt() throws {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("c")], gaps: [])
+        for i in 1...Int(Tuning.minObservations) {
+            s.recordConceptAnswer(conceptId: "c", correct: true, now: now.addingTimeInterval(Double(i)))
+        }
+        #expect(s.concept("c")?.state == .mastered)
+        #expect(s.concept("c")?.lapsedAt == nil, "a concept that never lost mastery is no lapse")
+
+        let missAt = now.addingTimeInterval(day)
+        s.recordConceptAnswer(conceptId: "c", correct: false, isCheckIn: true, now: missAt)
+        let lapsed = try #require(s.concept("c"))
+        #expect(lapsed.state == .learning, "one check-in miss at double weight drops a fresh mastery")
+        #expect(lapsed.lapsedAt == missAt)
+
+        var i = 0
+        while s.concept("c")?.state != .mastered && i < 20 {
+            i += 1
+            s.recordConceptAnswer(conceptId: "c", correct: true, now: missAt.addingTimeInterval(Double(i)))
+        }
+        #expect(s.concept("c")?.state == .mastered)
+        #expect(s.concept("c")?.lapsedAt == nil, "re-earned mastery clears the lapse")
+
+        var seed = EngineFixtures.mastered("seed")
+        seed.isProvisional = true
+        let seeded = EngineFixtures.store(concepts: [seed], gaps: [])
+        for _ in 0..<3 { seeded.recordConceptAnswer(conceptId: "seed", correct: false, isCheckIn: true, now: now) }
+        #expect(seeded.concept("seed")?.state == .learning)
+        #expect(seeded.concept("seed")?.lapsedAt == nil, "a failed placement seed is not a lapse")
+    }
+
+    // MARK: B6 — a check-in miss weighs double
+
+    @Test func checkInMissWeighsDoubleButCountsOnce() {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.mastered("m")], gaps: [])
+        let before = s.concept("m")!
+        s.recordConceptAnswer(conceptId: "m", correct: false, weight: 1.2, isCheckIn: true, now: now)
+        let after = s.concept("m")!
+        #expect(abs(after.beta - (decayed(before.beta) + 1.2 * Tuning.checkInMissWeight)) < 1e-9)
+        #expect(abs(after.alpha - decayed(before.alpha)) < 1e-9)
+        #expect(after.observationCount == before.observationCount + 1.2, "the raw count takes the undoubled weight")
+
+        // A check-in PASS is plain evidence.
+        let t = EngineFixtures.store(concepts: [EngineFixtures.mastered("m")], gaps: [])
+        t.recordConceptAnswer(conceptId: "m", correct: true, weight: 1, isCheckIn: true, now: now)
+        #expect(abs(t.concept("m")!.alpha - (decayed(before.alpha) + 1)) < 1e-9)
+    }
+
+    @Test func recordReviewDerivesTheCheckInFromTheConceptWhenNoRoleIsPassed() {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.mastered("m"), EngineFixtures.learning("l", mastery: 0.5)],
+                                     gaps: [EngineFixtures.gap("m-0", concept: "m"), EngineFixtures.gap("l-0", concept: "l")])
+        s.recordReview(gapId: "l-0", correct: false, now: now)
+        #expect(s.checkInHistory.isEmpty, "a learning concept is never a check-in")
+        let before = s.concept("m")!
+        s.recordReview(gapId: "m-0", correct: false, now: now)
+        #expect(s.checkInHistory == [false], "an answer on a mastered concept is a check-in by definition")
+        #expect(abs(s.concept("m")!.beta - (decayed(before.beta) + Tuning.checkInMissWeight)) < 1e-9)
+        // An explicit role wins over the derivation.
+        let t = EngineFixtures.store(concepts: [EngineFixtures.mastered("m")], gaps: [EngineFixtures.gap("m-0", concept: "m")])
+        t.recordReview(gapId: "m-0", correct: false, isCheckIn: false, now: now)
+        #expect(t.checkInHistory.isEmpty)
+        #expect(abs(t.concept("m")!.beta - (decayed(before.beta) + 1)) < 1e-9)
+    }
+
+    // MARK: B7 — the adaptive check-in interval
+
+    @Test func provisionalSeedIsVerifiedOnlyByConsecutivePasses() {
+        var seed = EngineFixtures.mastered("m")
+        seed.isProvisional = true
+        seed.nextCheckInAt = now
+        let s = EngineFixtures.store(concepts: [seed], gaps: [])
+        func c() -> Concept { s.concept("m")! }
+
+        // Passes short of the bar keep it provisional, re-checked every `seedVerificationDays`.
+        for pass in 1..<Tuning.seedVerificationPasses {
+            s.recordCheckIn(conceptId: "m", passed: true, now: now)
+            #expect(c().isProvisional && c().provisionalPasses == pass)
+            #expect(c().checkInIntervalDays == Tuning.seedVerificationDays)
+            #expect(c().nextCheckInAt == now.addingTimeInterval(Tuning.seedVerificationDays * day))
+        }
+        // A miss resets the count (the concept here stays mastered: recordCheckIn
+        // moves the schedule only; the doubled evidence lands in recordReview).
+        s.recordCheckIn(conceptId: "m", passed: false, now: now)
+        #expect(c().isProvisional && c().provisionalPasses == 0)
+        #expect(c().checkInIntervalDays == Tuning.seedVerificationDays)
+        for _ in 0..<Tuning.seedVerificationPasses {
+            s.recordCheckIn(conceptId: "m", passed: true, now: now)
+        }
+        #expect(!c().isProvisional && c().provisionalPasses == 0, "verified after \(Tuning.seedVerificationPasses) passes in a row")
+        #expect(c().checkInIntervalDays == Tuning.checkInInitialDays, "…and on the normal ladder from its start")
+        #expect(c().nextCheckInAt == now.addingTimeInterval(Tuning.checkInInitialDays * day))
+        s.recordCheckIn(conceptId: "m", passed: true, now: now)
+        #expect(c().checkInIntervalDays == Tuning.checkInInitialDays * Tuning.checkInGrowth)
+        #expect(s.checkInHistory.count == 2 * Tuning.seedVerificationPasses + 1)
+    }
+
+    @Test func checkInIntervalGrowsOnPassShrinksOnMissAndIsBounded() {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.mastered("m")], gaps: [])
+        func c() -> Concept { s.concept("m")! }
+
+        s.recordCheckIn(conceptId: "m", passed: true, now: now)
+        #expect(c().checkInIntervalDays == Tuning.checkInInitialDays, "first pass from no interval → the initial interval")
+        #expect(c().nextCheckInAt == now.addingTimeInterval(Tuning.checkInInitialDays * day))
+        #expect(!c().isProvisional)
+
+        var expected = Tuning.checkInInitialDays
+        for i in 1...12 {
+            let at = now.addingTimeInterval(Double(i) * day)
+            s.recordCheckIn(conceptId: "m", passed: true, now: at)
+            expected = min(Tuning.checkInMaxDays, expected * Tuning.checkInGrowth)
+            #expect(abs((c().checkInIntervalDays ?? 0) - expected) < 1e-9)
+            #expect(c().nextCheckInAt == at.addingTimeInterval(expected * day))
+        }
+        #expect(c().checkInIntervalDays == Tuning.checkInMaxDays, "capped")
+
+        for _ in 0..<10 {
+            s.recordCheckIn(conceptId: "m", passed: false, now: now)
+            expected = max(Tuning.checkInMinDays, expected / Tuning.checkInMissDivisor)
+            #expect(abs((c().checkInIntervalDays ?? 0) - expected) < 1e-9)
+        }
+        #expect(c().checkInIntervalDays == Tuning.checkInMinDays, "floored")
+
+        // The window keeps only the last `governorWindow` outcomes.
+        #expect(s.checkInHistory.count == Tuning.governorWindow)
+        #expect(s.checkInHistory.suffix(10).allSatisfy { !$0 })
+        #expect(s.checkInHistory.prefix(Tuning.governorWindow - 10).allSatisfy { $0 })
+
+        // A miss from no interval halves the initial one.
+        let t = EngineFixtures.store(concepts: [EngineFixtures.mastered("m")], gaps: [])
+        t.recordCheckIn(conceptId: "m", passed: false, now: now)
+        #expect(t.concept("m")!.checkInIntervalDays == Tuning.checkInInitialDays / Tuning.checkInMissDivisor)
+    }
+
+    @Test func checkInsAreCappedPerLessonAndRankedMostOverdueFirst() {
+        var a = EngineFixtures.mastered("a"), b = EngineFixtures.mastered("b"), c = EngineFixtures.mastered("c")
+        a.nextCheckInAt = now.addingTimeInterval(-5 * day)
+        b.nextCheckInAt = now.addingTimeInterval(-1 * day)
+        c.nextCheckInAt = nil   // never scheduled: due, but 0 days overdue
+        var d = EngineFixtures.mastered("d")
+        d.nextCheckInAt = now.addingTimeInterval(20 * day)   // not due; its gap's recall is high
+        let ids: [String] = ["a", "b", "c"]
+        var gaps = ids.map { id in EngineFixtures.gap("\(id)-0", concept: id, reviewCount: 3) }
+        // Reviewed, resting on its own schedule, recall 0.95 (fallback): nothing pulls d back.
+        gaps.append(EngineFixtures.gap("d-0", concept: "d", due: now.addingTimeInterval(10 * day), consecutiveCorrect: 5, reviewCount: 5))
+        // A learning target with due gaps, so the lesson has a spine.
+        let t = EngineFixtures.learning("t", mastery: 0.5)
+        gaps += (0..<6).map { EngineFixtures.gap("t-\($0)", concept: "t") }
+        let s = EngineFixtures.store(concepts: [a, b, c, d, t], gaps: gaps)
+        s.sessionIndex = 1
+        let selector = ConceptSelector(store: s)
+        #expect(selector.checkInCandidates(now: now).map { $0.concept.id } == ["a", "b", "c"])
+        #expect(!selector.isCheckInDue(d, now: now))
+        let output = selector.select(.smart(now: now))
+        #expect(output.targetConceptId == "t")
+        #expect(output.checkInItems.map { $0.gapId } == ["a-0", "b-0"], "at most \(Tuning.checkInsPerLesson) beside a spine, most overdue first")
+        #expect(!output.gapIds.contains("c-0"))
+        #expect(output.items.filter { $0.role == .review }.isEmpty, "mastered material never rides in as review")
+        #expect(output.items.count == Tuning.lessonSize)
+
+        // A provisional seed — never verified — outranks every verified concept.
+        s.concepts[2].isProvisional = true
+        #expect(ConceptSelector(store: s).checkInCandidates(now: now).map { $0.concept.id } == ["c", "a", "b"])
+        #expect(ConceptSelector(store: s).select(.smart(now: now)).checkInItems.map { $0.conceptId } == ["c", "a"])
+
+        // With nothing left to teach the lesson is a consolidation session: check-ins
+        // fill it up to the requested size.
+        s.concepts.removeAll { $0.id == "t" }
+        s.gaps.removeAll { $0.conceptId == "t" }
+        let consolidation = ConceptSelector(store: s).select(.smart(now: now))
+        #expect(consolidation.targetConceptId == nil && consolidation.rankedConcepts.isEmpty)
+        #expect(consolidation.checkInItems.map { $0.conceptId } == ["c", "a", "b"])
+        #expect(consolidation.items.count == 3, "every due concept, still one item each")
+        #expect(consolidation.headline == "Today: quick checks — making sure what you've learned still holds.")
+    }
+
+    @Test func recallBelowTheFloorMakesAMasteredConceptDueOnlyThroughReviewedGaps() {
+        var m = EngineFixtures.mastered("m")
+        m.nextCheckInAt = now.addingTimeInterval(30 * day)
+        // A never-answered gap decays on its seed curve; that must NOT count.
+        var fresh = EngineFixtures.gap("m-new", concept: "m")
+        fresh.fsrs = EngineFixtures.freshFsrs(at: now.addingTimeInterval(-10 * day))
+        let s = EngineFixtures.store(concepts: [m], gaps: [fresh])
+        let selector = ConceptSelector(store: s)
+        #expect(fresh.retrievability(at: now) < Tuning.checkInRetrievability)
+        #expect(!selector.isCheckInDue(m, now: now), "unreviewed gaps carry no recall evidence")
+
+        // A reviewed gap that has decayed does.
+        var reviewed = EngineFixtures.gap("m-old", concept: "m", reviewCount: 4)
+        reviewed.fsrs = FSRS.makeInitialState(grade: .good, now: now.addingTimeInterval(-30 * day))
+        s.gaps.append(reviewed)
+        #expect(reviewed.retrievability(at: now) < Tuning.checkInRetrievability)
+        #expect(selector.isCheckInDue(m, now: now))
+        #expect(selector.checkInVehicle(for: m, now: now)?.gapId == "m-old", "the reviewed gap carries the check-in")
+    }
+
+    // MARK: B8 — the retention governor
+
+    @Test func governorEngagesOnALowPassRateWithEnoughSamples() {
+        let s = EngineFixtures.store()
+        #expect(!s.isGovernorActive && s.checkInPassRate == nil)
+        s.checkInHistory = [false, false, false, false, false]
+        #expect(!s.isGovernorActive, "fewer than \(Tuning.governorMinSamples) samples never engages it")
+        s.checkInHistory = [true, true, true, false, false, false]
+        #expect(s.checkInPassRate == 0.5 && s.isGovernorActive)
+        s.checkInHistory = Array(repeating: true, count: 8) + Array(repeating: false, count: 4)
+        #expect(!s.isGovernorActive, "2/3 is above the floor")
+
+        // While active: frontier weight 0, urgency doubled; nothing else moves.
+        s.checkInHistory = [false, false, false, false, true, true]
+        let selector = ConceptSelector(store: s)
+        let w = selector.effectiveWeights
+        #expect(w.frontier == 0)
+        #expect(w.urgency == ConceptSelectionWeights.tuning.urgency * Tuning.governorUrgencyMultiplier)
+        #expect(w.leverage == ConceptSelectionWeights.tuning.leverage && w.repeatDamp == ConceptSelectionWeights.tuning.repeatDamp)
+        #expect(selector.select(.smart(now: now)).governorActive)
+        s.checkInHistory = []
+        #expect(ConceptSelector(store: s).effectiveWeights.frontier == ConceptSelectionWeights.tuning.frontier)
+    }
+
+    @Test func governorHoldsTheGateButNeverRelocksAnOpenModality() {
+        // Real taxonomy: master enough base concepts that reading unlocks by coverage.
+        let s = EngineFixtures.store()
+        let base = Array(ConceptTaxonomy.baseConceptIds).sorted()
+        let needed = Int((Double(base.count) * ReadinessConfig.tuning.readingUnlock).rounded(.up))
+        for cid in base.prefix(needed) {
+            let idx = s.concepts.firstIndex { $0.id == cid }!
+            s.concepts[idx] = EngineFixtures.mastered(cid, category: s.concepts[idx].category, level: s.concepts[idx].cefrLevel,
+                                                      prerequisites: s.concepts[idx].prerequisites)
+        }
+        #expect(s.readiness(for: .reading) == .unlocked)
+
+        // Governor engages before the unlock was ever recorded → held.
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(s.readiness(for: .reading) == .foundation, "not yet opened → held in the bridge while consolidating")
+        #expect(s.isInFoundation)
+        let plan = DailyPlanEngine(store: s).makePlan(now: now)
+        #expect(plan.rationale == "Review what you've learned before Reading opens — today's lessons focus on that.")
+        #expect(plan.isLessonPaced)
+
+        // Governor releases, the unlock is recorded at a bookkeeping point, and a
+        // later governor cannot take it back.
+        s.checkInHistory = []
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.readiness(for: .reading) == .unlocked)
+        #expect(s.unlockedModalities.contains(LearningModality.reading.rawValue))
+        s.checkInHistory = [false, false, false, false, true, true]
+        #expect(s.isGovernorActive)
+        #expect(s.readiness(for: .reading) == .unlocked, "never re-locked")
+        #expect(s.readiness(for: .speaking) == .locked, "still gated: it was never open")
+
+        // recordCheckIn records what is open BEFORE the outcome can flip the governor.
+        let t = EngineFixtures.store()
+        for cid in base.prefix(needed) {
+            let idx = t.concepts.firstIndex { $0.id == cid }!
+            t.concepts[idx] = EngineFixtures.mastered(cid, category: t.concepts[idx].category, level: t.concepts[idx].cefrLevel,
+                                                      prerequisites: t.concepts[idx].prerequisites)
+        }
+        t.checkInHistory = [false, false, false, false, true]
+        #expect(!t.isGovernorActive)
+        t.recordCheckIn(conceptId: base[0], passed: false, now: now)
+        #expect(t.isGovernorActive)
+        #expect(t.readiness(for: .reading) == .unlocked, "it was open when the miss landed")
+    }
+
+    // MARK: B9 — placement probes and provisional seeds
+
+    private func question(_ band: Int, _ category: GapCategory, _ concept: String, _ n: Int) -> AssessmentQuestion {
+        AssessmentQuestion(band: band, category: category, prompt: "\(concept)-p\(n)", french: "\(concept)-fr\(n)",
+                           english: "\(concept)-en\(n)", options: ["\(concept)-en\(n)", "x", "y"], correctAnswer: "\(concept)-en\(n)",
+                           explanation: "", exampleSentence: "", exampleTranslation: "", conceptId: concept)
+    }
+
+    @Test func placementAsksUpToThreeItemsPerConceptAndNeverSeedsAMissedOne() {
+        // A band-1/2 bank with three items per concept, two vocabulary and two grammar concepts.
+        var bank: [AssessmentQuestion] = []
+        for n in 0..<3 {
+            bank.append(question(1, .vocabulary, "everyday-vocab", n))
+            bank.append(question(1, .grammar, "definite-articles", n))
+            bank.append(question(2, .vocabulary, "family-vocab", n))
+            bank.append(question(2, .grammar, "negation", n))
+        }
+        var engine = PlacementEngine(bank: bank)
+        #expect(engine.minItems == Tuning.placementMinItems && engine.maxItems == Tuning.placementMaxItems)
+        #expect(engine.probesPerConcept == Tuning.placementProbesPerConcept)
+        #expect(engine.currentBand == 2, "the staircase starts at band 2")
+
+        // Knows the first concept: after a correct answer the staircase keeps probing
+        // the same concept until three items were asked — and the band moves ONCE,
+        // when the concept completes its third probe clean, not on every answer.
+        let first = engine.next()!
+        engine.record(first, correct: true)
+        #expect(engine.currentBand == 2, "one correct answer is not a read: the band holds")
+        let second = engine.next()!
+        #expect(second.conceptId == first.conceptId)
+        engine.record(second, correct: true)
+        #expect(engine.currentBand == 2)
+        let third = engine.next()!
+        #expect(third.conceptId == first.conceptId)
+        engine.record(third, correct: true)
+        #expect(engine.askedCount(for: first.conceptId!) == Tuning.placementProbesPerConcept)
+        #expect(engine.currentBand == 3, "the concept completed its probes clean → one step up")
+        #expect(engine.fullyProbedConceptIds == [first.conceptId!])
+        let fourth = engine.next()!
+        #expect(fourth.conceptId != first.conceptId, "the probe budget is spent")
+
+        // A miss ends probing on that concept, steps the band down once, and
+        // excludes the concept from the seeds.
+        engine.record(fourth, correct: false)
+        #expect(engine.currentBand == 2, "first miss on a concept → one step down")
+        var asked: [AssessmentQuestion] = []
+        while let q = engine.next() {
+            asked.append(q)
+            engine.record(q, correct: true)
+        }
+        #expect(!asked.contains { $0.conceptId == fourth.conceptId }, "a missed concept is not asked again")
+        #expect(engine.missedConceptIds == [fourth.conceptId!])
+        // Stabilisation counts DISTINCT concepts: the run could only stop once four
+        // different concepts had been asked, never on repeats of one.
+        #expect(Set(engine.asked.compactMap { $0.conceptId }).count >= 4)
+
+        let result = engine.result()
+        #expect(!result.masteredConceptIds.contains(fourth.conceptId!))
+        #expect(result.missedConceptIds == [fourth.conceptId!])
+        #expect(result.seedsAreProvisional)
+        #expect(result.askedCount(for: first.conceptId!) == Tuning.placementProbesPerConcept)
+        // Two tiers: only a fully probed concept is seeded as mastered; every other
+        // in-band concept is inferred, and the tiers never overlap.
+        #expect(result.masteredConceptIds.contains(first.conceptId!))
+        #expect(Set(result.masteredConceptIds) == result.fullyProbedConceptIds)
+        for cid in result.masteredConceptIds {
+            #expect(result.askedCount(for: cid) >= Tuning.placementProbesPerConcept)
+        }
+        #expect(!result.inferredConceptIds.isEmpty, "band-inferred concepts are reported separately")
+        #expect(Set(result.inferredConceptIds).isDisjoint(with: result.masteredConceptIds))
+        #expect(!result.inferredConceptIds.contains(fourth.conceptId!))
+        for cid in result.inferredConceptIds {
+            #expect(result.askedCount(for: cid) < Tuning.placementProbesPerConcept)
+        }
+        #expect(AssessmentService.masteredConcepts(vocabBand: 2, grammarBand: 2, excluding: ["negation"])
+                    .contains("negation") == false)
+        #expect(AssessmentService.masteredConcepts(vocabBand: 2, grammarBand: 2).contains("negation"))
+    }
+
+    @Test func aBandIsClearedOnlyWithEnoughItemsAndAnItemWithoutAConceptStepsAlone() {
+        // One item at band 2 answered correctly, then a full band-1 concept: band 2
+        // is too thin to count as cleared, so the vocab read stays at band 1.
+        var bank: [AssessmentQuestion] = [question(2, .vocabulary, "family-vocab", 0)]
+        for n in 0..<3 { bank.append(question(1, .vocabulary, "everyday-vocab", n)) }
+        var engine = PlacementEngine(bank: bank)
+        let thin = engine.next()!
+        #expect(thin.conceptId == "family-vocab")
+        engine.record(thin, correct: true)
+        #expect(engine.currentBand == 3, "the bank has no more items for it → the concept completed clean")
+        while let q = engine.next() { engine.record(q, correct: true) }
+        let result = engine.result()
+        #expect(result.vocabBand == 1, "a band with fewer than \(Tuning.placementProbesPerConcept) items never clears")
+        #expect(result.masteredConceptIds == ["everyday-vocab"])
+        #expect(result.inferredConceptIds.contains("family-vocab"), "one correct answer is only an inference")
+
+        // An item with no concept behind it is its own one-item concept: it steps
+        // the band at once, up or down.
+        let loose = AssessmentQuestion(band: 2, category: .vocabulary, prompt: "p", french: "f", english: "e",
+                                       options: ["e", "x"], correctAnswer: "e", explanation: "", exampleSentence: "",
+                                       exampleTranslation: "", conceptId: nil)
+        var solo = PlacementEngine(bank: [loose])
+        solo.record(loose, correct: false)
+        #expect(solo.currentBand == 1)
+    }
+
+    @Test func contentProbesBecomePlacementItemsForGrammarAndVocabularyOnly() {
+        let s = EngineFixtures.store()
+        let bank = AssessmentService.contentBank(concepts: s.concepts, probes: EngineFixtures.syntheticProbes)
+        let eligible = EngineFixtures.authoredConcepts(s.concepts).filter { $0.category == .grammar || $0.category == .vocabulary }
+        #expect(bank.count == eligible.count * 3, "three items per grammar / vocabulary concept, none for the rest")
+        #expect(!bank.contains { $0.conceptId == "liaison" })
+        let item = bank.first { $0.conceptId == "definite-articles" }!
+        #expect(item.band == AssessmentService.bandForLevel(s.concept("definite-articles")!.cefrLevel))
+        #expect(item.category == .grammar)
+        #expect(item.options.count == 4 && item.options.contains(item.correctAnswer))
+        #expect(item.correctAnswer == EngineFixtures.syntheticProbes(for: "definite-articles")[0].en)
+        #expect(item.prompt.hasPrefix("What does"))
+        let blank = AssessmentService.questions(fromProbes: [FoundationProbeContent(fr: "___ x", en: "a", options: ["b"])],
+                                                for: s.concept("definite-articles")!)
+        #expect(blank.first?.prompt.hasPrefix("Fill in the blank") == true)
+        #expect(AssessmentService.questions(fromProbes: [FoundationProbeContent(fr: "", en: "a", options: ["b"])],
+                                            for: s.concept("definite-articles")!).isEmpty)
+
+        // With the content bank every concept can reach the three-probe read.
+        var engine = PlacementEngine(bank: AssessmentService.bank + bank)
+        while let q = engine.next() { engine.record(q, correct: true) }
+        let result = engine.result()
+        #expect(!result.masteredConceptIds.isEmpty, "an all-correct learner is seeded what it was verified on")
+        // firstrun-10-1: the seeds used to be the fully probed BASE concepts only.
+        // Every base concept is A1, and an all-correct learner's budget never leaves
+        // bands 2-4 once the bank holds A2 probes, so it was seeded nothing. The rule
+        // is now: fully probed AND at or below its category's cleared band.
+        #expect(Set(result.masteredConceptIds) == EngineFixtures.expectedPlacementSeeds(result),
+                "a fully probed concept inside its placed band is a seed; anything else is evidence, not a seed")
+        let placedBand = AssessmentService.bandForLevel(result.estimatedLevel)
+        #expect(result.masteredConceptIds.allSatisfy { cid in
+            s.concept(cid).map { AssessmentService.bandForLevel($0.cefrLevel) <= placedBand } ?? false
+        }, "no seed above the placed level")
+    }
+
+    @Test func placementSeedsBlendAreProvisionalAndKeepTheirGaps() {
+        let s = EngineFixtures.store()
+        // One concept already carries counter-evidence; it must not be hard-set.
+        let shaky = s.concepts.firstIndex { $0.id == "negation" }!
+        s.concepts[shaky].beta = 3
+        s.concepts[shaky].observationCount = 2
+        // One concept's mastery was EARNED through practice and sits on the normal
+        // check-in ladder; a placement must not demote it to a provisional seed.
+        let earnedIdx = s.concepts.firstIndex { $0.id == "present-er-verbs" }!
+        var earned = EngineFixtures.mastered("present-er-verbs", level: .A1)
+        earned.checkInIntervalDays = Tuning.checkInInitialDays * Tuning.checkInGrowth
+        earned.nextCheckInAt = now.addingTimeInterval(10 * day)
+        s.concepts[earnedIdx] = earned
+        let result = PlacementResult(vocabBand: 1, grammarBand: 1, estimatedLevel: .A1, isTrueBeginner: false,
+                                     masteredConceptIds: ["everyday-vocab", "negation", "definite-articles", "present-er-verbs"],
+                                     missedGaps: [], askedCount: 6, correctCount: 5,
+                                     missedConceptIds: ["definite-articles"],
+                                     inferredConceptIds: ["possessive-adjectives", "definite-articles"])
+        s.applyPlacement(result, isFirstRun: true, now: now)
+
+        let seeded = s.concept("everyday-vocab")!
+        #expect(seeded.alpha == 1 + Tuning.placementSeedAlpha && seeded.beta == 1)
+        #expect(seeded.observationCount == Tuning.placementSeedAlpha)
+        #expect(seeded.state == .mastered && seeded.isProvisional)
+        #expect(seeded.nextCheckInAt == now.addingTimeInterval(Tuning.seedVerificationDays * day))
+        #expect(seeded.checkInIntervalDays == nil)
+
+        let blended = s.concept("negation")!
+        #expect(blended.alpha == 1 + Tuning.placementSeedAlpha && blended.beta == 3, "beta is never lowered")
+        #expect(blended.state == .learning && !blended.isProvisional, "the blend did not reach mastered, so it is not a provisional mastery")
+
+        let kept = s.concept("present-er-verbs")!
+        #expect(kept.alpha == Tuning.placementSeedAlphaCap && kept.observationCount == earned.observationCount,
+                "already at the cap: no alpha gained, so no observations invented")
+        #expect(kept.state == .mastered && !kept.isProvisional, "earned mastery is never demoted to a provisional seed")
+        #expect(kept.nextCheckInAt == earned.nextCheckInAt && kept.checkInIntervalDays == earned.checkInIntervalDays,
+                "its check-in ladder is untouched")
+
+        // The inferred tier: a learning head start, never mastery (B9).
+        let inferred = s.concept("possessive-adjectives")!
+        #expect(inferred.alpha == 1 + Tuning.placementInferredAlpha && inferred.beta == 1)
+        #expect(inferred.observationCount == Tuning.placementInferredAlpha)
+        #expect(inferred.state == .learning && !inferred.isProvisional, "a band-inferred concept is not mastered after placement")
+        #expect(inferred.observationCount < Tuning.minObservations)
+
+        #expect(s.concept("definite-articles")!.state == .neverObserved, "a concept with a missed item is seeded in neither tier")
+        #expect(s.journeyStartedAt == now)
+        #expect(s.isInFoundation)
+        #expect(s.unlockedModalities.isEmpty, "placement records no unlock: seeds are provisional")
+        #expect(s.gaps.contains { $0.conceptId == "everyday-vocab" }, "seeded concepts keep their Foundation gaps for check-ins and re-teaching")
+
+        // Retake: blends up to the cap, never resets, and never stacks an inference.
+        s.applyPlacement(result, isFirstRun: false, now: now.addingTimeInterval(day))
+        #expect(s.concept("everyday-vocab")!.alpha == Tuning.placementSeedAlphaCap)
+        #expect(s.concept("everyday-vocab")!.observationCount == Tuning.placementSeedAlphaCap - 1,
+                "observations grow by the alpha actually gained")
+        s.applyPlacement(result, isFirstRun: false, now: now.addingTimeInterval(2 * day))
+        #expect(s.concept("everyday-vocab")!.alpha == Tuning.placementSeedAlphaCap, "capped")
+        #expect(s.concept("everyday-vocab")!.observationCount == Tuning.placementSeedAlphaCap - 1, "no observations added at the cap")
+        #expect(s.concept("negation")!.beta == 3)
+        #expect(s.concept("possessive-adjectives")!.observationCount == Tuning.placementInferredAlpha,
+                "an inferred seed is taken once, by a never-observed concept only")
+        #expect(s.concept("possessive-adjectives")!.state == .learning)
+        #expect(s.concept("present-er-verbs")!.nextCheckInAt == earned.nextCheckInAt)
+
+        // The verification check-in rides on one of those gaps. The seed was
+        // already (provisionally) mastered when the retakes landed, so its ladder
+        // stayed as the first placement set it: `seedVerificationDays` from then.
+        s.sessionIndex = 1
+        let selector = ConceptSelector(store: s)
+        #expect(s.concept("everyday-vocab")!.isProvisional)
+        #expect(s.concept("everyday-vocab")!.nextCheckInAt == now.addingTimeInterval(Tuning.seedVerificationDays * day))
+        let at = now.addingTimeInterval(Tuning.seedVerificationDays * day + 60)
+        #expect(!selector.isCheckInDue(s.concept("everyday-vocab")!, now: at.addingTimeInterval(-120)))
+        #expect(selector.isCheckInDue(s.concept("everyday-vocab")!, now: at))
+        let output = selector.select(.smart(now: at))
+        let verify = output.checkInItems.first { $0.conceptId == "everyday-vocab" }
+        #expect(verify != nil)
+        #expect(verify?.reason == "Checking what your level check found: Everyday vocabulary.")
+        // A learning concept is ranked only once the app has something to teach it
+        // from (store-6-3). possessive-adjectives is authored in the shipped file,
+        // but this fixture carries no content, so supply it here — the assertion is
+        // about placement inference, not about teachability.
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["possessive-adjectives"])
+        let ranked = ConceptSelector(store: s).select(.smart(now: at))
+        #expect(ranked.rankedConcepts.contains { $0.concept.id == "possessive-adjectives" },
+                "the inferred concept is eligible as a learning target")
+    }
+
+    /// engine-9-3: a band-INFERRED seed is a guess, not evidence. Crediting it to the
+    /// raw observation count as well as to alpha handed it half of the
+    /// `Tuning.minObservations` floor, so a concept the placement never actually
+    /// asked about became VERIFIED mastery — and coverage toward the reading unlock —
+    /// after two correct answers, while a concept the placement probed
+    /// `Tuning.placementProbesPerConcept` times clean was marked provisional and had
+    /// to survive `Tuning.seedVerificationPasses` check-ins days apart. The head start
+    /// is still real (the concept reads `.learning`, and its alpha makes mastery
+    /// arrive sooner), it just cannot pay for the floor.
+    @Test func aBandInferredSeedNeverPaysForTheMasteryFloor() {
+        let s = EngineFixtures.store()
+        let cid = "possessive-adjectives"
+        #expect(ConceptTaxonomy.baseConceptIds.contains(cid), "the fixture concept is one the unlock counts")
+        let result = PlacementResult(vocabBand: 1, grammarBand: 1, estimatedLevel: .A1, isTrueBeginner: false,
+                                     masteredConceptIds: [], missedGaps: [], askedCount: 6, correctCount: 5,
+                                     inferredConceptIds: [cid])
+        s.applyPlacement(result, isFirstRun: true, now: now)
+
+        let seeded = s.concept(cid)!
+        #expect(seeded.state == .learning, "the head start is real: the concept is no longer untouched")
+        #expect(seeded.inferredObservations == Tuning.placementInferredAlpha)
+        #expect(seeded.testedObservations == 0, "placement never asked the learner anything about it")
+
+        // Real answers, one at a time. Only these count toward the floor.
+        for i in 1...Int(Tuning.minObservations) {
+            s.recordConceptAnswer(conceptId: cid, correct: true, now: now.addingTimeInterval(Double(i) * day))
+            let c = s.concept(cid)!
+            #expect(c.testedObservations == Double(i))
+            #expect(c.observationCount == Double(i) + Tuning.placementInferredAlpha)
+            if Double(i) < Tuning.minObservations {
+                #expect(c.state == .learning, "mastered on \(i) answered item(s) — the inference paid for the floor")
+                #expect(!c.isVerifiedMastered)
+                #expect(s.foundationMastered == 0, "and it counted toward the reading unlock")
+            }
+        }
+        let earned = s.concept(cid)!
+        #expect(earned.state == .mastered, "the floor is met by answers, so mastery arrives")
+        #expect(earned.isVerifiedMastered && !earned.isProvisional, "earned through practice, not seeded")
+        #expect(s.foundationMastered == 1)
+    }
+
+    // MARK: B8 — coverage counts verified mastery only; the gate has hysteresis
+
+    @Test func coverageIgnoresProvisionalSeedsAndPlacementRecordsNoUnlock() {
+        let s = EngineFixtures.store()
+        let base = Array(ConceptTaxonomy.baseConceptIds).sorted()
+        let result = PlacementResult(vocabBand: 2, grammarBand: 2, estimatedLevel: .A2, isTrueBeginner: false,
+                                     masteredConceptIds: base, missedGaps: [], askedCount: 12, correctCount: 12)
+        #expect(s.willEnterFoundation(after: result), "seed-only results predict Foundation")
+        s.applyPlacement(result, isFirstRun: true, now: now)
+        #expect(s.concepts.filter { $0.isProvisional }.count == base.count)
+        #expect(s.baseCoverage == 0 && s.foundationMastered == 0)
+        #expect(s.readiness(for: .reading) == .locked && s.isInFoundation)
+        #expect(s.unlockedModalities.isEmpty, "no bookkeeping point has recorded an unlock")
+        s.refreshUnlocks()
+        #expect(s.unlockedModalities.isEmpty, "provisional seeds cannot open anything")
+
+        // Verifying seeds is what moves coverage: each needs `seedVerificationPasses`.
+        let needed = Int((Double(base.count) * ReadinessConfig.tuning.readingUnlock).rounded(.up))
+        for cid in base.prefix(needed) {
+            for _ in 0..<Tuning.seedVerificationPasses { s.recordCheckIn(conceptId: cid, passed: true, now: now) }
+            #expect(s.concept(cid)!.isVerifiedMastered)
+        }
+        #expect(s.foundationMastered == needed)
+        #expect(s.readiness(for: .reading) == .unlocked)
+        #expect(!s.willEnterFoundation(after: result), "a retake by a learner whose reading is open stays open")
+        // `recordCheckIn` refreshes the record BEFORE its outcome lands, so the
+        // unlock is written at the next bookkeeping point, not by the verifying answer.
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.unlockedModalities.contains(LearningModality.reading.rawValue))
+    }
+
+    @Test func anOpenedModalityRelocksOnlyBelowTheBridgeAndOnlyAtABookkeepingPoint() {
+        let s = EngineFixtures.store()
+        let base = Array(ConceptTaxonomy.baseConceptIds).sorted()
+        let config = ReadinessConfig.tuning
+        let needed = Int((Double(base.count) * config.readingUnlock).rounded(.up))
+        func master(_ cid: String) {
+            let idx = s.concepts.firstIndex { $0.id == cid }!
+            s.concepts[idx] = EngineFixtures.mastered(cid, category: s.concepts[idx].category, level: s.concepts[idx].cefrLevel,
+                                                      prerequisites: s.concepts[idx].prerequisites)
+        }
+        func unmaster(_ cid: String) {
+            let idx = s.concepts.firstIndex { $0.id == cid }!
+            s.concepts[idx].alpha = 1
+            s.concepts[idx].beta = 1
+            s.concepts[idx].observationCount = 0
+        }
+        for cid in base.prefix(needed) { master(cid) }
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.readiness(for: .reading) == .unlocked)
+        #expect(s.unlockedModalities.contains(LearningModality.reading.rawValue))
+
+        // Coverage slips below the unlock bar but stays above the bridge: reading
+        // stays open, live and after bookkeeping — no day-to-day flip-flop.
+        unmaster(base[0])
+        #expect(s.baseCoverage < config.readingUnlock && s.baseCoverage >= config.readingBridge)
+        #expect(s.readiness(for: .reading) == .unlocked, "hysteresis: still open")
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.readiness(for: .reading) == .unlocked && s.unlockedModalities.contains(LearningModality.reading.rawValue))
+
+        // Below the bridge: still open LIVE (a bookkeeping decision, not a render-time
+        // one) and re-locked at the next bookkeeping point.
+        let bridgeCount = Int((Double(base.count) * config.readingBridge).rounded(.up))
+        for cid in base.prefix(needed).dropFirst().prefix(needed - bridgeCount) { unmaster(cid) }
+        #expect(s.baseCoverage < config.readingBridge)
+        #expect(s.readiness(for: .reading) == .unlocked, "not evaluated live")
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.readiness(for: .reading) != .unlocked, "re-locked at the bookkeeping point")
+        #expect(s.unlockedModalities.isEmpty, "everything gated behind reading closed with it")
+    }
+
+    @Test func placementFromTheEngineSeedsOnlyFullyProbedConceptsAsMastered() {
+        // Real staircase on a small bank: two concepts fully probed, one asked once.
+        var bank: [AssessmentQuestion] = []
+        for n in 0..<3 {
+            bank.append(question(1, .vocabulary, "everyday-vocab", n))
+            bank.append(question(1, .grammar, "definite-articles", n))
+        }
+        bank.append(question(2, .vocabulary, "family-vocab", 0))
+        var engine = PlacementEngine(bank: bank)
+        while let q = engine.next() { engine.record(q, correct: true) }
+        let result = engine.result()
+        #expect(result.askedCount(for: "family-vocab") == 1)
+        #expect(!result.masteredConceptIds.contains("family-vocab"))
+        #expect(result.inferredConceptIds.contains("family-vocab"))
+
+        let s = EngineFixtures.store()
+        s.applyPlacement(result, isFirstRun: true, now: now)
+        #expect(s.concept("family-vocab")!.state == .learning, "asked once → a head start, not mastery")
+        #expect(!s.concept("family-vocab")!.isProvisional)
+        for cid in result.masteredConceptIds {
+            #expect(s.concept(cid)!.state == .mastered && s.concept(cid)!.isProvisional, "\(cid)")
+        }
+        for cid in result.inferredConceptIds {
+            #expect(s.concept(cid)!.state != .mastered, "\(cid) was only inferred")
+        }
+        #expect(s.baseCoverage == 0, "provisional seeds never count toward coverage")
+        #expect(s.foundationMastered == 0)
+        #expect(s.readiness(for: .reading) != .unlocked && s.unlockedModalities.isEmpty)
+    }
+
+    // MARK: B10 — lesson-paced Foundation days
+
+    @Test func lockedLearnersGetALessonPacedPlan() {
+        let s = EngineFixtures.store()   // real taxonomy, nothing mastered → reading locked
+        s.preferences = UserPreferences(modalities: [.reading], timeBudget: .standard, daysPerWeekGoal: nil)
+        let plan = DailyPlanEngine(store: s).makePlan(now: now)
+        #expect(plan.items.count == 1)
+        let item = plan.items[0]
+        #expect(item.kind == .lessons && item.target == Tuning.foundationLessonsPerDay && item.modality == nil)
+        #expect(item.id == "lessons" && item.targetMinutes == 0)
+        #expect(plan.totalMinutes == 0 && plan.isLessonPaced && plan.lessonItem == item)
+        #expect(!plan.isColdStart)
+        #expect(plan.rationale == "\(Tuning.foundationLessonsPerDay) short lessons today — each one builds toward unlocking reading.")
+        #expect(s.planProgress(for: item, now: now) == 0)
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.planProgress(for: item, now: now) == 1 && s.lessonsCompleted(on: now) == 1)
+        #expect(s.planProgress(for: DailyPlanItem(modality: .reading, targetMinutes: 10), now: now) == s.minutesToday(.reading))
+
+        // The plan of record round-trips a lessons item.
+        let scratch = ScratchDefaults()
+        let p = AppStore(persistence: scratch.defaults)
+        _ = p.planForToday(now: now) { plan }
+        p.flush()
+        #expect(AppStore(persistence: scratch.defaults).dailyPlanOfRecord == plan)
+    }
+
+    // MARK: B11 — the release-streak hint
+
+    @Test func selectionCarriesTheConceptReleaseStreak() {
+        let g = EngineFixtures.smallGraph()
+        let output = ConceptSelector(store: g.store).select(.smart(now: now))
+        #expect(output.conceptReleaseStreak == Tuning.conceptReleaseStreak)
+        #expect(Tuning.conceptReleaseStreak == 3)
+    }
+
+    // MARK: B12 — a never-observed concept needs something to teach
+
+    @Test func neverObservedConceptIsEligibleOnlyWithAGapOrAsTheProbe() {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("empty"), EngineFixtures.concept("full")],
+                                     gaps: [EngineFixtures.gap("full-0", concept: "full")])
+        s.sessionIndex = 1   // not a probe session
+        var selector = ConceptSelector(store: s)
+        #expect(selector.eligibleConcepts(now: now).map { $0.id } == ["full"], "nothing to teach → not ranked")
+        #expect(selector.select(.smart(now: now)).targetConceptId == "full")
+
+        // A probe session makes the gap-less concept eligible as the probe candidate.
+        s.sessionIndex = 0
+        #expect(selector.probeConcept()?.id == "empty")
+        #expect(Set(selector.eligibleConcepts(now: now).map { $0.id }) == ["empty", "full"])
+
+        // A learning concept is eligible only when the app has material for it
+        // (store-6-3): concept-level evidence from Speak or Converse can push a
+        // concept with no cards and no content into `.learning`, and ranking it
+        // targets a lesson that can never be assembled.
+        s.concepts[0] = EngineFixtures.learning("empty", mastery: 0.5)
+        s.sessionIndex = 1
+        selector = ConceptSelector(store: s)
+        #expect(selector.eligibleConcepts(now: now).map { $0.id } == ["full"],
+                "learning, but nothing to teach it from")
+        s.foundationContent = EngineFixtures.syntheticContent(for: ["empty"])
+        selector = ConceptSelector(store: s)
+        #expect(Set(selector.eligibleConcepts(now: now).map { $0.id }) == ["empty", "full"],
+                "content arrives, and it becomes a real target")
+
+        // A resting (not practicable) gap does not count as something to teach.
+        let t = EngineFixtures.store(concepts: [EngineFixtures.concept("rest")],
+                                     gaps: [EngineFixtures.gap("rest-0", concept: "rest", due: now.addingTimeInterval(9 * day),
+                                                               consecutiveCorrect: Tuning.gapMasteryStreak, mastered: now)])
+        t.sessionIndex = 1
+        #expect(ConceptSelector(store: t).eligibleConcepts(now: now).isEmpty)
+    }
+
+    // MARK: B13 — probes come from content
+
+    @Test func probeCandidateSkipsConceptsWithoutProbeContent() {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("a", category: .pronunciation),
+                                                EngineFixtures.concept("b", category: .pronunciation)], gaps: [])
+        s.sessionIndex = 0
+        s.probeContent = { id in id == "b" ? EngineFixtures.syntheticProbes(for: id) : [] }
+        let selector = ConceptSelector(store: s)
+        #expect(selector.probeConcept()?.id == "b", "a has no probes → skipped for the next candidate")
+        #expect(s.materializeProbeGap(id: "probe-a-0", for: s.concept("a")!, now: now) == nil)
+        #expect(!s.gaps.contains { $0.id == "probe-a-0" })
+        let probe = s.materializeProbeGap(id: "probe-b-0", for: s.concept("b")!, now: now)
+        #expect(probe?.isProbe == true && probe?.probeOptions?.count == 3)
+        #expect(probe?.irtDifficulty == Tuning.irtDifficulty(for: .A1))
+
+        // Probes rotate with the session so a re-probe is a different item.
+        s.sessionIndex = 1
+        let next = s.materializeProbeGap(id: "probe-b-1", for: s.concept("b")!, now: now)
+        #expect(next?.frenchWord == EngineFixtures.syntheticProbes(for: "b")[1].fr)
+        s.probeContent = { _ in [] }
+        #expect(ConceptSelector(store: s).probeConcept() == nil)
+    }
+
+    @Test func gapProbeOptionsRoundTripAndDefaultNil() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var gap = EngineFixtures.gap("p", concept: "c")
+        gap.isProbe = true
+        gap.probeOptions = ["x", "y", "z"]
+        gap.probePrompt = "How is “x” pronounced?"
+        let round = try decoder.decode(GapItem.self, from: encoder.encode(gap))
+        #expect(round.probeOptions == ["x", "y", "z"])
+        #expect(round.probePrompt == "How is “x” pronounced?")
+        var object = try #require(JSONSerialization.jsonObject(with: encoder.encode(gap)) as? [String: Any])
+        object.removeValue(forKey: "probeOptions")
+        object.removeValue(forKey: "probePrompt")
+        let legacy = try decoder.decode(GapItem.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(legacy.probeOptions == nil && legacy.probePrompt == nil)
+    }
+
+    /// lesson-6-1: the content's own question stem reaches the probe gap, so the
+    /// scheduler can ask a probe whose answer is a claim about the French rather
+    /// than its meaning.
+    @Test func materializedProbeCarriesTheContentsQuestionStem() throws {
+        let s = EngineFixtures.store(concepts: [EngineFixtures.concept("liaison", category: .pronunciation)], gaps: [])
+        s.probeContent = { _ in
+            [FoundationProbeContent(fr: "vous avez", en: "the s links as a z", ask: "How is “vous avez” pronounced?",
+                                    options: ["the s is silent", "the s is an s", "the v is dropped"]),
+             FoundationProbeContent(fr: "rire", en: "to laugh", options: ["to cry", "to run", "to read"])]
+        }
+        s.sessionIndex = 0
+        let asked = try #require(s.materializeProbeGap(id: "probe-liaison-0", for: s.concept("liaison")!, now: now))
+        #expect(asked.probePrompt == "How is “vous avez” pronounced?")
+        s.sessionIndex = 1
+        let plain = try #require(s.materializeProbeGap(id: "probe-liaison-1", for: s.concept("liaison")!, now: now))
+        #expect(plain.probePrompt == nil, "a meaning probe keeps the default stem")
+    }
+
+    // MARK: B14 — engine metrics
+
+    @Test func metricsSnapshotCountsTheEngineAndTheLogIsCappedAndPersisted() {
+        let scratch = ScratchDefaults()
+        let s = AppStore(persistence: scratch.defaults)
+        s.probeContent = EngineFixtures.syntheticProbes
+        // Two mastered (one provisional), one learning, one stalled; base coverage stays low.
+        let a = s.concepts.firstIndex { $0.id == "everyday-vocab" }!
+        s.concepts[a] = EngineFixtures.mastered("everyday-vocab", category: .vocabulary)
+        let b = s.concepts.firstIndex { $0.id == "family-vocab" }!
+        s.concepts[b] = EngineFixtures.mastered("family-vocab", category: .vocabulary)
+        s.concepts[b].isProvisional = true
+        let c = s.concepts.firstIndex { $0.id == "negation" }!
+        s.concepts[c] = EngineFixtures.learning("negation", mastery: 0.5, prerequisites: ["present-er-verbs"])
+        s.concepts[c].stallAttempts = Tuning.stallAttempts
+        s.checkInHistory = [true, false, true]
+        s.journeyStartedAt = now.addingTimeInterval(-10 * day)
+
+        let m = s.metricsSnapshot(now: now)
+        let selector = ConceptSelector(store: s)
+        #expect(m.frontierSize == s.concepts.filter { selector.isFrontier($0) }.count && m.frontierSize > 0)
+        #expect(m.learningCount == 1 && m.masteredCount == 2 && m.provisionalCount == 1)
+        #expect(m.observedCount == 3)
+        #expect(m.checkInPassRate.map { abs($0 - 2.0 / 3.0) < 1e-9 } == true)
+        #expect(m.checkInCount == 3 && m.checkInMisses == 1)
+        #expect(!m.governorActive)
+        #expect(m.stalledConceptIds == ["negation"] && m.stalls == 1)
+        #expect(m.daysSinceStart == 10)
+        #expect(!m.readingUnlocked)
+        #expect(m.lessonsToday == 0)
+        #expect(m.at == now && m.sessionIndex == 0)
+
+        // completeLesson appends one snapshot; the log is capped and survives a relaunch.
+        #expect(s.metricsLog.isEmpty)
+        s.metricsLog.capacity = 3
+        for i in 0..<5 {
+            s.completeLesson(targetConceptId: nil, isCapstone: false, now: now.addingTimeInterval(Double(i)))
+        }
+        #expect(s.metricsLog.count == 3)
+        #expect(s.metricsLog.last?.sessionIndex == 5)
+        #expect(s.metricsLog.last?.lessonsToday == 5)
+#if DEBUG
+        #expect(s.diagnosticsMetrics.count == 3)
+#endif
+        s.flush()
+        let reloaded = AppStore(persistence: scratch.defaults)
+        #expect(reloaded.metricsLog.count == 3 && reloaded.metricsLog.capacity == 3)
+        #expect(reloaded.checkInHistory == [true, false, true])
+        #expect(reloaded.journeyStartedAt == s.journeyStartedAt)
+        #expect(reloaded.metricsLog.last == s.metricsLog.last)
+
+        // Reset clears the Pass 3 bookkeeping too.
+        reloaded.resetProgress()
+        #expect(reloaded.metricsLog.isEmpty && reloaded.checkInHistory.isEmpty && reloaded.journeyStartedAt == nil
+                && reloaded.unlockedModalities.isEmpty)
+    }
+
+    @Test func journeyStartsAtTheFirstLesson() {
+        let s = EngineFixtures.store()
+        #expect(s.journeyStartedAt == nil && s.metricsSnapshot(now: now).daysSinceStart == 0)
+        s.completeLesson(targetConceptId: nil, isCapstone: false, now: now)
+        #expect(s.journeyStartedAt == now)
+        #expect(s.metricsSnapshot(now: now.addingTimeInterval(3 * day)).daysSinceStart == 3)
+    }
+
+    // MARK: B15 — stalls prefer prerequisites and re-show the card
+
+    @Test func stalledConceptBoostsItsUnmasteredPrerequisitesAndIsFlaggedInTheSelection() throws {
+        let parent = EngineFixtures.learning("parent", mastery: 0.5)
+        let child = EngineFixtures.learning("child", mastery: 0.5, prerequisites: ["parent"])
+        var gaps = (0..<3).map { EngineFixtures.gap("parent-\($0)", concept: "parent") }
+        gaps += (0..<3).map { EngineFixtures.gap("child-\($0)", concept: "child", due: now.addingTimeInterval(-5 * day)) }
+        let s = EngineFixtures.store(concepts: [parent, child], gaps: gaps)
+        s.sessionIndex = 1
+        let pipeline = LessonPipeline(store: s)
+        let selector = pipeline.selector
+        #expect(selector.select(.smart(now: now)).targetConceptId == "child", "overdue gaps rank the child first")
+        #expect(selector.stallPrerequisiteBonus(parent) == 0)
+
+        // Three lessons as the target with no state change → stalled.
+        for i in 0..<Tuning.stallAttempts {
+            let output = SelectionOutput(request: .smart(now: now), targetConceptId: "child", items: [], headline: "",
+                                         rankedConcepts: [], learnerLevel: .A1)
+            s.noteLessonSelected(output)
+            #expect(s.concept("child")?.lastTaughtState == .learning)
+            s.completeLesson(targetConceptId: "child", isCapstone: false, now: now)
+            #expect(s.concept("child")?.stallAttempts == i + 1)
+        }
+        #expect(s.concept("child")!.isStalled)
+        #expect(s.stalledConcepts.map { $0.id } == ["child"])
+
+        // The selector now prefers the unmastered prerequisite…
+        #expect(selector.stallPrerequisiteBonus(parent) == Tuning.stallPrerequisiteBonus)
+        #expect(selector.stallPrerequisiteBonus(child) == 0)
+        let lesson = pipeline.lesson(for: .smart(now: now))
+        let remediation = try #require(lesson?.selection)
+        #expect(remediation.targetConceptId == "parent")
+        #expect(remediation.stalledConceptIds == ["child"], "the stalled concept rides in as review and gets its card again")
+        #expect(remediation.items.contains { $0.conceptId == "child" })
+        #expect(lesson?.conceptBlocks.first { $0.concept.id == "child" }?.isStalled == true)
+        #expect(lesson?.conceptBlocks.first { $0.concept.id == "parent" }?.isStalled == false)
+        #expect(lesson?.conceptBlocks.first?.teaching == nil, "no bundled content on the test host → the description carries the card")
+
+        // …but not a mastered one.
+        s.concepts[0] = EngineFixtures.mastered("parent")
+        #expect(ConceptSelector(store: s).stallPrerequisiteBonus(s.concepts[0]) == 0)
+
+        // A state change resets the count.
+        s.noteLessonSelected(SelectionOutput(request: .smart(now: now), targetConceptId: "child", items: [], headline: "",
+                                             rankedConcepts: [], learnerLevel: .A1))
+        for _ in 0..<6 { s.recordConceptAnswer(conceptId: "child", correct: true, now: now) }
+        #expect(s.concept("child")?.state == .mastered)
+        s.completeLesson(targetConceptId: "child", isCapstone: false, now: now)
+        #expect(s.concept("child")?.stallAttempts == 0)
+        #expect(s.selectionLog.last?.stalledConceptIds == ["child"], "the trace kept the remediation selection")
+    }
+
+    // MARK: Content v2 loader
+
+    /// The bundled content file, located from the source tree (Xcode) or the
+    /// harness's `Resources/` copy (Linux); nil when neither is present.
+    private func bundledContentData() -> Data? {
+        let here = URL(fileURLWithPath: #filePath)
+        let candidates = [
+            here.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("FluentFrenchIOS/Resources/FoundationContent.json"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/FoundationContent.json"),
+        ]
+        for url in candidates {
+            if let data = try? Data(contentsOf: url) { return data }
+        }
+        return nil
+    }
+
+    /// Whether a probe answer reads as a claim ABOUT the French rather than a
+    /// meaning of it: a verdict ("correct: …", "wrong: …") or a rule / pronunciation
+    /// stated after a colon.
+    static func readsAsClaim(_ s: String) -> Bool {
+        let t = s.lowercased()
+        return t.contains(": ") || t.hasPrefix("correct") || t.hasPrefix("wrong")
+    }
+
+    @Test func shippedContentDecodesWithTeachingProbesAndVerifiedBlanksForEveryConcept() throws {
+        guard let data = bundledContentData() else {
+            print("[Pass3EngineTests] FoundationContent.json not reachable from this host — skipping the shipped-content check")
+            return
+        }
+        let file = try FoundationContentLoader.decode(data)
+        #expect(file.version == 2)
+        let taxonomy = ConceptTaxonomy.seed()
+        // Content is authored band by band (D6.5) while the map already spans A1–C1
+        // (D6.1), so a concept may legitimately have no skill block yet: it shows on
+        // the map with its real state and seeds no gaps. What must always hold is
+        // that every skill block IS a taxonomy concept, and that every concept which
+        // does have content is complete — teaching, three probes, verified blanks.
+        #expect(Set(taxonomy.map { $0.id }).isSuperset(of: file.skills.map { $0.id }),
+                "a skill block names a concept the taxonomy doesn't have")
+        let authored = taxonomy.filter { FoundationContentLoader.skill(for: $0.id, in: file) != nil }
+        // Pin the authored set exactly, not a floor: a floor lets one concept lose
+        // content while another gains it. This is also what keeps
+        // EngineFixtures.authoredConceptIds honest — as D6.5 authors each band,
+        // this test fails until that list grows with it, so no simulation can quietly
+        // go on measuring a curriculum the product no longer ships.
+        let authoredIds = Set(authored.map { $0.id })
+        let contentOnly = authoredIds.subtracting(EngineFixtures.authoredConceptIds).sorted()
+        let fixtureOnly = EngineFixtures.authoredConceptIds.subtracting(authoredIds).sorted()
+        #expect(authoredIds == EngineFixtures.authoredConceptIds,
+                "authored content and EngineFixtures.authoredConceptIds have drifted: content-only \(contentOnly), fixture-only \(fixtureOnly)")
+        for concept in authored {
+            let teaching = FoundationContentLoader.teaching(for: concept.id, in: file)
+            #expect(teaching != nil && !(teaching?.rule.isEmpty ?? true), "\(concept.id): teaching present")
+            let probes = FoundationContentLoader.probes(for: concept.id, in: file)
+            #expect(probes.count == Tuning.placementProbesPerConcept, "\(concept.id): \(probes.count) usable probes")
+            for probe in probes {
+                #expect(probe.options.count == 3 && !probe.options.contains(probe.en), "\(concept.id): probe distractors")
+                // lesson-6-1: a probe whose answer or options are CLAIMS about the
+                // French ("correct: colour adjectives go after the noun", "the s links
+                // as a z: 'vou-za-vé'") cannot be asked as "What does “<fr>” mean?" —
+                // the graded-correct option would answer a different question — so it
+                // has to carry its own stem.
+                let claims = ([probe.en] + probe.options).contains { Self.readsAsClaim($0) }
+                #expect(!claims || !(probe.ask ?? "").isEmpty,
+                        "\(concept.id): probe “\(probe.fr)” answers a claim, so it needs its own `ask` stem")
+            }
+            let skill = try #require(FoundationContentLoader.skill(for: concept.id, in: file))
+            #expect(GapCategory(rawValue: skill.category) == concept.category, "\(concept.id): category matches the taxonomy")
+        }
+        let gaps = FoundationContentLoader.gaps(from: file, now: now)
+        #expect(gaps.count == file.skills.reduce(0) { $0 + $1.items.count })
+        for gap in gaps where gap.isTestable {
+            #expect(gap.blankForm != nil, "\(gap.id): a testable item carries a verified blank")
+            #expect(gap.exampleSentence.contains(gap.blankForm ?? "§"), "\(gap.id): the blank occurs verbatim in its example")
+        }
+        #expect(gaps.allSatisfy { $0.fsrs != nil && $0.conceptId != nil })
+        #expect(Set(gaps.map { $0.id }).count == gaps.count, "gap ids are unique")
+    }
+
+    @Test func loaderDecodesV1AndV2ContentTolerantly() throws {
+        let v1 = """
+        {"version":1,"skills":[{"id":"everyday-vocab","category":"vocabulary","items":[
+          {"fr":"w1","en":"e1","note":"n1","ex":"x w1 y","exEn":"xe1"},
+          {"fr":"w2","en":"e2","note":"n2","ex":"w2 here","exEn":"e2 here","diff":"hard"}]}]}
+        """
+        let old = try FoundationContentLoader.decode(Data(v1.utf8))
+        #expect(old.version == 1 && old.skills.count == 1)
+        #expect(old.skills[0].teaching == nil && old.skills[0].probes.isEmpty)
+        #expect(FoundationContentLoader.probes(for: "everyday-vocab", in: old).isEmpty)
+        #expect(FoundationContentLoader.teaching(for: "everyday-vocab", in: old) == nil)
+        let oldGaps = FoundationContentLoader.gaps(from: old, now: now)
+        #expect(oldGaps.count == 2)
+        #expect(oldGaps.allSatisfy { $0.blankForm == nil && $0.acceptedAnswers == nil && $0.isTestable })
+        #expect(oldGaps[1].difficulty == .hard && oldGaps[0].conceptId == "everyday-vocab")
+        #expect(oldGaps[0].fsrs?.dueAt == now)
+
+        let v2 = """
+        {"version":2,"skills":[{"id":"definite-articles","category":"grammar",
+          "teaching":{"rule":"r","examples":[{"fr":"a","en":"b","note":"c"}],"contrast":[{"fr":"d","en":"e"}],"commonMistake":"m"},
+          "probes":[
+            {"fr":"p1","en":"a1","ex":"x1","exEn":"y1","options":["o1","o2","o3"]},
+            {"fr":"p2","en":"a2","options":["o1","a2","o3"]},
+            {"fr":"p3","en":"a3","options":["o1","o1","o3"]}],
+          "items":[
+            {"fr":"w1","en":"e1","note":"n","ex":"the w1 form","exEn":"t","blank":"w1","alts":["w1b"],"testable":true},
+            {"fr":"w2","en":"e2","note":"n","ex":"no match here","exEn":"t","blank":"w2"},
+            {"fr":"-rule","en":"e3","note":"n","ex":"","exEn":"","testable":false}]}]}
+        """
+        let file = try FoundationContentLoader.decode(Data(v2.utf8))
+        let teaching = try #require(FoundationContentLoader.teaching(for: "definite-articles", in: file))
+        #expect(teaching.rule == "r" && teaching.examples.count == 1 && teaching.contrast.count == 1 && teaching.commonMistake == "m")
+        #expect(teaching.contrast[0].note == nil)
+        let probes = FoundationContentLoader.probes(for: "definite-articles", in: file)
+        #expect(probes.map { $0.fr } == ["p1"], "a probe whose options repeat the answer, or each other, is unusable")
+        #expect(probes[0].options == ["o1", "o2", "o3"] && probes[0].ex == "x1")
+        #expect(FoundationContentLoader.items(for: "definite-articles", in: file).count == 3)
+        let gaps = FoundationContentLoader.gaps(from: file, now: now)
+        #expect(gaps[0].blankForm == "w1" && gaps[0].acceptedAnswers == ["w1b"] && gaps[0].isTestable)
+        #expect(gaps[1].blankForm == nil, "a blank that does not occur verbatim in the example is never offered")
+        #expect(gaps[2].isTestable == false && gaps[2].blankForm == nil)
+        #expect(FoundationContentLoader.skill(for: "missing", in: file)?.id == nil)
+    }
+
+    // MARK: Round 10 — content corrections and item difficulty
+
+    private func item(_ fr: String, en: String = "e", note: String = "n", blank: String? = nil,
+                      alts: [String]? = nil, testable: Bool? = nil) -> FoundationItemContent {
+        FoundationItemContent(fr: fr, en: en, note: note, ex: "x \(fr) y", exEn: "t", blank: blank ?? fr,
+                              alts: alts, testable: testable)
+    }
+
+    private func contentFile(_ items: [FoundationItemContent], concept: String = "present-irregular") -> FoundationContentFile {
+        FoundationContentFile(version: 2, skills: [FoundationSkillContent(id: concept, category: GapCategory.grammar.rawValue,
+                                                                          items: items)])
+    }
+
+    /// engine-10-6: a seeded gap was a frozen copy keyed by array index, so a content
+    /// correction never reached a learner who already had the item.
+    @Test func contentCorrectionsReachSeededGapsAndKeepTheirEvidence() throws {
+        let v1 = contentFile([item("w0", alts: ["bad"]), item("w1"), item("w2")])
+        var seeded = FoundationContentLoader.gaps(from: v1, now: now)
+        #expect(seeded.allSatisfy { $0.contentFingerprint != nil }, "seeding stamps the content it came from")
+        // The learner has practised w0.
+        seeded[0].reviewCount = 4
+        seeded[0].consecutiveCorrect = 2
+        seeded[0].lastReviewedAt = now
+        seeded[0].nextReviewAt = now.addingTimeInterval(3 * day)
+        seeded[0].fsrs = FSRS.review(state: seeded[0].fsrs, grade: .good, now: now)
+        let before = seeded[0]
+
+        // v2 fixes w0's alts and note, and inserts a new item at index 0.
+        let v2 = contentFile([item("new"), item("w0", note: "fixed", alts: ["good"]), item("w1"), item("w2")])
+        let later = now.addingTimeInterval(day)
+        let refreshed = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v2, now: later),
+                                                              now: later)
+        let w0 = try #require(refreshed.first { $0.frenchWord == "w0" })
+        #expect(w0.acceptedAnswers == ["good"] && w0.explanation == "fixed", "the correction reached the learner")
+        #expect(w0.id == before.id && w0.reviewCount == before.reviewCount && w0.consecutiveCorrect == before.consecutiveCorrect
+                && w0.nextReviewAt == before.nextReviewAt && w0.fsrs == before.fsrs && w0.lastReviewedAt == before.lastReviewedAt,
+                "schedule and evidence are untouched")
+        // The inserted item arrives, under an id that does not collide with w0's old one.
+        let fresh = try #require(refreshed.first { $0.frenchWord == "new" })
+        #expect(fresh.id != before.id && Set(refreshed.map { $0.id }).count == refreshed.count)
+        #expect(fresh.isNew && fresh.nextReviewAt == later)
+        #expect(refreshed.count == 4)
+        // Idempotent: a second launch changes nothing.
+        let again = FoundationContentLoader.refreshSeeded(refreshed, content: FoundationContentLoader.gaps(from: v2, now: later),
+                                                          now: later)
+        #expect(again == refreshed)
+    }
+
+    /// engine-10-6: the learner's own additions to a seeded card (a second reading
+    /// folded in at capture) are theirs; a correction never wipes them.
+    @Test func aContentRefreshKeepsWhatTheLearnerAddedToACard() throws {
+        var seeded = FoundationContentLoader.gaps(from: contentFile([item("w0", alts: ["a"])]), now: now)
+        seeded[0].englishTranslation = "e / another reading"
+        seeded[0].acceptedAnswers = ["a", "mine"]
+        let v2 = contentFile([item("w0", note: "fixed", blank: "w0", alts: ["b"], testable: false)])
+        let refreshed = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v2, now: now), now: now)
+        let w0 = try #require(refreshed.first)
+        #expect(w0.englishTranslation == "e / another reading" && w0.acceptedAnswers == ["a", "mine"])
+        #expect(w0.isTestable == false, "fields no learner path writes still follow the content")
+    }
+
+    /// engine-10-6: a skill met only through one placement miss is not topped up with
+    /// the whole curriculum at launch — that is its own seeding path's job.
+    @Test func aContentRefreshTopsUpOnlySkillsTheLearnerWasSeededWith() {
+        let file = contentFile((0..<10).map { item("w\($0)") })
+        let content = FoundationContentLoader.gaps(from: file, now: now)
+        let oneMiss = [content[3]]
+        #expect(FoundationContentLoader.refreshSeeded(oneMiss, content: content, now: now).count == 1)
+        let most = Array(content.prefix(6))
+        #expect(FoundationContentLoader.refreshSeeded(most, content: content, now: now).count == 10)
+        // A headword the learner already captured from reading is not seeded again.
+        var captured = EngineFixtures.gap("read-1", concept: nil, sourceType: .reading)
+        captured.frenchWord = content[9].frenchWord
+        let topped = FoundationContentLoader.refreshSeeded(most + [captured], content: content, now: now)
+        #expect(topped.count == 10 && topped.filter { $0.frenchWord == content[9].frenchWord }.count == 1)
+    }
+
+    /// engine-10-6: the seeder skipped an inserted item because its index id was
+    /// already taken by the item it displaced.
+    @Test func theSeederDeliversAnItemWhoseIndexIdIsTaken() {
+        let content = FoundationContentLoader.gaps(from: contentFile([item("new"), item("w0")]), now: now)
+        let old = FoundationContentLoader.gaps(from: contentFile([item("w0")]), now: now)
+        let slice = FoundationSeeder.slice(from: content, conceptIds: ["present-irregular"],
+                                           excludedHeadwords: Set(old.map { FoundationSeeder.headwordKey($0.frenchWord) }),
+                                           existingIds: Set(old.map { $0.id }))
+        #expect(slice.map { $0.frenchWord } == ["new"])
+        #expect(!old.map { $0.id }.contains(slice[0].id))
+        #expect(FoundationSeeder.availableId(for: content[0], taken: Set(old.map { $0.id })) == slice[0].id, "stable")
+    }
+
+    // MARK: Stable content ids (engine-10-6 close-out)
+
+    private func idItem(_ id: String, _ fr: String, en: String = "e", note: String = "n") -> FoundationItemContent {
+        FoundationItemContent(id: id, fr: fr, en: en, note: note, ex: "x \(fr) y", exEn: "t", blank: fr)
+    }
+
+    /// engine-10-6: a correction to an item's headword was not delivered — the card
+    /// was matched by concept + headword, so the old card stayed as an orphan and the
+    /// corrected one arrived as a new, evidence-less duplicate. Content ids close it:
+    /// a gap persisted before ids is stamped once by headword, then followed by id.
+    @Test func aHeadwordCorrectionUpdatesTheCardInPlaceAfterALegacyGapIsStamped() throws {
+        let ids = (0..<3).map { "present-irregular.\($0 + 1)" }
+        let v1 = contentFile([idItem(ids[0], "w0"), idItem(ids[1], "w1"), idItem(ids[2], "w2")])
+        var seeded = FoundationContentLoader.gaps(from: v1, now: now)
+        #expect(seeded.map { $0.contentItemId } == ids, "seeding carries each item's content id")
+        // Persisted by a build that had no content ids; the learner has practised w0.
+        for i in seeded.indices { seeded[i].contentItemId = nil }
+        seeded[0].reviewCount = 4
+        seeded[0].consecutiveCorrect = 2
+        seeded[0].lastReviewedAt = now
+        seeded[0].nextReviewAt = now.addingTimeInterval(3 * day)
+        seeded[0].fsrs = FSRS.review(state: seeded[0].fsrs, grade: .good, now: now)
+        let before = seeded[0]
+
+        // The next refresh (same content) stamps each legacy gap once, by headword.
+        let stamped = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v1, now: now),
+                                                            now: now)
+        #expect(stamped.map { $0.contentItemId } == ids && stamped.map { $0.id } == seeded.map { $0.id })
+        #expect(stamped.count == 3)
+
+        // A later release corrects w0's headword (and its meaning and example).
+        let v2 = contentFile([idItem(ids[0], "w0-fixed", en: "e2", note: "n2"), idItem(ids[1], "w1"), idItem(ids[2], "w2")])
+        let later = now.addingTimeInterval(day)
+        let content = FoundationContentLoader.gaps(from: v2, now: later)
+        let refreshed = FoundationContentLoader.refreshSeeded(stamped, content: content, now: later)
+        #expect(refreshed.count == 3, "no orphan and no duplicate: the corrected item is not seeded a second time")
+        #expect(!refreshed.contains { $0.frenchWord == "w0" })
+        #expect(refreshed.filter { $0.frenchWord == "w0-fixed" }.count == 1)
+        let card = try #require(refreshed.first { $0.contentItemId == ids[0] })
+        #expect(card.frenchWord == "w0-fixed" && card.englishTranslation == "e2" && card.explanation == "n2")
+        #expect(card.exampleSentence == "x w0-fixed y" && card.blankForm == "w0-fixed")
+        #expect(card.id == before.id && card.reviewCount == before.reviewCount
+                && card.consecutiveCorrect == before.consecutiveCorrect && card.nextReviewAt == before.nextReviewAt
+                && card.lastReviewedAt == before.lastReviewedAt && card.fsrs == before.fsrs,
+                "the gap id, schedule and evidence survive the correction")
+        // Idempotent: a second launch changes nothing.
+        #expect(FoundationContentLoader.refreshSeeded(refreshed, content: content, now: later) == refreshed)
+    }
+
+    /// engine-10-6: once stamped, a gap follows its id only. A headword that happens
+    /// to match a different item no longer re-points the card, and an item removed
+    /// from the content leaves the card as it was.
+    @Test func aStampedGapIsMatchedByContentIdOnly() throws {
+        let v1 = contentFile([idItem("present-irregular.1", "w0"), idItem("present-irregular.2", "w1")])
+        let seeded = FoundationContentLoader.gaps(from: v1, now: now)
+        // Item 1 is retired; item 3 reuses its old headword with a new meaning.
+        let v2 = contentFile([idItem("present-irregular.2", "w1"), idItem("present-irregular.3", "w0", en: "other")])
+        let refreshed = FoundationContentLoader.refreshSeeded(seeded, content: FoundationContentLoader.gaps(from: v2, now: now),
+                                                              now: now)
+        let old = try #require(refreshed.first { $0.id == seeded[0].id })
+        #expect(old.contentItemId == "present-irregular.1" && old.englishTranslation == "e", "not re-pointed by headword")
+        #expect(refreshed.filter { $0.frenchWord == "w0" }.count == 1, "a headword already on the record is not seeded twice")
+    }
+
+    /// engine-10-6: gaps persisted before `contentItemId` existed — on device and in
+    /// cloud snapshots from older builds — still decode, with no content id.
+    @Test func gapsPersistedWithoutAContentIdStillDecode() throws {
+        let gap = FoundationContentLoader.gaps(from: contentFile([idItem("present-irregular.1", "w0")]), now: now)[0]
+        #expect(gap.contentItemId == "present-irregular.1")
+        let roundTrip = try JSONDecoder().decode(GapItem.self, from: JSONEncoder().encode(gap))
+        #expect(roundTrip.contentItemId == "present-irregular.1", "the id persists")
+
+        func strip(_ object: Any) -> Any {
+            if var dict = object as? [String: Any] {
+                dict.removeValue(forKey: "contentItemId")
+                return dict.mapValues(strip)
+            }
+            if let array = object as? [Any] { return array.map(strip) }
+            return object
+        }
+        let legacyGap = try JSONSerialization.data(withJSONObject: strip(JSONSerialization.jsonObject(with: JSONEncoder().encode(gap))))
+        #expect(try JSONDecoder().decode(GapItem.self, from: legacyGap).contentItemId == nil)
+
+        let store = EngineFixtures.store(concepts: [EngineFixtures.concept("present-irregular")], gaps: [gap])
+        let blob = try JSONEncoder().encode(store.makeSnapshot())
+        let legacyBlob = try JSONSerialization.data(withJSONObject: strip(JSONSerialization.jsonObject(with: blob)))
+        let snapshot = try JSONDecoder().decode(ProgressSnapshot.self, from: legacyBlob)
+        #expect(snapshot.gaps.map { $0.id } == [gap.id] && snapshot.gaps[0].contentItemId == nil)
+    }
+
+    /// The content loader decodes the item and probe ids, and tolerates their absence
+    /// in hand-written content.
+    @Test func theLoaderDecodesContentIds() throws {
+        let json = """
+        {"version":2,"skills":[{"id":"definite-articles","category":"grammar",
+          "probes":[{"id":"definite-articles.p1","fr":"p","en":"a","options":["b","c","d"]}],
+          "items":[{"id":"definite-articles.1","fr":"w","en":"e","note":"n","ex":"w","exEn":"t"},
+                   {"fr":"v","en":"f","note":"n","ex":"v","exEn":"t"}]}]}
+        """
+        let file = try FoundationContentLoader.decode(Data(json.utf8))
+        #expect(FoundationContentLoader.probes(for: "definite-articles", in: file).map { $0.id } == ["definite-articles.p1"])
+        #expect(FoundationContentLoader.items(for: "definite-articles", in: file).map { $0.id } == ["definite-articles.1", nil])
+        #expect(FoundationContentLoader.gaps(from: file, now: now).map { $0.contentItemId } == ["definite-articles.1", nil])
+    }
+
+    /// Every shipped item and probe carries a stable id: present, in the
+    /// "<skillId>.<n>" / "<skillId>.p<n>" format, and unique across the whole file.
+    @Test func shippedContentIdsArePresentWellFormedAndUnique() throws {
+        let here = URL(fileURLWithPath: #filePath)
+        let candidates = [
+            here.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("FluentFrenchIOS/Resources/FoundationContent.json"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/FoundationContent.json"),
+        ]
+        let data = try #require(candidates.lazy.compactMap { try? Data(contentsOf: $0) }.first,
+                                "FoundationContent.json must be reachable from the test host")
+        let file = try FoundationContentLoader.decode(data)
+        var seen = Set<String>()
+        var count = 0
+        func wellFormed(_ id: String, skill: String, probe: Bool) -> Bool {
+            let prefix = skill + (probe ? ".p" : ".")
+            guard id.hasPrefix(prefix) else { return false }
+            let n = id.dropFirst(prefix.count)
+            return !n.isEmpty && !n.hasPrefix("0") && n.allSatisfy { $0.isASCII && $0.isNumber }
+        }
+        for skill in file.skills {
+            for probe in skill.probes {
+                let id = try #require(probe.id, "\(skill.id): a probe has no id")
+                #expect(wellFormed(id, skill: skill.id, probe: true), "\(id)")
+                seen.insert(id)
+                count += 1
+            }
+            for item in skill.items {
+                let id = try #require(item.id, "\(skill.id): an item has no id")
+                #expect(wellFormed(id, skill: skill.id, probe: false), "\(id)")
+                seen.insert(id)
+                count += 1
+            }
+        }
+        #expect(count > 0 && seen.count == count, "content ids are unique across the file")
+        let gaps = FoundationContentLoader.gaps(from: file, now: now)
+        #expect(gaps.allSatisfy { $0.contentItemId != nil } && Set(gaps.compactMap { $0.contentItemId }).count == gaps.count)
+    }
+
+    /// engine-10-7: every non-A1 skill was scored at the A2 bridge value, so B1 grammar
+    /// was easier to the ability model than an A2 capture and indistinguishable from A2.
+    @Test func foundationItemDifficultyFollowsTheSkillsBand() {
+        func b(_ level: CEFRLevel, _ diff: GapDifficulty = .okay) -> Double {
+            FoundationContentLoader.irtDifficulty(level: level, difficulty: diff)
+        }
+        #expect(b(.A1) < b(.A2) && b(.A2) < b(.B1), "each band is harder than the one below")
+        #expect(b(.B1) == Tuning.foundationIrtDifficulty(for: .B1))
+        #expect(abs(b(.B1, .hard) - (b(.B1) + Tuning.irtHardBump)) < 1e-9)
+        #expect(abs(b(.B1, .easy) - (b(.B1) + Tuning.irtEasyBump)) < 1e-9)
+        #expect(b(.A2) <= Tuning.irtDifficulty(for: .A2) && b(.B1) <= Tuning.irtDifficulty(for: .B1),
+                "a teaching item is never scored harder than a capture of its band")
+        // An `okay` B1 item cannot carry ability past B1 on its own.
+        #expect(b(.B1) + Tuning.thetaEvidenceCeiling < Tuning.levelThetaFloor(for: .B2))
+        // And the loader really uses it for a B1 skill's items.
+        let file = contentFile([item("w0")], concept: "subjunctive-intro")
+        #expect(FoundationContentLoader.gaps(from: file, now: now).first?.irtDifficulty == b(.B1))
+    }
+
+    // MARK: Round 11 — curriculum door, provisional check-in vehicles
+
+    /// engine-11-1: the one item a placement miss seeds (`Tuning.placementMissSeedItems`)
+    /// shut the seeding door — the guard closed on ANY Foundation card — so a missed
+    /// imparfait probe left the learner one of its twelve items for good, and four
+    /// answers on that card certified the skill mastered.
+    @Test func aPlacementMissCardDoesNotCloseItsSkillsCurriculum() throws {
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["imparfait"], itemsEach: 12)
+        let content = store.foundationContent(now).filter { $0.conceptId == "imparfait" }
+        #expect(content.count == 12)
+        // Exactly what a first-run placement leaves: one real content item, due now.
+        store.gaps = [try #require(content.first)]
+        #expect(!store.holdsCurriculum("imparfait", now: now), "one card of twelve is not the curriculum")
+
+        // Its first answer opens the rest of the skill.
+        store.recordConceptAnswer(conceptId: "imparfait", correct: true, now: now)
+        let cards = store.gaps.filter { $0.conceptId == "imparfait" && !$0.isProbe }
+        #expect(cards.count == 12, "the other eleven items arrive: \(cards.count)")
+        #expect(Set(cards.map { FoundationSeeder.headwordKey($0.frenchWord) }).count == 12, "the miss card is not duplicated")
+        #expect(store.holdsCurriculum("imparfait", now: now))
+        // Later answers seed nothing more.
+        for i in 1...8 {
+            store.recordConceptAnswer(conceptId: "imparfait", correct: true, now: now.addingTimeInterval(Double(i) * 60))
+        }
+        #expect(store.gaps.filter { $0.conceptId == "imparfait" && !$0.isProbe }.count == 12)
+        #expect(store.seedConceptContentIfNeeded("imparfait", now: now) == 0)
+    }
+
+    /// engine-11-1: the line is the launch top-up's share. At or above
+    /// `Tuning.foundationTopUpSeededShare` the skill is the learner's and the top-up
+    /// (`FoundationContentLoader.refreshSeeded`) delivers what is missing; below it this
+    /// seeding path does — so no skill is left to neither.
+    @Test func theCurriculumLineIsTheTopUpShare() throws {
+        let store = EngineFixtures.store()
+        store.foundationContent = EngineFixtures.syntheticContent(for: ["imparfait"], itemsEach: 12)
+        let content = store.foundationContent(now).filter { $0.conceptId == "imparfait" }
+        let line = Int((Double(content.count) * Tuning.foundationTopUpSeededShare).rounded(.up))
+
+        store.gaps = Array(content.prefix(line))
+        #expect(store.holdsCurriculum("imparfait", now: now))
+        #expect(store.seedConceptContentIfNeeded("imparfait", now: now) == 0)
+        let topped = FoundationContentLoader.refreshSeeded(store.gaps, content: store.foundationContent(now), now: now)
+        #expect(topped.filter { $0.conceptId == "imparfait" }.count == 12, "the top-up owns a skill at the line")
+
+        store.gaps = Array(content.prefix(line - 1))
+        #expect(!store.holdsCurriculum("imparfait", now: now))
+        #expect(store.seedConceptContentIfNeeded("imparfait", now: now) == 12 - (line - 1), "this path owns one below it")
+        // A concept with no content holds all there is.
+        #expect(store.holdsCurriculum("subjunctive-intro", now: now))
+    }
+
+    /// engine-11-1: the blind-spot probe skipped a concept with ANY card, so a word
+    /// filed on a skill (or a placement-miss item) shut that door too.
+    @Test func aSingleCardDoesNotStopTheBlindSpotProbe() throws {
+        let g = EngineFixtures.smallGraph()
+        let store = g.store
+        store.foundationContent = { when in
+            (0..<4).map { EngineFixtures.gap("\(g.probeMe)-item-\($0)", concept: g.probeMe, due: when) }
+        }
+        store.gaps.append(EngineFixtures.gap("\(g.probeMe)-item-0", concept: g.probeMe, sourceType: .reading))
+        #expect(store.sessionIndex % Tuning.probeEveryNSessions == 0)
+        #expect(ConceptSelector(store: store).probeConcept()?.id == g.probeMe,
+                "one card of four is not the curriculum: the probe still opens the skill")
+        // Once it holds its curriculum it is left alone.
+        store.gaps.append(contentsOf: (1..<4).map { EngineFixtures.gap("\(g.probeMe)-item-\($0)", concept: g.probeMe) })
+        #expect(ConceptSelector(store: store).probeConcept() == nil)
+    }
+
+    /// engine-11-2: a provisional seed's other Foundation items are kept out of review
+    /// and a mastered concept is never a target, so the item the first check-in rode
+    /// on became the only reviewed gap and carried every later verification pass.
+    @Test func provisionalSeedChecksInOnADifferentItemEachPass() throws {
+        var seed = EngineFixtures.mastered("seed")
+        seed.isProvisional = true
+        seed.nextCheckInAt = now
+        let gaps = (0..<4).map { i in
+            EngineFixtures.gap("seed-\(i)", concept: "seed", due: now.addingTimeInterval(Double(i) * day),
+                               fsrs: EngineFixtures.freshFsrs(at: now))
+        }
+        let store = EngineFixtures.store(concepts: [seed], gaps: gaps)
+        var carried: [String] = []
+        for pass in 0..<Tuning.seedVerificationPasses {
+            let at = now.addingTimeInterval(Double(pass) * Tuning.seedVerificationDays * day)
+            let concept = try #require(store.concept("seed"))
+            let vehicle = try #require(ConceptSelector(store: store).checkInVehicle(for: concept, now: at))
+            #expect(!vehicle.isProbe)
+            carried.append(vehicle.gapId)
+            // The check-in is answered: the item is now reviewed.
+            let idx = try #require(store.gaps.firstIndex { $0.id == vehicle.gapId })
+            store.gaps[idx].reviewCount += 1
+            store.gaps[idx].consecutiveCorrect += 1
+            store.gaps[idx].lastReviewedAt = at
+            store.gaps[idx].fsrs = FSRS.review(state: store.gaps[idx].fsrs, grade: .good, now: at)
+        }
+        #expect(Set(carried).count == Tuning.seedVerificationPasses,
+                "each verification pass rides on a different item: \(carried)")
+
+        // With every item answered, the least recently reviewed carries the next one.
+        for i in store.gaps.indices where store.gaps[i].isNew {
+            store.gaps[i].reviewCount = 1
+            store.gaps[i].lastReviewedAt = now.addingTimeInterval(20 * day)
+        }
+        let concept = try #require(store.concept("seed"))
+        let next = try #require(ConceptSelector(store: store).checkInVehicle(for: concept, now: now.addingTimeInterval(30 * day)))
+        #expect(next.gapId == carried[0], "the stalest item comes back first")
+
+        // Verified mastery keeps the weakest-reviewed rule (no FSRS state: recall
+        // follows the correct streak, so seed-0 is the weakest).
+        store.concepts[0].isProvisional = false
+        for i in store.gaps.indices {
+            store.gaps[i].fsrs = nil
+            store.gaps[i].consecutiveCorrect = store.gaps[i].id == "seed-0" ? 0 : 3
+            store.gaps[i].lastReviewedAt = store.gaps[i].id == "seed-0" ? now.addingTimeInterval(25 * day) : now
+        }
+        let verified = try #require(store.concept("seed"))
+        #expect(ConceptSelector(store: store).checkInVehicle(for: verified, now: now.addingTimeInterval(30 * day))?.gapId == "seed-0")
+    }
+}

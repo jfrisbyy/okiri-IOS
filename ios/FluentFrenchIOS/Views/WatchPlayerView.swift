@@ -9,36 +9,58 @@
 //  the footage and the app's own auto-hiding controls drive playback. Both modes
 //  share one underlying player, so position, speed, and saved words carry over.
 //
+//  The transcript panel has four explicit states (E26): loading (bounded by
+//  `Tuning.transcriptTotalTimeout`), lines, "no captions", or the reason it
+//  could not load (no key / offline / service error) with a retry when one
+//  could help. Lines carry their coverage: English captions are shown at once
+//  and translated in place, with a footnote for anything not fully French and
+//  word lookup limited to French lines (EM-1 / EM-2). Word captures go through
+//  the store's capture factory (E7).
+//
 
+import Foundation
 import SwiftUI
 import UIKit
 
 struct WatchPlayerView: View {
     let video: YTVideo
-    /// false = "French Content" (native French), true = "Learn with Subtitles".
-    let learnMode: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The timestamp column holds text, so it widens with the learner's text size.
+    @ScaledMetric(relativeTo: .caption) private var timeColumnWidth: CGFloat = 42
 
     @State private var controller: YouTubePlayerController
-    @State private var segments: [TranscriptSegment] = []
-    @State private var isLoadingTranscript = true
-    @State private var loadFailed = false
+    @State private var transcript: TranscriptState = .loading
     @State private var activeIndex = -1
+    /// Headwords saved from this video, under `AppStore.captureKey`.
     @State private var savedWords: Set<String> = []
     @State private var selectedWord: SelectedWord? = nil
-    @State private var speedIndex = 1
+    @State private var speedIndex = Tuning.watchDefaultSpeedIndex
     @State private var userScrolling = false
     @State private var showFollowPill = false
     @State private var scrollResumeWork: DispatchWorkItem? = nil
     @State private var isFullscreen = false
+    @State private var attempt = 0
+    /// Bumped by the coverage footnote's "Try again": translates the lines still
+    /// in English without refetching the transcript (talkmedia-2-3).
+    @State private var translationAttempt = 0
+    /// The `translationAttempt` a pass has already run for. `.task(id:)` re-runs
+    /// on every re-appearance, not just on id changes, so without this marker
+    /// leaving the player and coming back would re-translate settled lines.
+    @State private var translationRunFor = 0
+    /// The `attempt` the transcript has already been fetched for. Same reason as
+    /// `translationRunFor`: `.task(id:)` re-runs when the view re-appears, which
+    /// is exactly what leaving fullscreen does, and without this marker the
+    /// transcript on screen (and the learner's place in it) would be thrown away
+    /// and refetched from zero (talkmedia-4-2). `-1` so the first pass runs.
+    @State private var loadRunFor = -1
 
-    private let speeds: [Double] = [0.75, 1.0, 1.25]
+    private let speeds: [Double] = Tuning.watchPlaybackSpeeds
 
-    init(video: YTVideo, learnMode: Bool) {
+    init(video: YTVideo) {
         self.video = video
-        self.learnMode = learnMode
         _controller = State(initialValue: YouTubePlayerController(videoId: video.videoId))
     }
 
@@ -46,11 +68,49 @@ struct WatchPlayerView: View {
         let id = UUID()
         let word: String
         let context: String
+        /// Where the line the word was tapped in came from. The capture sheet
+        /// needs it: a card may only quote the video's OWN French as the
+        /// sentence the word was met in (talkmedia-7-1).
+        let origin: TranscriptOrigin
     }
+
+    /// The transcript panel's explicit states.
+    enum TranscriptState: Equatable {
+        case loading
+        case loaded([TranscriptSegment], coverage: TranscriptCoverage, origin: TranscriptOrigin)
+        case noCaptions
+        case unavailable(MediaServiceFailure)
+
+        var segments: [TranscriptSegment] {
+            if case .loaded(let s, _, _) = self { return s }
+            return []
+        }
+
+        var coverage: TranscriptCoverage {
+            if case .loaded(_, let c, _) = self { return c }
+            return .french
+        }
+
+        /// Where the French on screen came from — kept on the state so the
+        /// provenance note stays after the translation pass finishes.
+        var origin: TranscriptOrigin {
+            if case .loaded(_, _, let o) = self { return o }
+            return .nativeFrench
+        }
+    }
+
+    private var segments: [TranscriptSegment] { transcript.segments }
 
     private var activeSegment: TranscriptSegment? {
         guard activeIndex >= 0, activeIndex < segments.count else { return nil }
         return segments[activeIndex]
+    }
+
+    /// What the transcript highlights as saved: the deck's headwords as well as
+    /// this session's, so a word saved before is marked the first time it is met
+    /// (talkmedia-11-1). Read once per render, never once per word (read-6-3).
+    private var savedKeys: Set<String> {
+        savedWords.union(store.savedHeadwordKeys())
     }
 
     var body: some View {
@@ -61,7 +121,12 @@ struct WatchPlayerView: View {
         }
         .background(Color(hex: "0E0805"))
         .ignoresSafeArea(edges: .bottom)
-        .task { await loadTranscript() }
+        .task(id: attempt) { await loadTranscript() }
+        .task(id: translationAttempt) { await translateRemainingLines() }
+        // A word or example spoken from the capture sheet lives on the shared
+        // natural voice, not on the video player, so leaving Watch has to
+        // silence it explicitly (talkmedia-3-4).
+        .onDisappear { NaturalVoice.shared.stop() }
         .onChange(of: controller.currentTime) { _, newValue in
             updateActiveIndex(for: newValue)
         }
@@ -70,10 +135,11 @@ struct WatchPlayerView: View {
                 controller: controller,
                 title: video.title,
                 activeSegment: activeSegment,
-                savedWords: savedWords,
+                origin: transcript.origin,
+                savedKeys: savedKeys,
                 speedIndex: $speedIndex,
                 speeds: speeds,
-                onSaveGap: { gloss, context in saveGap(gloss, context: context) },
+                onSaved: { outcome in noteSaved(outcome) },
                 onExit: { exitFullscreen() }
             )
             .environment(store)
@@ -82,10 +148,11 @@ struct WatchPlayerView: View {
             WordCaptureSheet(
                 word: sel.word,
                 context: sel.context,
+                origin: sel.origin,
                 accent: Theme.primary,
-                isSaved: savedWords.contains(sel.word.lowercased()),
-                onSave: { gloss in saveGap(gloss, context: sel.context) }
+                onSaved: { outcome in noteSaved(outcome) }
             )
+            .environment(store)
             .presentationDetents([.medium, .large])
         }
     }
@@ -95,13 +162,14 @@ struct WatchPlayerView: View {
     private var topBar: some View {
         HStack(spacing: 12) {
             Button { Haptics.tap(); dismiss() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 38, height: 38).background(.white.opacity(0.12), in: Circle())
+                Image(systemName: "chevron.left").font(.callout.weight(.semibold)).foregroundStyle(.white)
+                    .frame(width: 44, height: 44).background(.white.opacity(0.12), in: Circle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Back")
             VStack(alignment: .leading, spacing: 1) {
-                Text(video.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                Text(video.channel).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                Text(video.title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(2)
+                Text(video.channel).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
             }
             Spacer()
         }
@@ -117,11 +185,14 @@ struct WatchPlayerView: View {
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .background(Color.black)
+                    .accessibilityElement()
+                    .accessibilityLabel("Video: \(video.title)")
                 if let seg = activeSegment {
                     FloatingSubtitle(
                         text: seg.text,
-                        savedWords: savedWords,
+                        savedKeys: savedKeys,
                         fontSize: 15,
+                        lookupEnabled: seg.allowsWordLookup,
                         onWordTap: { word in openWord(word, context: seg.text) }
                     )
                     .padding(.horizontal, 12)
@@ -132,13 +203,14 @@ struct WatchPlayerView: View {
             .overlay(alignment: .topTrailing) {
                 Button { enterFullscreen() } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 34, height: 34).background(.black.opacity(0.45), in: Circle())
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(.black.opacity(0.45), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .padding(10)
+                .padding(6)
+                .accessibilityLabel("Enter fullscreen")
             }
-            .animation(.easeInOut(duration: 0.2), value: activeIndex)
+            .reducedMotionAnimation(.easeInOut(duration: 0.2), value: activeIndex)
             transportControls
         }
     }
@@ -147,10 +219,12 @@ struct WatchPlayerView: View {
         VStack(spacing: 12) {
             PlayerScrubber(controller: controller, tint: Theme.primary)
             HStack {
-                Text(timeLabel(controller.currentTime)).font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(.white.opacity(0.55))
+                Text(timeLabel(controller.currentTime)).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(.white.opacity(0.55))
                 Spacer()
-                Text(timeLabel(controller.duration)).font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(.white.opacity(0.45))
+                Text(timeLabel(controller.duration)).font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(.white.opacity(0.7))
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(timeLabel(controller.currentTime)) of \(timeLabel(controller.duration))")
             PlayerButtons(controller: controller, speedIndex: $speedIndex, speeds: speeds, tint: Theme.primary, playSize: 58)
                 .padding(.top, 2)
         }
@@ -168,37 +242,50 @@ struct WatchPlayerView: View {
     private var transcriptArea: some View {
         ZStack(alignment: .bottom) {
             Group {
-                if isLoadingTranscript {
+                switch transcript {
+                case .loading:
                     transcriptLoading
-                } else if segments.isEmpty {
-                    transcriptEmpty
-                } else {
-                    transcriptList
+                case .loaded(let lines, _, _):
+                    if lines.isEmpty {
+                        transcriptNotice(title: TranscriptCopy.noCaptionsTitle, message: TranscriptCopy.noCaptionsMessage,
+                                         icon: "captions.bubble", retry: nil)
+                    } else {
+                        transcriptList
+                    }
+                case .noCaptions:
+                    transcriptNotice(title: TranscriptCopy.noCaptionsTitle, message: TranscriptCopy.noCaptionsMessage,
+                                     icon: "captions.bubble", retry: nil)
+                case .unavailable(let failure):
+                    transcriptNotice(title: TranscriptCopy.title(failure), message: TranscriptCopy.message(failure),
+                                     icon: icon(for: failure), retry: failure.isRetryable ? retryTranscript : nil)
                 }
             }
             if showFollowPill {
                 Button { followAlong() } label: {
                     Label("Follow along", systemImage: "arrow.down.to.line")
-                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 16).padding(.vertical, 10)
+                        .font(.footnote.weight(.semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 16).frame(minHeight: 44)
                         .background(Theme.primary).clipShape(.capsule)
                         .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
                 }
                 .buttonStyle(.plain)
                 .padding(.bottom, 20)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(reduceMotion
+                            ? AnyTransition.opacity
+                            : AnyTransition.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var transcriptList: some View {
-        ScrollViewReader { proxy in
+        let keys = savedKeys
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     transcriptHeader
                     ForEach(Array(segments.enumerated()), id: \.element.id) { idx, seg in
-                        segmentRow(seg, index: idx)
+                        segmentRow(seg, index: idx, savedKeys: keys)
                             .id(idx)
                     }
                 }
@@ -210,52 +297,107 @@ struct WatchPlayerView: View {
             )
             .onChange(of: activeIndex) { _, newIndex in
                 guard !userScrolling, newIndex >= 0 else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
+                withAnimation(Theme.motion(.easeInOut(duration: 0.35), reduceMotion: reduceMotion)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
             .onChange(of: showFollowPill) { _, show in
                 if !show, activeIndex >= 0 {
-                    withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(activeIndex, anchor: .center) }
+                    withAnimation(Theme.motion(.easeInOut(duration: 0.35), reduceMotion: reduceMotion)) { proxy.scrollTo(activeIndex, anchor: .center) }
                 }
             }
         }
     }
 
     private var transcriptHeader: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "text.alignleft").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary)
-            Text("Transcript").font(.serifDisplay(19, weight: .semibold)).foregroundStyle(.white)
-            Spacer()
-            HStack(spacing: 4) {
-                Image(systemName: "hand.tap.fill").font(.system(size: 9))
-                Text("Tap a word to save").font(.system(size: 11, weight: .medium))
+        let coverage = transcript.coverage
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Image(systemName: "text.alignleft").font(.footnote.weight(.semibold)).foregroundStyle(Theme.primary).accessibilityHidden(true)
+                Text("Transcript").scaledSerifDisplay(19, weight: .semibold).foregroundStyle(.white)
+                Spacer()
+                HStack(spacing: 4) {
+                    Image(systemName: "hand.tap.fill").font(.caption2).accessibilityHidden(true)
+                    Text(coverage.isFrench ? TranscriptCopy.tapHint : TranscriptCopy.frenchOnlyTapHint).font(.caption2.weight(.medium))
+                }
+                .foregroundStyle(.white.opacity(0.7))
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .background(.white.opacity(0.05), in: .capsule)
             }
-            .foregroundStyle(.white.opacity(0.38))
-            .padding(.horizontal, 9).padding(.vertical, 5)
-            .background(.white.opacity(0.05), in: .capsule)
+            if let footnote = TranscriptCopy.coverageFootnote(coverage) {
+                coverageFootnote(footnote, coverage: coverage)
+            }
+            if let provenance = TranscriptCopy.originFootnote(transcript.origin) {
+                originFootnote(provenance)
+            }
         }
         .padding(.bottom, 6)
     }
 
-    private func segmentRow(_ seg: TranscriptSegment, index: Int) -> some View {
+    /// The transcript is not (yet) fully French: say so, and offer a retry only
+    /// when one could translate more lines (EM-2).
+    private func coverageFootnote(_ text: String, coverage: TranscriptCoverage) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            if coverage.isTranslating {
+                ProgressView().controlSize(.small).tint(Theme.primary).accessibilityHidden(true)
+            } else {
+                Image(systemName: "character.bubble").font(.caption).foregroundStyle(Theme.primary).accessibilityHidden(true)
+            }
+            Text(text).font(.caption).foregroundStyle(.white.opacity(0.7))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if coverage.isRetryable {
+                Button { retryTranslation() } label: {
+                    // Bright orange on purpose (UX-08 re-check): this row sits on the
+                    // player's near-black, where Theme.primary measures 6.2:1 and the
+                    // light-surface token Theme.primaryText only 3.4:1.
+                    Text(TranscriptCopy.retryTranslation).font(.caption.weight(.semibold)).foregroundStyle(Theme.primary)
+                        .padding(.horizontal, 8).frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Try translating again")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.white.opacity(0.05), in: .rect(cornerRadius: 10))
+    }
+
+    /// Where the French came from, for anything but the video's own French
+    /// captions. Stays on screen for the whole session — a machine translation
+    /// of English speech must never read as the French spoken in the video
+    /// (talkmedia-3-2).
+    private func originFootnote(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle").font(.caption).foregroundStyle(.white.opacity(0.6)).accessibilityHidden(true)
+            Text(text).font(.caption).foregroundStyle(.white.opacity(0.7))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.white.opacity(0.05), in: .rect(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func segmentRow(_ seg: TranscriptSegment, index: Int, savedKeys: Set<String>) -> some View {
         let isActive = index == activeIndex
         return HStack(alignment: .top, spacing: 10) {
             VStack(spacing: 4) {
                 Text(timeLabel(seg.start))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isActive ? Theme.primary : .white.opacity(0.4))
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(isActive ? Theme.primary : .white.opacity(0.7))
                 if isActive {
-                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 11)).foregroundStyle(Theme.primary)
+                    Image(systemName: "speaker.wave.2.fill").font(.caption2).foregroundStyle(Theme.primary)
+                        .accessibilityHidden(true)
                 }
             }
-            .frame(width: 42, alignment: .leading)
+            .frame(width: timeColumnWidth, alignment: .leading)
             .padding(.top, 1)
 
             FlowWords(
                 text: seg.text,
                 isActive: isActive,
-                savedWords: savedWords,
+                savedKeys: savedKeys,
+                lookupEnabled: seg.allowsWordLookup,
                 onWordTap: { word in openWord(word, context: seg.text) }
             )
         }
@@ -269,15 +411,17 @@ struct WatchPlayerView: View {
         .clipShape(.rect(cornerRadius: 12))
         .contentShape(Rectangle())
         .onTapGesture { jumpTo(seg, index: index) }
-        .animation(.easeInOut(duration: 0.25), value: isActive)
+        .reducedMotionAnimation(.easeInOut(duration: 0.25), value: isActive)
+        .accessibilityHint("Plays from \(timeLabel(seg.start))")
+        .accessibilityAction(named: Text("Play from here")) { jumpTo(seg, index: index) }
     }
 
     private var transcriptLoading: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Image(systemName: "text.bubble.fill").font(.system(size: 13)).foregroundStyle(Theme.primary.opacity(0.7))
-                Text(learnMode ? "Preparing French subtitles…" : "Fetching transcript…")
-                    .font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.55))
+                Image(systemName: "text.bubble.fill").font(.footnote).foregroundStyle(Theme.primary.opacity(0.7)).accessibilityHidden(true)
+                Text("Loading the transcript…")
+                    .font(.footnote.weight(.medium)).foregroundStyle(.white.opacity(0.55))
                 Spacer()
             }
             .padding(.bottom, 2)
@@ -291,6 +435,7 @@ struct WatchPlayerView: View {
                     }
                 }
             }
+            .accessibilityHidden(true)
             Spacer()
         }
         .padding(.horizontal, 18).padding(.top, 16)
@@ -302,32 +447,46 @@ struct WatchPlayerView: View {
         return 240 * fractions[index % fractions.count]
     }
 
-    private var transcriptEmpty: some View {
+    /// One explicit, learner-facing transcript state: what happened, what to do,
+    /// and a retry only when a retry could help.
+    private func transcriptNotice(title: String, message: String, icon: String, retry: (() -> Void)?) -> some View {
         VStack(spacing: 16) {
             ZStack {
                 Circle().fill(Theme.primary.opacity(0.12)).frame(width: 74, height: 74)
-                Image(systemName: "captions.bubble").font(.system(size: 30, weight: .medium)).foregroundStyle(Theme.primary.opacity(0.8))
+                Image(systemName: icon).font(.title.weight(.medium)).foregroundStyle(Theme.primary.opacity(0.8))
             }
+            .accessibilityHidden(true)
             VStack(spacing: 6) {
-                Text("Transcript didn't load").font(.serifDisplay(19, weight: .semibold)).foregroundStyle(.white)
-                Text("This can happen if captions are slow to respond. Give it another try — most French videos work great.")
-                    .font(.system(size: 13)).foregroundStyle(.white.opacity(0.5))
+                Text(title).scaledSerifDisplay(19, weight: .semibold).foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                Text(message)
+                    .font(.footnote).foregroundStyle(.white.opacity(0.75))
                     .multilineTextAlignment(.center).lineSpacing(2).padding(.horizontal, 44)
             }
-            Button {
-                Haptics.tap()
-                Task { await loadTranscript() }
-            } label: {
-                Label("Try again", systemImage: "arrow.clockwise")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                    .padding(.horizontal, 24).padding(.vertical, 12)
-                    .background(Theme.primary, in: .capsule)
-                    .shadow(color: Theme.primary.opacity(0.35), radius: 10, y: 4)
+            if let retry {
+                Button {
+                    Haptics.tap()
+                    retry()
+                } label: {
+                    Label("Try again", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 24).frame(minHeight: 44)
+                        .background(Theme.primary, in: .capsule)
+                        .shadow(color: Theme.primary.opacity(0.35), radius: 10, y: 4)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func icon(for failure: MediaServiceFailure) -> String {
+        switch failure {
+        case .noKey: return "key.slash"
+        case .offline: return "wifi.slash"
+        case .serviceError: return "exclamationmark.triangle"
+        }
     }
 
     // MARK: - Fullscreen
@@ -335,32 +494,94 @@ struct WatchPlayerView: View {
     private func enterFullscreen() {
         Haptics.select()
         OrientationLock.lockLandscape()
-        withAnimation { isFullscreen = true }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { isFullscreen = true }
     }
 
     private func exitFullscreen() {
         Haptics.tap()
         OrientationLock.lockPortrait()
-        withAnimation { isFullscreen = false }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { isFullscreen = false }
     }
 
     // MARK: - Logic
 
+    /// The caption fetch is bounded by `Tuning.transcriptTotalTimeout` inside the
+    /// service. English captions are shown as soon as they arrive and translated
+    /// in place under their own budget (`Tuning.transcriptTranslationTimeout`);
+    /// leaving the screen cancels the `.task`, which stops the pass. A retry is
+    /// a new `attempt`, which re-runs the `.task`. Coming back from fullscreen is
+    /// NOT a new attempt: `loadRunFor` keeps the transcript that is already here
+    /// (talkmedia-4-2), and only the line highlight is re-synced to the player.
     private func loadTranscript() async {
-        isLoadingTranscript = true
-        loadFailed = false
-        let result = await TranscriptService.fetch(videoId: video.videoId, nativeFrench: !learnMode)
-        segments = result
-        isLoadingTranscript = false
-        loadFailed = result.isEmpty
+        guard loadRunFor != attempt else {
+            updateActiveIndex(for: controller.currentTime)
+            // A translation pass the learner interrupted (by going fullscreen)
+            // left lines in English; pick it up where it stopped rather than
+            // leaving the panel on "translating" for good.
+            if transcript.coverage.isTranslating { await runTranslationPass() }
+            return
+        }
+        transcript = .loading
+        activeIndex = -1
+        let result = await TranscriptService.fetch(videoId: video.videoId)
+        // A fetch cut short by the view going away is not a completed attempt:
+        // the marker is only set once there is a real answer to keep.
+        guard !Task.isCancelled else { return }
+        loadRunFor = attempt
+        switch result {
+        case .segments(let lines, let language, let origin):
+            guard !lines.isEmpty else { transcript = .noCaptions; return }
+            switch language {
+            case .french:
+                transcript = .loaded(lines, coverage: .french, origin: origin)
+            case .english:
+                transcript = .loaded(lines, coverage: .translating(done: 0, total: lines.count), origin: origin)
+                updateActiveIndex(for: controller.currentTime)
+                await runTranslationPass()
+            }
+        case .noCaptions: transcript = .noCaptions
+        case .unavailable(let failure): transcript = .unavailable(failure)
+        }
+        updateActiveIndex(for: controller.currentTime)
+    }
+
+    /// The "couldn't load" notice: nothing was fetched, so fetch it all again.
+    private func retryTranscript() {
+        attempt += 1
+    }
+
+    /// The coverage footnote's "Try again": the captions are already here and
+    /// some lines are already French, so only the lines still in English are
+    /// translated. Refetching would throw the transcript (and the learner's
+    /// place in it) away to redo work that succeeded (talkmedia-2-3).
+    private func retryTranslation() {
+        translationAttempt += 1
+    }
+
+    private func translateRemainingLines() async {
+        guard translationAttempt > 0, translationAttempt != translationRunFor else { return }
+        translationRunFor = translationAttempt
+        await runTranslationPass()
+    }
+
+    /// Translate the lines still in English, streaming each batch into the panel.
+    /// Shared by the first pass, the footnote's "Try again" and the resume after
+    /// an interrupted pass, so all three stream the same way and none of them
+    /// refetches captions that already arrived.
+    private func runTranslationPass() async {
+        let lines = segments
+        guard lines.contains(where: { $0.language == .english }) else { return }
+        let origin = transcript.origin
+        transcript = .loaded(lines, coverage: .of(lines, finished: false, stop: nil), origin: origin)
+        for await progress in TranscriptService.translateToFrench(lines) {
+            guard !Task.isCancelled else { return }
+            transcript = .loaded(progress.segments, coverage: progress.coverage, origin: origin)
+        }
     }
 
     private func updateActiveIndex(for time: Double) {
         guard !segments.isEmpty else { return }
-        var newIndex = -1
-        for i in stride(from: segments.count - 1, through: 0, by: -1) {
-            if time >= segments[i].start { newIndex = i; break }
-        }
+        let newIndex = TranscriptText.activeIndex(in: segments, at: time)
         if newIndex != activeIndex { activeIndex = newIndex }
     }
 
@@ -375,65 +596,37 @@ struct WatchPlayerView: View {
     private func openWord(_ raw: String, context: String) {
         let clean = raw.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-"))
             .trimmingCharacters(in: .whitespaces)
-        guard clean.count >= 2 else { return }
+        // A number is text, not a word: no lookup, no pause (talkmedia-11-6).
+        guard clean.count >= 2, TranscriptCapture.isLookupable(clean) else { return }
         if controller.isPlaying { controller.pause() }
         Haptics.select()
-        selectedWord = SelectedWord(word: clean, context: context)
+        selectedWord = SelectedWord(word: clean, context: context, origin: transcript.origin)
     }
 
-    private func saveGap(_ gloss: WordGloss, context: String) {
-        let now = Date()
-        let gap = GapItem(
-            id: UUID().uuidString,
-            frenchWord: gloss.term,
-            englishTranslation: gloss.translation,
-            explanation: gloss.explanation,
-            exampleSentence: gloss.example.isEmpty ? context : gloss.example,
-            exampleTranslation: gloss.exampleTranslation,
-            pronunciation: nil,
-            sourceType: .listening,
-            category: .vocabulary,
-            difficulty: .okay,
-            reviewCount: 0,
-            consecutiveCorrect: 0,
-            lastReviewedAt: nil,
-            nextReviewAt: now,
-            masteredAt: nil,
-            createdAt: now,
-            cefrLevel: .A2,
-            easeFactor: 2.5,
-            currentInterval: 0,
-            irtDifficulty: 0,
-            fsrs: nil,
-            originalContext: OriginalContext(sentence: context, translation: nil, sourceTab: "watch", capturedAt: now, reExposureCount: 0),
-            confusionLinks: [],
-            partOfSpeech: gloss.partOfSpeech.isEmpty ? nil : gloss.partOfSpeech,
-            gender: gloss.gender.isEmpty ? nil : gloss.gender,
-            article: gloss.article.isEmpty ? nil : gloss.article,
-            baseForm: gloss.baseForm.isEmpty ? nil : gloss.baseForm,
-            register: gloss.register.isEmpty ? nil : gloss.register,
-            relatedWords: gloss.relatedWords.isEmpty ? nil : gloss.relatedWords
-        )
-        let pron = gloss.pronunciation.isEmpty ? nil : gloss.pronunciation
-        var saved = gap
-        saved.pronunciation = pron
-        store.addGap(saved)
-        savedWords.insert(gloss.term.lowercased())
-        Haptics.success()
+    /// The store did the saving (factory + dedupe); the view only remembers the
+    /// headword so the transcript can highlight it.
+    private func noteSaved(_ outcome: CaptureOutcome) {
+        switch outcome {
+        case .saved(let gap), .duplicate(let gap):
+            savedWords.insert(AppStore.captureKey(gap.frenchWord))
+        case .rejected:
+            break
+        }
     }
 
     // MARK: - Follow-along
 
     private func beginUserScroll() {
         userScrolling = true
-        if !showFollowPill { withAnimation { showFollowPill = true } }
+        if !showFollowPill { withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { showFollowPill = true } }
         scrollResumeWork?.cancel()
+        let reduce = reduceMotion
         let work = DispatchWorkItem {
             userScrolling = false
-            withAnimation { showFollowPill = false }
+            withAnimation(Theme.motion(.default, reduceMotion: reduce)) { showFollowPill = false }
         }
         scrollResumeWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.watchFollowAlongResumeSeconds, execute: work)
     }
 
     private func followAlong() {
@@ -444,7 +637,7 @@ struct WatchPlayerView: View {
     private func cancelFollowPill() {
         scrollResumeWork?.cancel()
         userScrolling = false
-        withAnimation { showFollowPill = false }
+        withAnimation(Theme.motion(.default, reduceMotion: reduceMotion)) { showFollowPill = false }
     }
 
     // MARK: - Helpers
@@ -464,13 +657,17 @@ private struct FullscreenPlayerView: View {
     let controller: YouTubePlayerController
     let title: String
     let activeSegmentValue: TranscriptSegment?
-    let savedWords: Set<String>
+    /// Provenance of the transcript on screen, carried into every capture made
+    /// from the floating subtitle (talkmedia-7-1).
+    let origin: TranscriptOrigin
+    let savedKeys: Set<String>
     @Binding var speedIndex: Int
     let speeds: [Double]
-    let onSaveGap: (WordGloss, String) -> Void
+    let onSaved: (CaptureOutcome) -> Void
     let onExit: () -> Void
 
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var controlsVisible = true
     @State private var hideWork: DispatchWorkItem? = nil
     @State private var selectedWord: WatchPlayerView.SelectedWord? = nil
@@ -479,19 +676,21 @@ private struct FullscreenPlayerView: View {
         controller: YouTubePlayerController,
         title: String,
         activeSegment: TranscriptSegment?,
-        savedWords: Set<String>,
+        origin: TranscriptOrigin,
+        savedKeys: Set<String>,
         speedIndex: Binding<Int>,
         speeds: [Double],
-        onSaveGap: @escaping (WordGloss, String) -> Void,
+        onSaved: @escaping (CaptureOutcome) -> Void,
         onExit: @escaping () -> Void
     ) {
         self.controller = controller
         self.title = title
         self.activeSegmentValue = activeSegment
-        self.savedWords = savedWords
+        self.origin = origin
+        self.savedKeys = savedKeys
         self._speedIndex = speedIndex
         self.speeds = speeds
-        self.onSaveGap = onSaveGap
+        self.onSaved = onSaved
         self.onExit = onExit
     }
 
@@ -503,12 +702,16 @@ private struct FullscreenPlayerView: View {
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
+                .accessibilityElement()
+                .accessibilityLabel("Video: \(title)")
 
             // Tap layer to toggle controls — kept BELOW the subtitle so word
             // taps reach the subtitle; empty regions still toggle controls.
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { toggleControls() }
+                .accessibilityLabel(controlsVisible ? "Hide controls" : "Show controls")
+                .accessibilityAddTraits(.isButton)
 
             // Subtitle sits above the tap layer so its words stay interactive.
             VStack {
@@ -516,13 +719,14 @@ private struct FullscreenPlayerView: View {
                 if let seg = activeSegmentValue {
                     FloatingSubtitle(
                         text: seg.text,
-                        savedWords: savedWords,
+                        savedKeys: savedKeys,
                         fontSize: 20,
+                        lookupEnabled: seg.allowsWordLookup,
                         onWordTap: { word in openWord(word, context: seg.text) }
                     )
                     .padding(.horizontal, 40)
                     .padding(.bottom, controlsVisible ? 86 : 28)
-                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
+                    .reducedMotionAnimation(.easeInOut(duration: 0.25), value: controlsVisible)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -545,6 +749,7 @@ private struct FullscreenPlayerView: View {
                 }
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
                 .transition(.opacity)
             }
         }
@@ -555,9 +760,9 @@ private struct FullscreenPlayerView: View {
             WordCaptureSheet(
                 word: sel.word,
                 context: sel.context,
+                origin: sel.origin,
                 accent: Theme.primary,
-                isSaved: savedWords.contains(sel.word.lowercased()),
-                onSave: { gloss in onSaveGap(gloss, sel.context) }
+                onSaved: onSaved
             )
             .presentationDetents([.medium, .large])
             .environment(store)
@@ -567,10 +772,11 @@ private struct FullscreenPlayerView: View {
     private func openWord(_ raw: String, context: String) {
         let clean = raw.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-"))
             .trimmingCharacters(in: .whitespaces)
-        guard clean.count >= 2 else { return }
+        // A number is text, not a word: no lookup, no pause (talkmedia-11-6).
+        guard clean.count >= 2, TranscriptCapture.isLookupable(clean) else { return }
         if controller.isPlaying { controller.pause() }
         Haptics.select()
-        selectedWord = WatchPlayerView.SelectedWord(word: clean, context: context)
+        selectedWord = WatchPlayerView.SelectedWord(word: clean, context: context, origin: origin)
     }
 
     private var controlsOverlay: some View {
@@ -579,11 +785,13 @@ private struct FullscreenPlayerView: View {
             HStack(spacing: 12) {
                 Button { onExit() } label: {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 40, height: 40).background(.black.opacity(0.45), in: Circle())
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        .frame(width: 44, height: 44).background(.black.opacity(0.45), in: Circle())
                 }
                 .buttonStyle(.plain)
-                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                .accessibilityLabel("Exit fullscreen")
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             .padding(.horizontal, 28).padding(.top, 14)
@@ -594,10 +802,12 @@ private struct FullscreenPlayerView: View {
             VStack(spacing: 12) {
                 PlayerScrubber(controller: controller, tint: Theme.primary)
                 HStack {
-                    Text(timeLabel(controller.currentTime)).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.7))
+                    Text(timeLabel(controller.currentTime)).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(.white.opacity(0.7))
                     Spacer()
-                    Text(timeLabel(controller.duration)).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.7))
+                    Text(timeLabel(controller.duration)).font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(.white.opacity(0.7))
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(timeLabel(controller.currentTime)) of \(timeLabel(controller.duration))")
                 PlayerButtons(controller: controller, speedIndex: $speedIndex, speeds: speeds, tint: Theme.primary, playSize: 56)
             }
             .padding(.horizontal, 40).padding(.bottom, 18)
@@ -611,17 +821,18 @@ private struct FullscreenPlayerView: View {
     }
 
     private func toggleControls() {
-        withAnimation(.easeInOut(duration: 0.25)) { controlsVisible.toggle() }
+        withAnimation(Theme.motion(.easeInOut(duration: 0.25), reduceMotion: reduceMotion)) { controlsVisible.toggle() }
         if controlsVisible { scheduleHide() }
     }
 
     private func scheduleHide() {
         hideWork?.cancel()
+        let reduce = reduceMotion
         let work = DispatchWorkItem {
-            withAnimation(.easeInOut(duration: 0.3)) { controlsVisible = false }
+            withAnimation(Theme.motion(.easeInOut(duration: 0.3), reduceMotion: reduce)) { controlsVisible = false }
         }
         hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.watchControlsAutoHideSeconds, execute: work)
     }
 
     private func timeLabel(_ seconds: Double) -> String {
@@ -683,6 +894,17 @@ private struct PlayerScrubber: View {
             )
         }
         .frame(height: 14)
+        .accessibilityElement()
+        .accessibilityLabel("Playback position")
+        .accessibilityValue("\(Int(controller.duration > 0 ? controller.currentTime / controller.duration * 100 : 0)) percent")
+        .accessibilityAdjustableAction { direction in
+            let step = Tuning.watchSeekStepSeconds
+            switch direction {
+            case .increment: controller.seek(to: controller.currentTime + step)
+            case .decrement: controller.seek(to: max(0, controller.currentTime - step))
+            @unknown default: break
+            }
+        }
     }
 }
 
@@ -693,33 +915,47 @@ private struct PlayerButtons: View {
     let speeds: [Double]
     let tint: Color
     var playSize: CGFloat = 60
+    /// The play circle is chrome around a glyph that scales with Dynamic Type,
+    /// so the circle grows with it and the glyph never spills out.
+    @ScaledMetric(relativeTo: .title2) private var controlScale: CGFloat = 1
+
+    private var scaledPlaySize: CGFloat { playSize * controlScale }
+    private var step: Double { Tuning.watchSeekStepSeconds }
+    private var stepLabel: String { "\(Int(step)) seconds" }
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { Haptics.tap(); controller.seek(to: max(0, controller.currentTime - 5)) } label: {
-                Image(systemName: "gobackward.5").font(.system(size: 22)).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+            Button { Haptics.tap(); controller.seek(to: max(0, controller.currentTime - step)) } label: {
+                Image(systemName: "gobackward.\(Int(step))").font(.title2).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Back \(stepLabel)")
             Button { Haptics.select(); controller.togglePlay() } label: {
                 Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: playSize * 0.4)).foregroundStyle(.white)
-                    .frame(width: playSize, height: playSize).background(tint).clipShape(.circle)
+                    .scaledFont(playSize * 0.4).foregroundStyle(.white)
+                    .frame(width: scaledPlaySize, height: scaledPlaySize).background(tint).clipShape(.circle)
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-            Button { Haptics.tap(); controller.seek(to: controller.currentTime + 5) } label: {
-                Image(systemName: "goforward.5").font(.system(size: 22)).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+            .accessibilityLabel(controller.isPlaying ? "Pause" : "Play")
+            Button { Haptics.tap(); controller.seek(to: controller.currentTime + step) } label: {
+                Image(systemName: "goforward.\(Int(step))").font(.title2).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Forward \(stepLabel)")
         }
         .overlay(alignment: .trailing) {
             Button { cycleSpeed() } label: {
-                Text(speedLabel).font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                Text(speedLabel).font(.footnote.weight(.bold)).foregroundStyle(.white)
+                    .minimumScaleFactor(0.7)
                     .frame(width: 46, height: 30).background(.white.opacity(0.12)).clipShape(.capsule)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Playback speed \(speedLabel)")
+            .accessibilityHint("Cycles to the next speed")
         }
     }
 
@@ -737,22 +973,25 @@ private struct PlayerButtons: View {
 
 // MARK: - Floating subtitle
 
-/// A soft-scrim subtitle whose individual words remain tappable for lookup.
+/// A soft-scrim subtitle whose individual words remain tappable for lookup
+/// (French lines only — an English line is shown but not looked up).
 private struct FloatingSubtitle: View {
     let text: String
-    let savedWords: Set<String>
+    let savedKeys: Set<String>
     var fontSize: CGFloat = 18
+    var lookupEnabled: Bool = true
     let onWordTap: (String) -> Void
 
     var body: some View {
         FlowWords(
             text: text,
             isActive: true,
-            savedWords: savedWords,
+            savedKeys: savedKeys,
             fontSize: fontSize,
             baseColor: .white.opacity(0.95),
             activeColor: .white,
             alignment: .center,
+            lookupEnabled: lookupEnabled,
             onWordTap: onWordTap
         )
         .shadow(color: .black.opacity(0.85), radius: 6, y: 1)
@@ -772,32 +1011,45 @@ private struct FloatingSubtitle: View {
 
 /// Lays out a transcript line as individually tappable words that wrap onto
 /// multiple lines. Active line is brighter; saved words get an accent pill.
+/// With `lookupEnabled` false (an English line) the words are plain text: no
+/// tap, no button trait, so an English word never opens a French lookup.
 private struct FlowWords: View {
     let text: String
     let isActive: Bool
-    let savedWords: Set<String>
+    /// `AppStore.captureKey` spellings to highlight as saved (talkmedia-11-1).
+    let savedKeys: Set<String>
     var fontSize: CGFloat = 16
     var baseColor: Color = .white.opacity(0.72)
     var activeColor: Color = .white
     var alignment: HorizontalAlignment = .leading
+    var lookupEnabled: Bool = true
+    /// Called with the tapped word's headword (`TranscriptCapture.headword`).
     let onWordTap: (String) -> Void
 
     private var tokens: [String] {
-        text.split(separator: " ").map(String.init)
+        TranscriptCapture.tokens(of: text)
     }
 
     var body: some View {
         FlowLayout(spacing: 4, lineSpacing: 6) {
-            ForEach(Array(tokens.enumerated()), id: \.offset) { _, token in
-                let bare = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?\"'()«»…-")).lowercased()
-                let saved = !bare.isEmpty && savedWords.contains(bare)
+            ForEach(Array(tokens.enumerated()), id: \.offset) { index, token in
+                // The word as the deck keeps it — elision and a sentence-opening
+                // capital off, the reader's rule — so a tap saves "école", never
+                // "l'école", and the highlight finds it either way (talkmedia-10-4).
+                let headword = TranscriptCapture.headword(tokenAt: index, in: text)
+                // A number ("2024") is shown but never offered: it has no letter
+                // to look up, and the save button could only refuse it (talkmedia-11-6).
+                let lookupable = lookupEnabled && TranscriptCapture.isLookupable(headword)
+                let saved = lookupable && TranscriptCapture.isHighlighted(headword, savedKeys: savedKeys)
                 Text(token)
-                    .font(.system(size: fontSize, weight: isActive ? .semibold : .regular))
+                    .scaledFont(fontSize, weight: isActive ? .semibold : .regular)
                     .foregroundStyle(saved ? Theme.primary : (isActive ? activeColor : baseColor))
                     .padding(.horizontal, saved ? 5 : 0).padding(.vertical, saved ? 1 : 0)
                     .background(saved ? Theme.primary.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
                     .contentShape(Rectangle())
-                    .onTapGesture { onWordTap(token) }
+                    .onTapGesture { if lookupable { onWordTap(headword) } }
+                    .accessibilityAddTraits(lookupable ? .isButton : [])
+                    .accessibilityHint(lookupable ? (saved ? HomeCopy.savedToMyWords : "Look up this word") : "")
             }
         }
         .frame(maxWidth: .infinity, alignment: alignment == .center ? .center : .leading)
@@ -806,18 +1058,42 @@ private struct FlowWords: View {
 
 // MARK: - Word capture sheet
 
+/// A word tapped in the transcript: its gloss (loading is bounded, failures are
+/// explicit) and the shared Save-to-deck button, which asks the store to build
+/// and dedupe the gap (E7 / E26). Related words push further cards.
 private struct WordCaptureSheet: View {
     let word: String
     let context: String
+    /// Where the transcript line came from — only the video's own French may be
+    /// quoted on the card as the sentence the word was met in (talkmedia-7-1).
+    let origin: TranscriptOrigin
     let accent: Color
-    let isSaved: Bool
-    let onSave: (WordGloss) -> Void
+    let onSaved: (CaptureOutcome) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var gloss: WordGloss? = nil
-    @State private var isLoading = true
-    @State private var saved = false
+    @Environment(AppStore.self) private var store
+    @State private var lookup: LookupState = .loading
+    @State private var attempt = 0
     @State private var path: [WordRoute] = []
+
+    /// Saved under the word's own key, or under an article form the deck holds
+    /// with the same meaning: "eau" is the deck's "l'eau" — the read-10-5 rule,
+    /// which Watch never applied (talkmedia-11-1, read-11-5).
+    private var alreadySaved: Bool {
+        store.hasGap(forWord: word)
+            || TranscriptCapture.isAlreadySaved(word, gloss: lookup.gloss,
+                                                savedMeanings: store.savedHeadwordMeanings())
+    }
+
+    private var draft: CaptureDraft? {
+        switch lookup {
+        case .loading:
+            return nil
+        case .loaded(let g):
+            return TranscriptCapture.draft(gloss: g, context: context, origin: origin)
+        case .failed:
+            return TranscriptCapture.draft(word: word, context: context, origin: origin)
+        }
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -839,90 +1115,100 @@ private struct WordCaptureSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(word).font(.serifDisplay(26, weight: .bold)).foregroundStyle(Theme.text)
-                        if let g = gloss, !g.pronunciation.isEmpty {
-                            PhoneticLine(text: g.pronunciation)
-                        }
-                        if let g = gloss, !g.translation.isEmpty {
-                            Text(g.translation).font(.system(size: 15, weight: .medium)).foregroundStyle(accent)
+                        Text(word).scaledSerifDisplay(26, weight: .bold).foregroundStyle(Theme.text)
+                        if case .loaded(let g) = lookup {
+                            if !g.pronunciation.isEmpty { PhoneticLine(text: g.pronunciation) }
+                            Text(g.translation).font(.subheadline.weight(.medium)).foregroundStyle(accent)
                         }
                     }
                     Spacer()
                     HStack(spacing: 8) {
-                        Button { Haptics.tap(); NaturalVoice.shared.speak(word, rate: 0.6) } label: {
-                            Image(systemName: "tortoise.fill").font(.system(size: 14)).foregroundStyle(accent)
-                                .frame(width: 38, height: 38).background(accent.opacity(0.10)).clipShape(.circle)
+                        Button { Haptics.tap(); NaturalVoice.shared.speak(word, rate: Tuning.slowVoiceRate) } label: {
+                            Image(systemName: "tortoise.fill").font(.subheadline).foregroundStyle(accent)
+                                .frame(width: 44, height: 44).background(accent.opacity(0.10)).clipShape(.circle)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Listen slowly")
                         Button { Haptics.tap(); NaturalVoice.shared.speak(word) } label: {
-                            Image(systemName: "speaker.wave.2.fill").font(.system(size: 18)).foregroundStyle(accent)
+                            Image(systemName: "speaker.wave.2.fill").font(.title3).foregroundStyle(accent)
                                 .frame(width: 46, height: 46).background(accent.opacity(0.12)).clipShape(.circle)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Listen")
                     }
                 }
 
-                if isLoading {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SkeletonBlock(width: 180, height: 16)
-                        SkeletonBlock(height: 14)
-                        SkeletonBlock(width: 140, height: 14)
-                        HStack(spacing: 8) {
-                            ProgressView().tint(accent).scaleEffect(0.8)
-                            Text("Looking it up…").font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-                        }
-                        .padding(.top, 2)
-                    }
-                } else if let g = gloss {
-                    GlossRichDetail(gloss: g, accent: accent, onTermTap: { path.append(WordRoute(term: $0, context: "")) })
-                    if !g.example.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
-                                Text("Example").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textMuted)
-                                Button { Haptics.tap(); NaturalVoice.shared.speak(g.example) } label: {
-                                    Image(systemName: "speaker.wave.2").font(.system(size: 13)).foregroundStyle(accent)
-                                }
-                                .buttonStyle(.plain)
-                                Button { Haptics.tap(); NaturalVoice.shared.speak(g.example, rate: 0.6) } label: {
-                                    Image(systemName: "tortoise.fill").font(.system(size: 12)).foregroundStyle(accent.opacity(0.8))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            Text(g.example).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                if !context.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(context).font(.footnote).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel("In the transcript: \(context)")
+                        // The line is machine-translated French: say so here too,
+                        // because the card will not quote it (talkmedia-7-1).
+                        if let provenance = TranscriptCopy.originFootnote(origin) {
+                            Text(provenance).font(.caption2).foregroundStyle(Theme.textMuted)
                                 .fixedSize(horizontal: false, vertical: true)
-                            if !g.exampleTranslation.isEmpty {
-                                Text(g.exampleTranslation).font(.system(size: 13)).foregroundStyle(Theme.textMuted)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .background(accent.opacity(0.07)).clipShape(.rect(cornerRadius: Radius.card))
-                        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(accent.opacity(0.18), lineWidth: 1))
                     }
                 }
 
-                Button {
-                    guard let g = gloss, !saved, !isSaved else { return }
-                    onSave(g)
-                    saved = true
-                } label: {
-                    Label(saved || isSaved ? "Saved to Deck" : "Save to Deck",
-                          systemImage: saved || isSaved ? "checkmark.circle.fill" : "plus.circle.fill")
-                        .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                        .frame(maxWidth: .infinity).padding(.vertical, 15)
-                        .background(saved || isSaved ? Theme.success : accent).clipShape(.rect(cornerRadius: Radius.chip))
+                switch lookup {
+                case .loading:
+                    LookupLoadingView(accent: accent)
+                case .loaded(let g):
+                    GlossRichDetail(gloss: g, accent: accent, onTermTap: { path.append(WordRoute(term: $0, context: "")) })
+                    if !g.example.isEmpty { exampleBlock(g) }
+                case .failed(let failure):
+                    LookupUnavailableView(failure: failure, accent: accent, onRetry: { attempt += 1 })
+                }
+
+                SaveToDeckButton(draft: draft, accent: accent, alreadySaved: alreadySaved, isBusy: lookup == .loading,
+                                 onSaved: onSaved)
+            }
+            .padding(.horizontal, 22).padding(.top, 22).padding(.bottom, 28)
+        }
+        .background(Theme.background)
+        .toolbar(.hidden, for: .navigationBar)
+        // Closing the sheet silences whatever it was speaking (talkmedia-3-4).
+        .onDisappear { NaturalVoice.shared.stop() }
+        .task(id: attempt) {
+            lookup = .loading
+            let result = await TranslationService.lookup(term: word, context: context)
+            lookup = LookupState(result)
+            // The service is reachable: resolve captures saved offline while here (EM-4).
+            if result.gloss != nil {
+                await store.resolvePendingTranslations(using: TranslationService.lookup(term:context:))
+            }
+        }
+    }
+
+    private func exampleBlock(_ g: WordGloss) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Example").font(.caption2.weight(.bold)).foregroundStyle(Theme.textSecondary)
+                Button { Haptics.tap(); NaturalVoice.shared.speak(g.example) } label: {
+                    Image(systemName: "speaker.wave.2").font(.footnote).foregroundStyle(accent)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
-                .disabled(isLoading || saved || isSaved)
-                .opacity(isLoading ? 0.6 : 1)
+                .accessibilityLabel("Listen to the example")
+                Button { Haptics.tap(); NaturalVoice.shared.speak(g.example, rate: Tuning.slowVoiceRate) } label: {
+                    Image(systemName: "tortoise.fill").font(.caption).foregroundStyle(accent.opacity(0.8))
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Listen to the example slowly")
             }
-            .padding(.horizontal, 22).padding(.top, 22)
+            Text(g.example).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            if !g.exampleTranslation.isEmpty {
+                Text(g.exampleTranslation).font(.footnote).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .task {
-            gloss = await TranslationService.gloss(for: word, context: context)
-            isLoading = false
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(accent.opacity(0.07)).clipShape(.rect(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(accent.opacity(0.18), lineWidth: 1))
     }
 }

@@ -2,73 +2,42 @@
 //  TranslationService.swift
 //  FluentFrenchIOS
 //
-//  Live French→English word/phrase lookups via OpenRouter (public client key
-//  from Config). Returns a translation, a short plain-English explanation, and
-//  an example sentence. Falls back to an instant local result when no key or
-//  network is available, so the reader popover always works.
+//  Live French→English word/phrase lookups and sentence translation via
+//  OpenRouter (public client key from Config). Every call answers with a typed
+//  result: a real gloss/translation, or an explicit `TranslationFailure`
+//  (no key, offline, service error) the surface renders honestly. There is no
+//  placeholder text any more — a failed lookup never looks like a meaning.
+//
+//  The cache (device → shared cloud) is consulted first, so a word someone else
+//  already looked up resolves even with no key, and every request is bounded by
+//  `Tuning.glossTimeoutSeconds` / `Tuning.translateTimeoutSeconds`.
 //
 
 import Foundation
-
-nonisolated struct WordGloss: Hashable {
-    var term: String
-    var translation: String
-    var explanation: String
-    var example: String
-    var exampleTranslation: String
-    // Richer dictionary detail (any may be empty).
-    var partOfSpeech: String = ""
-    var gender: String = ""
-    var article: String = ""
-    var baseForm: String = ""
-    var baseFormNote: String = ""
-    var pronunciation: String = ""
-    var register: String = ""
-    var otherMeanings: [String] = []
-    var relatedWords: [String] = []
-    var similarPhrases: [String] = []
-
-    /// True when the looked-up term is a multi-word phrase.
-    var isPhrase: Bool {
-        term.trimmingCharacters(in: .whitespaces).contains(" ")
-    }
-
-    var hasGrammar: Bool {
-        !partOfSpeech.isEmpty || !gender.isEmpty || !article.isEmpty || !baseForm.isEmpty || !register.isEmpty
-    }
-
-    /// A graceful instant fallback used while loading or when offline.
-    static func fallback(for term: String) -> WordGloss {
-        WordGloss(
-            term: term,
-            translation: "Tap save to add it, then practice to learn its meaning.",
-            explanation: "We couldn't reach the translation service just now, but you can still save this to your deck.",
-            example: term,
-            exampleTranslation: ""
-        )
-    }
-}
 
 nonisolated enum TranslationService {
     private static var apiKey: String { Config.EXPO_PUBLIC_OPENROUTER_API_KEY }
     static var hasKey: Bool { !apiKey.isEmpty }
 
-    /// Look up a French word or phrase. `context` is the surrounding sentence,
-    /// which sharpens the gloss for ambiguous words.
-    static func gloss(for term: String, context: String = "") async -> WordGloss {
-        let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return .fallback(for: clean) }
+    private static let endpoint = "https://openrouter.ai/api/v1/chat/completions"
+    private static let glossDirection = "fr-en"
 
-        // Cache first (device → shared cloud) — works even without an API key,
-        // so anyone benefits from a word someone else already looked up.
+    // MARK: - Word / phrase lookup
+
+    /// Look up a French word or phrase. `context` is the sentence it was met in
+    /// (see `SentenceExtractor`), which sharpens the gloss for ambiguous words and
+    /// keys the cache.
+    static func lookup(term: String, context: String = "") async -> GlossLookup {
+        let clean = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return .unavailable(.serviceError) }
+
         if let payload = await TranslationCache.cached(kind: "gloss", term: clean, context: context, direction: glossDirection),
            let cached = glossFromPayload(payload, term: clean) {
-            return cached
+            return .gloss(cached)
         }
 
-        guard hasKey,
-              let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")
-        else { return .fallback(for: clean) }
+        guard hasKey else { return .unavailable(.notConfigured) }
+        guard let url = URL(string: endpoint) else { return .unavailable(.serviceError) }
 
         let system = """
         You are a precise French dictionary for English speakers. Given a French word or phrase (and optional surrounding sentence), reply ONLY with minified JSON using exactly these keys:
@@ -90,39 +59,105 @@ nonisolated enum TranslationService {
         """
         let user = context.isEmpty ? "Term: \(clean)" : "Term: \(clean)\nSentence: \(context)"
 
+        let request = makeRequest(url: url, system: system, user: user, temperature: 0.3,
+                                  timeout: Tuning.glossTimeoutSeconds)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return .unavailable(.serviceError)
+            }
+            let decoded = try JSONDecoder().decode(OpenRouterResponse.self, from: data)
+            guard let content = decoded.choices.first?.message.content,
+                  let parsed = parseGloss(content, term: clean) else {
+                return .unavailable(.serviceError)
+            }
+            TranslationCache.store(kind: "gloss", term: clean, context: context, direction: glossDirection,
+                                   payload: payloadFromGloss(parsed))
+            return .gloss(parsed)
+        } catch {
+            return .unavailable(NetworkErrors.failure(for: error))
+        }
+    }
+
+    /// Legacy entry point kept for callers that still expect a `WordGloss`. A
+    /// failed lookup comes back as `WordGloss.unavailable(for:failure:)` — no
+    /// meaning (`isUsable == false`), the failure message as the explanation — so
+    /// it can never be persisted as a translation. Prefer `lookup(term:context:)`.
+    static func gloss(for term: String, context: String = "") async -> WordGloss {
+        switch await lookup(term: term, context: context) {
+        case .gloss(let g): return g
+        case .unavailable(let f): return .unavailable(for: term.trimmingCharacters(in: .whitespacesAndNewlines), failure: f)
+        }
+    }
+
+    // MARK: - Sentence translation
+
+    /// Translate a full sentence between English and French.
+    static func translation(of text: String, from source: TranslationLanguage,
+                            to target: TranslationLanguage) async -> TranslationOutcome {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return .unavailable(.serviceError) }
+
+        let direction = "\(source.rawValue)-\(target.rawValue)"
+        if let payload = await TranslationCache.cached(kind: "translate", term: clean, context: "", direction: direction),
+           let cached = payload["translation"], !cached.isEmpty {
+            return .translated(cached)
+        }
+
+        guard hasKey else { return .unavailable(.notConfigured) }
+        guard let url = URL(string: endpoint) else { return .unavailable(.serviceError) }
+
+        let system = "You are a professional \(source.englishName)→\(target.englishName) translator. Translate the user's text naturally and idiomatically into \(target.englishName). Reply with ONLY the translation — no quotes, no notes, no extra text."
+        let request = makeRequest(url: url, system: system, user: clean, temperature: 0.3,
+                                  timeout: Tuning.translateTimeoutSeconds)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return .unavailable(.serviceError)
+            }
+            let decoded = try JSONDecoder().decode(OpenRouterResponse.self, from: data)
+            guard let content = decoded.choices.first?.message.content else {
+                return .unavailable(.serviceError)
+            }
+            let result = content.trimmingCharacters(in: CharacterSet(charactersIn: " \n\"'"))
+            guard !result.isEmpty else { return .unavailable(.serviceError) }
+            TranslationCache.store(kind: "translate", term: clean, context: "", direction: direction,
+                                   payload: ["translation": result])
+            return .translated(result)
+        } catch {
+            return .unavailable(NetworkErrors.failure(for: error))
+        }
+    }
+
+    /// Legacy entry point: the translated text, or the learner-facing failure
+    /// message. Callers that need to tell the two apart use `translation(of:from:to:)`.
+    static func translate(_ text: String, from source: TranslationLanguage, to target: TranslationLanguage) async -> String {
+        switch await translation(of: text, from: source, to: target) {
+        case .translated(let t): return t
+        case .unavailable(let f): return f.message
+        }
+    }
+
+    // MARK: - Request / payload helpers
+
+    private static func makeRequest(url: URL, system: String, user: String, temperature: Double,
+                                    timeout: TimeInterval) -> URLRequest {
         let payload: [String: Any] = [
             "model": "openai/gpt-4o-mini",
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],
             ],
-            "temperature": 0.3,
+            "temperature": temperature,
         ]
-
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                return .fallback(for: clean)
-            }
-            let decoded = try JSONDecoder().decode(OpenRouterResponse.self, from: data)
-            guard let content = decoded.choices.first?.message.content,
-                  let parsed = parseGloss(content, term: clean) else {
-                return .fallback(for: clean)
-            }
-            TranslationCache.store(kind: "gloss", term: clean, context: context, direction: glossDirection, payload: payloadFromGloss(parsed))
-            return parsed
-        } catch {
-            return .fallback(for: clean)
-        }
+        return request
     }
-
-    private static let glossDirection = "fr-en"
 
     /// Lists are stored in the [String:String] cache as newline-joined strings.
     private static let listSeparator = "\n"
@@ -173,56 +208,6 @@ nonisolated enum TranslationService {
         )
     }
 
-    /// Translate a full sentence between English and French.
-    /// Returns the translated text, or a graceful message when offline / no key.
-    static func translate(_ text: String, from source: TranslationLanguage, to target: TranslationLanguage) async -> String {
-        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return "Translation unavailable right now. Please try again." }
-
-        let direction = "\(source.rawValue)-\(target.rawValue)"
-        if let payload = await TranslationCache.cached(kind: "translate", term: clean, context: "", direction: direction),
-           let cached = payload["translation"], !cached.isEmpty {
-            return cached
-        }
-
-        guard hasKey,
-              let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")
-        else { return "Translation unavailable right now. Please try again." }
-
-        let system = "You are a professional \(source.englishName)→\(target.englishName) translator. Translate the user's text naturally and idiomatically into \(target.englishName). Reply with ONLY the translation — no quotes, no notes, no extra text."
-
-        let payload: [String: Any] = [
-            "model": "openai/gpt-4o-mini",
-            "messages": [
-                ["role": "system", "content": system],
-                ["role": "user", "content": clean],
-            ],
-            "temperature": 0.3,
-        ]
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                return "Translation failed. Please try again."
-            }
-            let decoded = try JSONDecoder().decode(OpenRouterResponse.self, from: data)
-            guard let content = decoded.choices.first?.message.content else {
-                return "Translation failed. Please try again."
-            }
-            let result = content.trimmingCharacters(in: CharacterSet(charactersIn: " \n\"'"))
-            TranslationCache.store(kind: "translate", term: clean, context: "", direction: direction, payload: ["translation": result])
-            return result
-        } catch {
-            return "Translation failed. Please try again."
-        }
-    }
-
     private static func parseGloss(_ raw: String, term: String) -> WordGloss? {
         // The model occasionally wraps JSON in prose or fences — extract the object.
         guard let start = raw.firstIndex(of: "{"),
@@ -255,6 +240,27 @@ nonisolated enum TranslationService {
             relatedWords: cleanList(obj.relatedWords),
             similarPhrases: cleanList(obj.similarPhrases)
         )
+    }
+}
+
+// MARK: - Classifying transport errors
+
+/// Tells "you're offline" apart from "the service failed" for every network
+/// surface, so the learner sees the right state and retry advice.
+nonisolated enum NetworkErrors {
+    static func isOffline(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost,
+             .dataNotAllowed, .internationalRoamingOff, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func failure(for error: Error) -> TranslationFailure {
+        isOffline(error) ? .offline : .serviceError
     }
 }
 

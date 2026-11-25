@@ -41,18 +41,28 @@ struct LessonAssembler {
             if let gap = byId[item.gapId] {
                 resolved.append((item, gap))
                 if item.role == .probe { probeGapId = gap.id }
-            } else if item.role == .probe, let concept = store.concept(item.conceptId) {
-                let gap = store.materializeProbeGap(id: item.gapId, for: concept, now: output.request.now)
+            } else if item.role == .probe || item.role == .checkIn, let concept = store.concept(item.conceptId),
+                      let gap = store.materializeProbeGap(id: item.gapId, for: concept, now: output.request.now) {
+                // A probe — or a check-in on a concept with no gaps of its own — is a
+                // real French probe item built from the content's `probes` (B13).
                 resolved.append((item, gap))
-                probeGapId = gap.id
+                if item.role == .probe {
+                    probeGapId = gap.id
+                    // engine-4-4: a blind-spot probe is the only way these concepts are
+                    // ever reached, so give the concept its curriculum at the same time.
+                    // Otherwise the answer diagnoses a skill with no items behind it —
+                    // the concept becomes `.learning` with an empty spine and can never
+                    // be taught. A no-op for a concept that already has gaps.
+                    store.seedConceptContentIfNeeded(concept.id, now: output.request.now)
+                }
             }
-            // A non-probe item whose gap is gone is dropped: the store was mutated
-            // between selection and assembly. Nothing is substituted for it.
+            // An item whose gap is gone (or a probe with no content behind it) is
+            // dropped: nothing is substituted for it.
         }
         guard !resolved.isEmpty else { return nil }
 
-        // 2. Order by role (target → review → probe), keeping the selector's own
-        //    priority order within each role.
+        // 2. Order by role (target → check-in → review → probe), keeping the
+        //    selector's own priority order within each role.
         let ordered = resolved.enumerated()
             .sorted { a, b in
                 let ra = Self.roleRank(a.element.item.role), rb = Self.roleRank(b.element.item.role)
@@ -67,7 +77,20 @@ struct LessonAssembler {
         // 4. Reasons + headline come from the selector; skill cards are built here.
         //    A capstone is a pure test: no teaching cards.
         let reasons = output.reasonsByGapId
-        let blocks = output.mode.isCapstone ? [] : buildConceptBlocks(for: gaps, target: target, reasons: reasons)
+        // A probe item is never teaching material: a card built from it would hand
+        // the learner the answer to the very question that is meant to diagnose
+        // whether they already knew it.
+        let probeIds = Set(resolved.filter { $0.item.role == .probe || $0.gap.isProbe }.map { $0.gap.id })
+        // A check-in is a test of what the learner is believed to already know, and its
+        // miss weighs double and drives the retention governor and the unlock gate. A
+        // card that states the rule and works the check-in's own item through it hands
+        // the answer over seconds before the question — the same leak the probe rule
+        // closes, on the items that matter most.
+        let checkInIds = Set(resolved.filter { $0.item.role == .checkIn }.map { $0.gap.id })
+        let blocks = output.mode.isCapstone ? [] : buildConceptBlocks(for: gaps, target: target, reasons: reasons,
+                                                                       stalled: Set(output.stalledConceptIds),
+                                                                       probeGapIds: probeIds,
+                                                                       checkInGapIds: checkInIds)
 
         return AssembledLesson(selection: output, targetConcept: target, gaps: gaps,
                                reasons: reasons, headline: output.headline,
@@ -77,8 +100,9 @@ struct LessonAssembler {
     nonisolated private static func roleRank(_ role: SelectedItemRole) -> Int {
         switch role {
         case .target: return 0
-        case .review: return 1
-        case .probe: return 2
+        case .checkIn: return 1
+        case .review: return 2
+        case .probe: return 3
         }
     }
 
@@ -107,24 +131,65 @@ struct LessonAssembler {
     /// One ConceptBlock per distinct concept present in the lesson, target first.
     /// Pulls a real worked example from the lesson's own gaps and reuses the
     /// already-built reason line. Capped so lessons don't become a slog.
-    private func buildConceptBlocks(for gaps: [GapItem], target: Concept?, reasons: [String: String]) -> [ConceptBlock] {
+    ///
+    /// Probe and CHECK-IN items are invisible to this: a concept carried only by a
+    /// blind-spot probe or by a check-in gets NO card, and no card ever takes its
+    /// worked example from one. Teaching a skill — with the item's own sentence and
+    /// its translation — right before testing it turns the diagnosis into a memory
+    /// test of the last screen.
+    ///
+    /// The same rule for a REVIEWED item, and for the same reason (`LessonSession.mayTeach`):
+    /// a card's worked example prints the sentence with its blank form highlighted and
+    /// its English underneath, so taking it from an item this lesson goes on to
+    /// fill-blank hands the answer over and grows an FSRS interval on a screen the
+    /// learner just read. The example comes from a NEW item of the concept, or from one
+    /// this lesson does not ask at all; otherwise the card carries no worked example and
+    /// teaches from the content's own skill card.
+    private func buildConceptBlocks(for gaps: [GapItem], target: Concept?, reasons: [String: String],
+                                    stalled: Set<String> = [], probeGapIds: Set<String> = [],
+                                    checkInGapIds: Set<String> = []) -> [ConceptBlock] {
         var blocks: [ConceptBlock] = []
         var seen = Set<String>()
+        let untaughtable = probeGapIds.union(checkInGapIds)
+        let taught = gaps.filter { !$0.isProbe && !untaughtable.contains($0.id) }
+        // Items this lesson asks: one of them may only be shown when it is new.
+        let askedIds = Set(gaps.map { $0.id })
+        let teachable = taught.filter { $0.isNew }
+        // The sentences and headwords of the items the lesson asks but may NOT teach
+        // (reviewed, check-in, probe): the content's own skill card must not print
+        // them either. 57 shipped items have their exact example sentence or their
+        // headword among their own concept's teaching examples — "Ma mère est
+        // gentille." on the family card, then "Ma _____ est gentille." — so the card
+        // spelled out the answer of a fill-blank asked moments later (lesson-10-5,
+        // the rest of lesson-5-3).
+        let teachableIds = Set(teachable.map { $0.id })
+        let withheld = Set(gaps.filter { !teachableIds.contains($0.id) }
+            .flatMap { [$0.exampleSentence, $0.frenchWord] }
+            .map(AnswerGrader.normalize)
+            .filter { !$0.isEmpty })
 
         func makeBlock(_ concept: Concept) -> ConceptBlock {
-            let example = gaps.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
-                ?? gaps.first { $0.conceptId == concept.id }
-                ?? store.gaps(forConcept: concept.id).first { !$0.exampleSentence.isEmpty }
+            let example = teachable.first { $0.conceptId == concept.id && !$0.exampleSentence.isEmpty }
+                ?? teachable.first { $0.conceptId == concept.id }
+                ?? store.gaps(forConcept: concept.id).first {
+                    !$0.isProbe && !askedIds.contains($0.id) && !$0.exampleSentence.isEmpty
+                }
+            // The "why you're seeing this" line belongs to the concept, not to the
+            // example: a card that shows no worked example still says why it is here.
             let reason = example.flatMap { reasons[$0.id] }
+                ?? taught.first { $0.conceptId == concept.id }.flatMap { reasons[$0.id] }
             return ConceptBlock(concept: concept, explanation: concept.description,
-                                example: example, reason: reason)
+                                example: example, reason: reason,
+                                teaching: FoundationContentLoader.teaching(for: concept.id)
+                                    .map { Self.teaching($0, withholding: withheld) },
+                                isStalled: stalled.contains(concept.id))
         }
 
         if let target {
             blocks.append(makeBlock(target))
             seen.insert(target.id)
         }
-        for gap in gaps {
+        for gap in taught {
             guard let cid = gap.conceptId, !seen.contains(cid),
                   let concept = store.concept(cid) else { continue }
             seen.insert(cid)
@@ -132,5 +197,17 @@ struct LessonAssembler {
             if blocks.count >= config.maxConceptCards { break }
         }
         return blocks
+    }
+
+    /// A skill card without the examples and contrasts whose French is one of the
+    /// `withheld` (normalised) sentences or headwords. The rule, the common mistake
+    /// and every other example stay (lesson-10-5).
+    nonisolated static func teaching(_ teaching: FoundationTeachingContent,
+                                     withholding withheld: Set<String>) -> FoundationTeachingContent {
+        guard !withheld.isEmpty else { return teaching }
+        var card = teaching
+        card.examples = teaching.examples.filter { !withheld.contains(AnswerGrader.normalize($0.fr)) }
+        card.contrast = teaching.contrast.filter { !withheld.contains(AnswerGrader.normalize($0.fr)) }
+        return card
     }
 }
